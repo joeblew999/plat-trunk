@@ -1,0 +1,153 @@
+version: '3'
+
+# ============================================================================
+# GitHub CLI (gh)
+# https://cli.github.com/
+#
+# The official GitHub CLI for working with repos, issues, PRs, etc.
+# Installed via Go for cross-platform compatibility.
+# ============================================================================
+
+vars:
+  ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  BIN_DIR: '{{.ROOT_DIR}}/.bin'
+  EXE: '{{if eq OS "windows"}}.exe{{end}}'
+  GH_BIN: '{{.BIN_DIR}}/gh{{.EXE}}'
+  # Go install path for gh CLI
+  GH_GO_PKG: 'github.com/cli/cli/v2/cmd/gh@latest'
+
+tasks:
+  default:
+    internal: true
+    cmds:
+      - task: debug:self
+
+  # ===========================================================================
+  # Debug
+  # ===========================================================================
+  "debug:self":
+    desc: Print all vars for debugging
+    cmds:
+      - echo "=== GH CLI Vars ==="
+      - echo "ROOT_DIR={{.ROOT_DIR}}"
+      - echo "BIN_DIR={{.BIN_DIR}}"
+      - echo "GH_BIN={{.GH_BIN}}"
+      - echo "GH_GO_PKG={{.GH_GO_PKG}}"
+    silent: true
+
+  # ===========================================================================
+  # Dependencies
+  # ===========================================================================
+  "deps:install":
+    desc: Install GitHub CLI via Go
+    status:
+      - test -f {{.GH_BIN}}
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - echo "Installing gh CLI via Go..."
+      - GOWORK=off GOBIN={{.BIN_DIR}} go install {{.GH_GO_PKG}}
+      - echo "Installed gh to {{.GH_BIN}}"
+
+  "deps:upgrade":
+    desc: Upgrade GitHub CLI to latest
+    cmds:
+      - rm -f {{.GH_BIN}}
+      - task: deps:install
+
+  "deps:clean":
+    desc: Remove gh binary
+    cmds:
+      - rm -f {{.GH_BIN}}
+
+  # ===========================================================================
+  # Auth
+  # ===========================================================================
+  login:
+    desc: Login to GitHub
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} auth login'
+
+  status:
+    desc: Show auth status
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} auth status'
+
+  # ===========================================================================
+  # Common Commands
+  # ===========================================================================
+  "repo:view":
+    desc: View current repo in browser
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} repo view --web'
+
+  "pr:list":
+    desc: List open pull requests
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} pr list'
+
+  "pr:create":
+    desc: Create a pull request
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} pr create'
+
+  "issue:list":
+    desc: List open issues
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} issue list'
+
+  "issue:create":
+    desc: Create an issue
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} issue create'
+
+  "run:list":
+    desc: List recent workflow runs
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} run list'
+
+  "run:watch":
+    desc: Watch a workflow run
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} run watch'
+
+  # ===========================================================================
+  # Releases
+  # ===========================================================================
+  "release:list":
+    desc: List releases
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} release list'
+
+  "release:create":
+    desc: Create a new release (usage - task gh:release:create -- v1.0.0)
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} release create {{.CLI_ARGS}} --generate-notes'
+
+  "release:delete":
+    desc: Delete a release (usage - task gh:release:delete -- v1.0.0)
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} release delete {{.CLI_ARGS}} --yes'
+
+  "release:upload":
+    desc: Upload assets to a release (usage - task gh:release:upload -- v1.0.0 file1 file2)
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} release upload {{.CLI_ARGS}}'
+
+  "release:view":
+    desc: View a release (usage - task gh:release:view -- v1.0.0)
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} release view {{.CLI_ARGS}}'

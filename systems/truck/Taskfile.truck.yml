@@ -1,13 +1,15 @@
 version: '3'
 
-# Truck is a Rust CAD Kernel library (https://github.com/ricosjp/truck)
-# It's used as a Cargo dependency, not built as a standalone binary
+# ============================================================================
+# Truck - Rust CAD Kernel
+# https://github.com/ricosjp/truck
+#
+# Quick start - just run: task truck:<tab> to see all options
+# ============================================================================
 
 vars:
   ROOT_DIR: '{{.ROOT_DIR | default "."}}'
-  BIN_DIR: '{{.ROOT_DIR}}/.bin'
   SRC_DIR: '{{.ROOT_DIR}}/.src'
-  DATA_DIR: '{{.ROOT_DIR}}/.data'
   TRUCK_SRC_DIR: '{{.SRC_DIR}}/truck'
   TRUCK_REPO: 'github.com/ricosjp/truck'
 
@@ -17,6 +19,9 @@ tasks:
     cmds:
       - task: debug:self
 
+  # ===========================================================================
+  # Debug
+  # ===========================================================================
   "debug:self":
     desc: Print all vars for debugging
     cmds:
@@ -24,32 +29,203 @@ tasks:
       - echo "ROOT_DIR={{.ROOT_DIR}}"
       - echo "SRC_DIR={{.SRC_DIR}}"
       - echo "TRUCK_SRC_DIR={{.TRUCK_SRC_DIR}}"
-      - echo "TRUCK_REPO={{.TRUCK_REPO}}"
     silent: true
 
-  # Dependencies - clone for reference/examples
+  # ===========================================================================
+  # Dependencies
+  # ===========================================================================
   "deps:clone":
-    desc: Clone truck repo (for examples/reference)
+    desc: Clone truck repo
     status:
       - test -d {{.TRUCK_SRC_DIR}}
     cmds:
       - mkdir -p {{.SRC_DIR}}
-      - git clone --depth 1 https://{{.TRUCK_REPO}}.git {{.TRUCK_SRC_DIR}}
+      - git clone https://{{.TRUCK_REPO}}.git {{.TRUCK_SRC_DIR}}
+      - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
   "deps:clean":
     desc: Remove truck source
     cmds:
       - rm -rf {{.TRUCK_SRC_DIR}}
 
-  # Run examples from the truck repo
-  "examples:list":
-    desc: List available truck examples
-    deps: ["deps:clone"]
-    cmds:
-      - ls {{.TRUCK_SRC_DIR}}/truck-rendimpl/examples/ 2>/dev/null || echo "No examples found"
+  # ===========================================================================
+  # Build & Test (for CI)
+  # ===========================================================================
 
-  "examples:run":
-    desc: Run a truck example (usage - task truck:examples:run -- <example_name>)
+  build:
+    desc: Build truck library (check compilation)
     deps: ["deps:clone"]
     cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --example {{.CLI_ARGS}}
+      - cd {{.TRUCK_SRC_DIR}} && cargo build --release
+
+  test:
+    desc: Run truck tests
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo test
+
+  check:
+    desc: Run cargo check (fast compile check)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo check
+
+  ci:
+    desc: Run full CI pipeline (check + test)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo check
+      - cd {{.TRUCK_SRC_DIR}} && cargo test
+
+  # ===========================================================================
+  # Visual Examples (opens a window)
+  # ===========================================================================
+
+  # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
+  "run:shape-viewer":
+    desc: "View JSON shapes - drag & drop .json files (opens Finder)"
+    deps: ["deps:clone"]
+    cmds:
+      - open {{.TRUCK_SRC_DIR}}/resources/shape/
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example simple-shape-viewer
+
+  # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
+  "run:obj-viewer":
+    desc: "View OBJ meshes - drag & drop .obj files (opens Finder)"
+    deps: ["deps:clone"]
+    cmds:
+      - open {{.TRUCK_SRC_DIR}}/resources/obj/
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example simple-obj-viewer
+
+  # Controls: drag=rotate, right-click=move light, P=projection, L=light
+  "run:rotate":
+    desc: "Rotating 3D objects demo - drag & drop .obj files (opens Finder)"
+    deps: ["deps:clone"]
+    cmds:
+      - open {{.TRUCK_SRC_DIR}}/resources/obj/
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example rotate-objects
+
+  # No controls - static display
+  "run:materials":
+    desc: "Material properties grid (reflectance vs roughness)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example material-samples
+
+  # Controls: P=projection, L=light
+  "run:textured":
+    desc: "Textured cube example"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example textured-cube
+
+  # No controls - animation runs automatically
+  "run:bsp":
+    desc: "NURBS tessellation benchmark animation"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example bsp-animation
+
+  # Controls: Space=toggle render mode
+  "run:collision":
+    desc: "Sphere collision demo"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example collision-sphere
+
+  # Controls: drag & drop .wgsl files to load shaders
+  "run:shader":
+    desc: "WGSL shader playground - drag & drop .wgsl files"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example wgsl-sandbox
+
+  # ===========================================================================
+  # Modeling Examples (outputs JSON to stdout, no window)
+  #
+  # Pipe to file, then view with run:shape-viewer:
+  #   task truck:make:cube > my-cube.json
+  #   task truck:run:shape-viewer  (drag my-cube.json in)
+  # ===========================================================================
+
+  "make:cube":
+    desc: "Generate cube JSON"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cube
+
+  "make:sphere":
+    desc: "Generate sphere JSON"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example sphere
+
+  "make:cylinder":
+    desc: "Generate cylinder JSON"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cylinder
+
+  "make:cone":
+    desc: "Generate cone JSON"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cone
+
+  "make:torus":
+    desc: "Generate torus JSON"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example torus
+
+  "make:bottle":
+    desc: "Generate bottle JSON (OCCT tutorial)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example bottle
+
+  "make:punched-cube":
+    desc: "Generate punched cube JSON (cube with holes)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example punched-cube
+
+  "make:cube-in-cube":
+    desc: "Generate cube-in-cube JSON (nested solids)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cube-in-cube
+
+  "make:torus-punched":
+    desc: "Generate torus-punched-cube JSON (boolean ops)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example torus-punched-cube
+
+  "make:tsudumi":
+    desc: "Generate tsudumi JSON (Japanese drum)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example tsudumi
+
+  # ===========================================================================
+  # Resources - Sample files included with truck
+  # ===========================================================================
+
+  "resources:list":
+    desc: List sample files
+    deps: ["deps:clone"]
+    cmds:
+      - echo "=== JSON Shapes (for run:shape-viewer) ==="
+      - ls {{.TRUCK_SRC_DIR}}/resources/shape/
+      - echo ""
+      - echo "=== OBJ Meshes (for run:obj-viewer) ==="
+      - ls {{.TRUCK_SRC_DIR}}/resources/obj/
+      - echo ""
+      - echo "=== STEP CAD Files ==="
+      - ls {{.TRUCK_SRC_DIR}}/resources/step/
+
+  "resources:path":
+    desc: Print resources folder path
+    cmds:
+      - echo "{{.TRUCK_SRC_DIR}}/resources"

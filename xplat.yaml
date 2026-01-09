@@ -1,0 +1,60 @@
+# plat-trunk: CAD Kernel Platform
+# Integrates truck (Rust CAD kernel) for 3D modeling
+#
+# Users just need xplat installed - it bundles task + process-compose
+# No separate tool installation required!
+
+name: plat-trunk
+version: 0.1.0
+description: CAD kernel platform using truck (Rust) for 3D modeling
+author: joeblew999
+license: MIT
+
+# Taskfile for development commands
+taskfile:
+  path: Taskfile.yml
+
+# Process configuration for process-compose (none needed - truck is a library)
+processes: {}
+
+# Environment variables
+env:
+  optional:
+    - name: PC_PORT
+      description: Process-compose TUI port
+      default: "8000"
+
+# Dependencies - only need xplat which bundles task + process-compose
+dependencies:
+  build:
+    - rust
+    - go>=1.23
+  runtime: []  # xplat provides task + process-compose
+
+# Tools installed via taskfile
+tools:
+  gh:
+    description: GitHub CLI for releases and PR management
+    install: xplat task gh:deps:install
+  truck:
+    description: Rust CAD kernel (cloned from ricosjp/truck)
+    install: xplat task truck:deps:clone
+
+# Quick start - using xplat (single binary, no separate task install needed)
+quickstart: |
+  # Install xplat (one-time, provides task + process-compose)
+  curl -fsSL https://github.com/joeblew999/ubuntu-website/releases/latest/download/install.sh | bash
+
+  # Install dependencies
+  xplat task deps:install
+
+  # Run truck examples
+  xplat task truck:run:shape-viewer
+  xplat task truck:run:obj-viewer
+
+  # Build and test
+  xplat task truck:ci
+
+  # Create a release
+  xplat task gh:login
+  xplat task gh:release:create -- v0.1.0

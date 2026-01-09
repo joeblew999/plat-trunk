@@ -20,6 +20,10 @@ includes:
     taskfile: ./systems/truck/Taskfile.truck.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
+  gh:
+    taskfile: ./systems/gh/Taskfile.gh.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
 
 vars:
   # globals (that all included stuff also uses)
@@ -56,7 +60,8 @@ tasks:
     deps:
       - envsubst:deps:install
       - pc:deps:install
-      - truck:deps:install
+      - truck:deps:clone
+      - gh:deps:install
 
   deps:clean:
     desc: Remove all installed dependencies
