@@ -3,7 +3,7 @@ version: '3'
 # ============================================================================
 # plat-trunk - CAD Kernel Platform
 #
-# Uses xplat for embedded task + process-compose:
+# Requires xplat (bundles task + process-compose):
 #   xplat task deps:install   # Install dependencies
 #   xplat task up             # Start services
 #   xplat task truck:ci       # Build and test
@@ -43,58 +43,27 @@ tasks:
       - task --list
 
   # ===========================================================================
-  # Process Compose (uses xplat embedded or standalone)
+  # Process Compose (via xplat)
   # ===========================================================================
   up:
     desc: Start all services with TUI
     cmds:
-      - |
-        if command -v xplat >/dev/null 2>&1; then
-          xplat process up --port ${PC_PORT:-8000}
-        elif command -v process-compose >/dev/null 2>&1; then
-          process-compose up --port ${PC_PORT:-8000}
-        else
-          echo "ERROR: Install xplat or process-compose"
-          exit 1
-        fi
+      - xplat process up --port ${PC_PORT:-8000}
 
   "up:detached":
     desc: Start all services in background
     cmds:
-      - |
-        if command -v xplat >/dev/null 2>&1; then
-          xplat process up -D -t=false --port ${PC_PORT:-8000}
-        elif command -v process-compose >/dev/null 2>&1; then
-          process-compose up -D -t=false --port ${PC_PORT:-8000}
-        else
-          echo "ERROR: Install xplat or process-compose"
-          exit 1
-        fi
+      - xplat process up -D -t=false --port ${PC_PORT:-8000}
 
   down:
     desc: Stop all services
     cmds:
-      - |
-        if command -v xplat >/dev/null 2>&1; then
-          xplat process down
-        elif command -v process-compose >/dev/null 2>&1; then
-          process-compose down
-        else
-          echo "No running services found"
-        fi
+      - xplat process down
 
   attach:
     desc: Attach to running TUI
     cmds:
-      - |
-        if command -v xplat >/dev/null 2>&1; then
-          xplat process attach
-        elif command -v process-compose >/dev/null 2>&1; then
-          process-compose attach
-        else
-          echo "ERROR: Install xplat or process-compose"
-          exit 1
-        fi
+      - xplat process attach
 
   # ===========================================================================
   # Debug
@@ -130,6 +99,6 @@ tasks:
   deps:clean:
     desc: Remove all installed dependencies
     cmds:
-      - rm -rf {{.BIN_DIR}}
-      - rm -rf {{.SRC_DIR}}
-      - rm -rf {{.DATA_DIR}}
+      - xplat rm -rf {{.BIN_DIR}}
+      - xplat rm -rf {{.SRC_DIR}}
+      - xplat rm -rf {{.DATA_DIR}}
