@@ -3,10 +3,14 @@ version: '3'
 # ============================================================================
 # plat-trunk - CAD Kernel Platform
 #
-# Requires xplat (bundles task + process-compose):
-#   xplat task deps:install   # Install dependencies
-#   xplat task up             # Start services
-#   xplat task truck:ci       # Build and test
+# Works with:
+#   - task + process-compose (standalone)
+#   - xplat (bundles both)
+#
+# Usage:
+#   task deps:install   # Install dependencies
+#   task up             # Start services
+#   task truck:ci       # Build and test
 # ============================================================================
 
 env:
@@ -31,7 +35,6 @@ includes:
       ROOT_DIR: '{{.PWD}}'
 
 vars:
-  # globals (that all included stuff also uses)
   BIN_DIR: .bin
   DATA_DIR: .data
   SRC_DIR: .src
@@ -43,27 +46,27 @@ tasks:
       - task --list
 
   # ===========================================================================
-  # Process Compose (via xplat)
+  # Process Compose
   # ===========================================================================
   up:
     desc: Start all services with TUI
     cmds:
-      - xplat process up --port ${PC_PORT:-8000}
+      - process-compose up -f process-compose.yml --port ${PC_PORT:-8000}
 
   "up:detached":
     desc: Start all services in background
     cmds:
-      - xplat process up -D -t=false --port ${PC_PORT:-8000}
+      - process-compose up -f process-compose.yml -D -t=false --port ${PC_PORT:-8000}
 
   down:
     desc: Stop all services
     cmds:
-      - xplat process down
+      - process-compose down
 
   attach:
     desc: Attach to running TUI
     cmds:
-      - xplat process attach
+      - process-compose attach
 
   # ===========================================================================
   # Debug
@@ -99,6 +102,6 @@ tasks:
   deps:clean:
     desc: Remove all installed dependencies
     cmds:
-      - xplat rm -rf {{.BIN_DIR}}
-      - xplat rm -rf {{.SRC_DIR}}
-      - xplat rm -rf {{.DATA_DIR}}
+      - rm -rf {{.BIN_DIR}}
+      - rm -rf {{.SRC_DIR}}
+      - rm -rf {{.DATA_DIR}}
