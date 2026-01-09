@@ -1,0 +1,66 @@
+version: '3'
+
+env:
+  GOWORK: 'off'
+
+# Load .env first, then .env.local overrides (for secrets)
+dotenv: ['.env', '.env.local']
+
+includes:
+  # Local systems
+  pc:
+    taskfile: ./systems/pc/Taskfile.pc.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+  envsubst:
+    taskfile: ./systems/envsubst/Taskfile.envsubst.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+  truck:
+    taskfile: ./systems/truck/Taskfile.truck.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+
+vars:
+  # globals (that all included stuff also uses)
+  BIN_DIR: .bin
+  DATA_DIR: .data
+  SRC_DIR: .src
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # Debug tasks
+  debug:
+    desc: Print root vars and env
+    cmds:
+      - echo "=== Root Vars ==="
+      - echo "BIN_DIR={{.BIN_DIR}}"
+      - echo "DATA_DIR={{.DATA_DIR}}"
+      - echo "SRC_DIR={{.SRC_DIR}}"
+    silent: true
+
+  debug:all:
+    desc: Print debug info for all systems
+    cmds:
+      - task: debug
+      - task: envsubst:debug:self
+      - task: truck:debug:self
+
+  # Deps tasks
+  deps:install:
+    desc: Install all external dependencies
+    deps:
+      - envsubst:deps:install
+      - pc:deps:install
+      - truck:deps:install
+
+  deps:clean:
+    desc: Remove all installed dependencies
+    cmds:
+      - rm -rf {{.BIN_DIR}}
+      - rm -rf {{.SRC_DIR}}
+      - rm -rf {{.DATA_DIR}}

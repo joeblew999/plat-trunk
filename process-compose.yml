@@ -1,0 +1,8 @@
+version: "0.5"
+
+# Load environment variables from .env file
+env_file: .env
+
+# Truck is a CAD library, not a service
+# Add your application processes here
+processes: {}
