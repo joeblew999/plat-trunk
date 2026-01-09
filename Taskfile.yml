@@ -1,5 +1,14 @@
 version: '3'
 
+# ============================================================================
+# plat-trunk - CAD Kernel Platform
+#
+# Uses xplat for embedded task + process-compose:
+#   xplat task deps:install   # Install dependencies
+#   xplat task up             # Start services
+#   xplat task truck:ci       # Build and test
+# ============================================================================
+
 env:
   GOWORK: 'off'
 
@@ -8,10 +17,6 @@ dotenv: ['.env', '.env.local']
 
 includes:
   # Local systems
-  pc:
-    taskfile: ./systems/pc/Taskfile.pc.yml
-    vars:
-      ROOT_DIR: '{{.PWD}}'
   envsubst:
     taskfile: ./systems/envsubst/Taskfile.envsubst.yml
     vars:
@@ -37,7 +42,63 @@ tasks:
     cmds:
       - task --list
 
-  # Debug tasks
+  # ===========================================================================
+  # Process Compose (uses xplat embedded or standalone)
+  # ===========================================================================
+  up:
+    desc: Start all services with TUI
+    cmds:
+      - |
+        if command -v xplat >/dev/null 2>&1; then
+          xplat process up --port ${PC_PORT:-8000}
+        elif command -v process-compose >/dev/null 2>&1; then
+          process-compose up --port ${PC_PORT:-8000}
+        else
+          echo "ERROR: Install xplat or process-compose"
+          exit 1
+        fi
+
+  "up:detached":
+    desc: Start all services in background
+    cmds:
+      - |
+        if command -v xplat >/dev/null 2>&1; then
+          xplat process up -D -t=false --port ${PC_PORT:-8000}
+        elif command -v process-compose >/dev/null 2>&1; then
+          process-compose up -D -t=false --port ${PC_PORT:-8000}
+        else
+          echo "ERROR: Install xplat or process-compose"
+          exit 1
+        fi
+
+  down:
+    desc: Stop all services
+    cmds:
+      - |
+        if command -v xplat >/dev/null 2>&1; then
+          xplat process down
+        elif command -v process-compose >/dev/null 2>&1; then
+          process-compose down
+        else
+          echo "No running services found"
+        fi
+
+  attach:
+    desc: Attach to running TUI
+    cmds:
+      - |
+        if command -v xplat >/dev/null 2>&1; then
+          xplat process attach
+        elif command -v process-compose >/dev/null 2>&1; then
+          process-compose attach
+        else
+          echo "ERROR: Install xplat or process-compose"
+          exit 1
+        fi
+
+  # ===========================================================================
+  # Debug
+  # ===========================================================================
   debug:
     desc: Print root vars and env
     cmds:
@@ -45,6 +106,7 @@ tasks:
       - echo "BIN_DIR={{.BIN_DIR}}"
       - echo "DATA_DIR={{.DATA_DIR}}"
       - echo "SRC_DIR={{.SRC_DIR}}"
+      - echo "PC_PORT=${PC_PORT:-8000}"
     silent: true
 
   debug:all:
@@ -53,13 +115,15 @@ tasks:
       - task: debug
       - task: envsubst:debug:self
       - task: truck:debug:self
+      - task: gh:debug:self
 
-  # Deps tasks
+  # ===========================================================================
+  # Deps
+  # ===========================================================================
   deps:install:
     desc: Install all external dependencies
     deps:
       - envsubst:deps:install
-      - pc:deps:install
       - truck:deps:clone
       - gh:deps:install
 
