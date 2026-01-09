@@ -51,22 +51,22 @@ tasks:
   up:
     desc: Start all services with TUI
     cmds:
-      - process-compose up -f process-compose.yml --port ${PC_PORT:-8000}
+      - xplat process up -f process-compose.yml --port ${PC_PORT:-8000}
 
   "up:detached":
     desc: Start all services in background
     cmds:
-      - process-compose up -f process-compose.yml -D -t=false --port ${PC_PORT:-8000}
+      - xplat process up -f process-compose.yml -D -t=false --port ${PC_PORT:-8000}
 
   down:
     desc: Stop all services
     cmds:
-      - process-compose down
+      - xplat process down
 
   attach:
     desc: Attach to running TUI
     cmds:
-      - process-compose attach
+      - xplat process attach
 
   # ===========================================================================
   # Debug
