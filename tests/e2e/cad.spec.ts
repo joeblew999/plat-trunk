@@ -92,6 +92,37 @@ test.describe('CAD Operations', () => {
     expect(await getObjectCount(page)).toBe(0);
   });
 
+  test('undo and redo', async ({ page }) => {
+    // Start with default cube
+    expect(await getObjectCount(page)).toBe(1);
+
+    // Add sphere (2 objects)
+    await clickButton(page, 'addSphere');
+    expect(await getObjectCount(page)).toBe(2);
+
+    // Undo — sphere should be gone
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(500);
+    expect(await getObjectCount(page)).toBe(1);
+
+    // Redo — sphere should come back
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForTimeout(500);
+    expect(await getObjectCount(page)).toBe(2);
+
+    // Add cylinder (3 objects), then undo twice to get back to 1
+    await clickButton(page, 'addCylinder');
+    expect(await getObjectCount(page)).toBe(3);
+
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(500);
+    expect(await getObjectCount(page)).toBe(2);
+
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(500);
+    expect(await getObjectCount(page)).toBe(1);
+  });
+
   test('save and load scene', async ({ page }) => {
     // Add a sphere
     await clickButton(page, 'addSphere');

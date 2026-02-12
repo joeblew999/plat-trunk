@@ -1,0 +1,27 @@
+[
+  {
+    "filename": "default-cube.json",
+    "name": "Default Cube",
+    "description": "A single unit cube — the starting scene."
+  },
+  {
+    "filename": "punched-cube.json",
+    "name": "Punched Cube",
+    "description": "A cube with a cylindrical hole through the center."
+  },
+  {
+    "filename": "two-cubes-union.json",
+    "name": "Merged Cubes",
+    "description": "Two overlapping cubes merged into one solid."
+  },
+  {
+    "filename": "multi-shape.json",
+    "name": "All Primitives",
+    "description": "All four primitive shapes arranged in a row."
+  },
+  {
+    "filename": "stacked-cubes.json",
+    "name": "Stacked Cubes",
+    "description": "Three cubes stacked vertically in decreasing size."
+  }
+]

@@ -7,6 +7,16 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="style.css" />
+    <script type="importmap">
+    {
+        "imports": {
+            "@automerge/automerge": "https://esm.sh/@automerge/automerge@3",
+            "@automerge/automerge-repo": "https://esm.sh/@automerge/automerge-repo@2",
+            "@automerge/automerge-repo-storage-indexeddb": "https://esm.sh/@automerge/automerge-repo-storage-indexeddb@2",
+            "@automerge/automerge-repo-network-broadcastchannel": "https://esm.sh/@automerge/automerge-repo-network-broadcastchannel@2"
+        }
+    }
+    </script>
 </head>
 <body>
     <!-- DaisyUI Drawer — docs panel on right -->
@@ -78,6 +88,10 @@
                         <div data-section="scene" class="tool-section">
                             <div class="divider my-0 text-xs">Scene</div>
                             <div id="objectList" class="text-xs opacity-70 mb-1">Objects: loading...</div>
+                            <div class="flex gap-1 mb-1">
+                                <button id="undoBtn" class="btn btn-outline btn-xs" disabled>Undo</button>
+                                <button id="redoBtn" class="btn btn-outline btn-xs" disabled>Redo</button>
+                            </div>
                             <div class="flex gap-1">
                                 <button id="deleteBtn" class="btn btn-outline btn-error btn-xs">Delete Sel.</button>
                                 <button id="clearBtn" class="btn btn-outline btn-xs">Clear All</button>
@@ -87,11 +101,19 @@
                         <!-- Section: File -->
                         <div data-section="file" class="tool-section">
                             <div class="divider my-0 text-xs">File</div>
-                            <div class="flex gap-1">
+                            <div id="docInfo" class="text-xs opacity-60 mb-1 truncate cursor-pointer" title="Click to copy doc URL">Untitled</div>
+                            <div class="flex gap-1 mb-1">
+                                <button id="newDocBtn" class="btn btn-outline btn-xs">New Doc</button>
+                                <button id="shareBtn" class="btn btn-outline btn-xs">Share</button>
+                            </div>
+                            <div class="flex gap-1 mb-1">
                                 <button id="saveBtn" class="btn btn-outline btn-xs">Save JSON</button>
                                 <button id="loadBtn" class="btn btn-outline btn-xs">Load JSON</button>
                                 <input type="file" id="fileInput" accept=".json" class="hidden" />
                             </div>
+                            <select id="exampleSelect" class="select select-xs w-full">
+                                <option value="">Load example...</option>
+                            </select>
                         </div>
 
                         <!-- Controls hint (desktop only) -->
@@ -101,6 +123,8 @@
                                 <li>Drag &mdash; Rotate</li>
                                 <li>Scroll &mdash; Zoom</li>
                                 <li>Right-click &mdash; Move light</li>
+                                <li>Ctrl+Z &mdash; Undo</li>
+                                <li>Ctrl+Shift+Z &mdash; Redo</li>
                             </ul>
                         </div>
 
@@ -187,6 +211,16 @@
                 window.selectedObject = 0;
                 console.log("CAD running.");
                 updateObjectList();
+
+                // Initialize Automerge document manager after WASM is ready
+                if (window.cadDocManager) {
+                    try {
+                        await window.cadDocManager.init();
+                        console.log("Automerge doc ready:", window.cadDocManager.documentUrl);
+                    } catch (err) {
+                        console.warn("Automerge init failed (falling back to local-only):", err);
+                    }
+                }
             } catch (e) {
                 console.error("Init error:", e);
                 document.body.innerHTML = `<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>`;
@@ -212,6 +246,9 @@
 
         runWasm();
     </script>
+    <script src="sync-adapter.js"></script>
+    <script type="module" src="cad-document.js"></script>
+    <script src="undo-manager.js"></script>
     <script type="module" src="main.js"></script>
 </body>
 </html>

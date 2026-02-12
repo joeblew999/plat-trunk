@@ -17,6 +17,10 @@ directory = "../../../web/gui"
 binding = "DOCS_BUCKET"
 bucket_name = "cad-docs"
 
+[[r2_buckets]]
+binding = "CAD_DOCS_BUCKET"
+bucket_name = "cad-documents"
+
 [vars]
 MY_VAR = "hello world"
 
