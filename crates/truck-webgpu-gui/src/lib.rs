@@ -108,8 +108,10 @@ fn solid_to_instances(
                 Curve::IntersectionCurve(_) => BoundingBox::new(),
             };
         });
-    let (size, center) = (bdd_box.size(), bdd_box.center());
-    let mat = Matrix4::from_translation(center.to_vec()) * Matrix4::from_scale(size);
+    // Only normalize by size — do NOT re-center.
+    // Centering would force all objects back to origin, making translate invisible.
+    let size = bdd_box.size();
+    let mat = Matrix4::from_scale(size);
 
     let mesh_solid = solid.triangulation(size * 0.005);
     let curves = mesh_solid
@@ -289,8 +291,8 @@ impl SceneController {
                     Camera {
                         matrix: matrix.invert().unwrap(),
                         method: ProjectionMethod::perspective(Rad(PI / 4.0)),
-                        near_clip: 0.1,
-                        far_clip: 40.0,
+                        near_clip: 0.01,
+                        far_clip: 100.0,
                     }
                 },
                 lights: vec![Light {

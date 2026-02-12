@@ -39,18 +39,19 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Pause to show the initial scene
+    // Show empty scene
+    await page.waitForTimeout(1500);
+
+    // Create a cube — the first object
+    await clickButton(page, 'addCube');
     await page.waitForTimeout(2000);
 
-    // Show the UI panel — hover over elements
-    await page.hover('#addCube');
-    await page.waitForTimeout(500);
-    await page.hover('#sizeParam');
-    await page.waitForTimeout(500);
+    // Add a sphere next to it (auto-offset places it overlapping)
+    await clickButton(page, 'addSphere');
+    await page.waitForTimeout(2000);
 
-    // Add a cube
-    await clickButton(page, 'addCube');
-    await page.waitForTimeout(1500);
+    // Show the scene list
+    await page.waitForTimeout(1000);
 
     await saveLesson(page, 'getting-started');
   });
@@ -59,9 +60,9 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Add each primitive type with a pause between
-    await setInput(page, 'sizeParam', '0.8');
-    await page.waitForTimeout(500);
+    // Create all 4 primitive types — auto-offset spreads them out
+    await clickButton(page, 'addCube');
+    await page.waitForTimeout(1500);
 
     await clickButton(page, 'addSphere');
     await page.waitForTimeout(1500);
@@ -70,9 +71,9 @@ test.describe('Lesson Videos', () => {
     await page.waitForTimeout(1500);
 
     await clickButton(page, 'addTorus');
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
-    // Show the object list
+    // Scene now has 4 objects spread along X axis
     await page.waitForTimeout(1000);
 
     await saveLesson(page, 'adding-primitives');
@@ -82,19 +83,27 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Move the default cube
-    await setInput(page, 'txVal', '1.5');
+    // Start with default cube
+    await page.waitForTimeout(1000);
+
+    // Move it far right
+    await setInput(page, 'txVal', '2.0');
     await setInput(page, 'tyVal', '0');
     await setInput(page, 'tzVal', '0');
-    await page.waitForTimeout(500);
-
     await clickButton(page, 'translateBtn');
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500);
 
     // Move it up
     await setInput(page, 'txVal', '0');
-    await setInput(page, 'tyVal', '1.0');
+    await setInput(page, 'tyVal', '2.0');
     await setInput(page, 'tzVal', '0');
+    await clickButton(page, 'translateBtn');
+    await page.waitForTimeout(1500);
+
+    // Move it forward
+    await setInput(page, 'txVal', '0');
+    await setInput(page, 'tyVal', '0');
+    await setInput(page, 'tzVal', '2.0');
     await clickButton(page, 'translateBtn');
     await page.waitForTimeout(2000);
 
@@ -105,24 +114,24 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Start with default cube, add a cylinder to punch through it
-    await page.waitForTimeout(1000);
-
-    // Add cylinder (r=0.25, h=2.0) via evaluate for reliability
-    await page.evaluate(() => {
-      const ctrl = window['sceneController'];
-      ctrl.add_cylinder(0.25, 2.0);
-      if (window['updateObjectList']) window['updateObjectList']();
-    });
+    // Show the cube alone first
     await page.waitForTimeout(1500);
 
-    // Boolean subtract: cube - cylinder
+    // Add a cylinder — auto-offset places it partially inside the cube
+    await clickButton(page, 'addCylinder');
+    await page.waitForTimeout(2000);
+
+    // Show both objects overlapping (pause so viewer sees the "before")
+    await page.waitForTimeout(1500);
+
+    // Set up boolean: A=0 (cube), B=1 (cylinder)
     await setInput(page, 'boolA', '0');
     await setInput(page, 'boolB', '1');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
 
+    // SUBTRACT — punch the cylinder out of the cube
     await clickButton(page, 'boolSubtract');
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(3000);
 
     await saveLesson(page, 'boolean-subtract');
   });
@@ -131,26 +140,24 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Add a second smaller cube, offset it
-    await setInput(page, 'sizeParam', '0.5');
-    await clickButton(page, 'addCube');
-    await page.waitForTimeout(1000);
-
-    // Move the second cube (index 1)
-    await page.evaluate(() => { window['selectedObject'] = 1; });
-    await setInput(page, 'txVal', '0.7');
-    await setInput(page, 'tyVal', '0');
-    await setInput(page, 'tzVal', '0');
-    await clickButton(page, 'translateBtn');
+    // Show the cube alone first
     await page.waitForTimeout(1500);
 
-    // Union
+    // Add a second cube — auto-offset places it overlapping
+    await clickButton(page, 'addCube');
+    await page.waitForTimeout(2000);
+
+    // Show both cubes overlapping (pause so viewer sees the "before")
+    await page.waitForTimeout(1500);
+
+    // Set up boolean: A=0, B=1
     await setInput(page, 'boolA', '0');
     await setInput(page, 'boolB', '1');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
 
+    // UNION — merge the two cubes into one solid
     await clickButton(page, 'boolUnion');
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(3000);
 
     await saveLesson(page, 'boolean-union');
   });
@@ -159,21 +166,21 @@ test.describe('Lesson Videos', () => {
     await page.goto('/');
     await waitForWasm(page);
 
-    // Add a sphere to make the scene interesting
+    // Build an interesting scene: cube + sphere
     await clickButton(page, 'addSphere');
+    await page.waitForTimeout(1500);
+
+    // Hover save button to highlight it
+    await page.hover('#saveBtn');
     await page.waitForTimeout(1000);
 
-    // Save — show the save button click
-    await page.hover('#saveBtn');
-    await page.waitForTimeout(500);
-    // Don't actually click save (triggers download dialog) — just show the hover
-    await page.waitForTimeout(1500);
-
-    // Show clear + load workflow concept
+    // Hover clear button
     await page.hover('#clearBtn');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
+
+    // Hover load button
     await page.hover('#loadBtn');
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
     await saveLesson(page, 'save-and-load');
   });
@@ -181,33 +188,37 @@ test.describe('Lesson Videos', () => {
   test('full-workflow', async ({ page }) => {
     await page.goto('/');
     await waitForWasm(page);
-
-    // Full workflow: create, transform, boolean, manage
     await page.waitForTimeout(1000);
 
-    // Add sphere
-    await setInput(page, 'sizeParam', '0.7');
+    // Step 1: Add a sphere
     await clickButton(page, 'addSphere');
-    await page.waitForTimeout(1000);
-
-    // Add cylinder
-    await setInput(page, 'sizeParam', '0.5');
-    await clickButton(page, 'addCylinder');
-    await page.waitForTimeout(1000);
-
-    // Move cylinder
-    await page.evaluate(() => { window['selectedObject'] = 2; });
-    await setInput(page, 'txVal', '1.5');
-    await setInput(page, 'tyVal', '0');
-    await setInput(page, 'tzVal', '0');
-    await clickButton(page, 'translateBtn');
     await page.waitForTimeout(1500);
 
-    // Delete the cylinder
+    // Step 2: Add a cylinder (auto-offset overlaps with sphere)
+    await clickButton(page, 'addCylinder');
+    await page.waitForTimeout(1500);
+
+    // Step 3: Move the cylinder up to make it dramatic
+    await page.evaluate(() => { window['selectedObject'] = 2; });
+    await setInput(page, 'txVal', '0');
+    await setInput(page, 'tyVal', '1.0');
+    await setInput(page, 'tzVal', '0');
+    await clickButton(page, 'translateBtn');
+    await page.waitForTimeout(2000);
+
+    // Step 4: Boolean subtract — punch cylinder from cube
+    await setInput(page, 'boolA', '0');
+    await setInput(page, 'boolB', '2');
+    await page.waitForTimeout(500);
+    await clickButton(page, 'boolSubtract');
+    await page.waitForTimeout(2500);
+
+    // Step 5: Delete the sphere (now index 1 after boolean result at 0)
+    await page.evaluate(() => { window['selectedObject'] = 1; });
     await clickButton(page, 'deleteBtn');
     await page.waitForTimeout(1500);
 
-    // Clear all
+    // Step 6: Clear all
     await clickButton(page, 'clearBtn');
     await page.waitForTimeout(1500);
 

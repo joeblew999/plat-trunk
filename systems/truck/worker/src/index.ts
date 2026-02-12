@@ -40,9 +40,10 @@ api.post('/cad-command', async (c) => {
 // Mount API routes
 app.route('/api', api);
 
-// Serve doc assets (screenshots, lesson videos) from R2
+// Serve doc media (screenshots, lesson videos) from R2
 // Files are uploaded via `wrangler r2 object put` — not bundled with deploys
-const MIME_TYPES: Record<string, string> = {
+// HTML files (guide.html etc.) are served as static assets by Wrangler [assets]
+const R2_MIME_TYPES: Record<string, string> = {
   '.webm': 'video/webm',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -50,17 +51,22 @@ const MIME_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
 };
 
-app.get('/docs/*', async (c) => {
+app.get('/docs/*', async (c, next) => {
   const key = c.req.path.slice(1); // strip leading /
+  const ext = key.slice(key.lastIndexOf('.'));
+
+  // Only serve media files from R2; let HTML/other fall through to static assets
+  if (!R2_MIME_TYPES[ext]) {
+    return next();
+  }
+
   const obj = await c.env.DOCS_BUCKET.get(key);
   if (!obj) {
     return c.notFound();
   }
-  const ext = key.slice(key.lastIndexOf('.'));
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   return new Response(obj.body, {
     headers: {
-      'content-type': contentType,
+      'content-type': R2_MIME_TYPES[ext],
       'cache-control': 'public, max-age=86400',
     },
   });

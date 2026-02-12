@@ -353,6 +353,12 @@ tasks:
       - task: docs:generate
       - task: docs:upload
 
+  "deploy:full":
+    desc: Full deploy pipeline (build WASM + deploy Worker + regenerate docs + upload to R2)
+    cmds:
+      - task: gui:deploy
+      - task: docs:publish
+
   # Controls: Space=toggle render mode
   "run:collision":
     desc: "Sphere collision demo"

@@ -4,6 +4,19 @@ function ctrl() { return window.sceneController; }
 function getSize() { return parseFloat(document.getElementById('sizeParam').value) || 1.0; }
 function update() { if (window.updateObjectList) window.updateObjectList(); }
 
+// Show brief feedback in the object list area
+function showFeedback(msg, isError) {
+    const el = document.getElementById('objectList');
+    if (!el) return;
+    el.textContent = msg;
+    if (isError) el.classList.add('text-error');
+    else el.classList.add('text-success');
+    setTimeout(() => {
+        el.classList.remove('text-error', 'text-success');
+        update();
+    }, 2000);
+}
+
 // Auto-offset: shift new primitives along X so they partially overlap (useful for booleans).
 function autoOffset(idx) {
     if (!ctrl() || idx <= 0) return;
@@ -48,11 +61,30 @@ document.getElementById('addTorus')?.addEventListener('click', () => {
 // --- Transform ---
 document.getElementById('translateBtn')?.addEventListener('click', () => {
     if (!ctrl()) return;
+    const idx = window.selectedObject ?? 0;
+    const count = ctrl().object_count();
+    if (count === 0) {
+        showFeedback('No objects to move', true);
+        return;
+    }
+    if (idx >= count) {
+        showFeedback(`Object [${idx}] doesn't exist (${count} objects)`, true);
+        return;
+    }
     const dx = parseFloat(document.getElementById('txVal').value) || 0;
     const dy = parseFloat(document.getElementById('tyVal').value) || 0;
     const dz = parseFloat(document.getElementById('tzVal').value) || 0;
-    ctrl().translate_object(window.selectedObject || 0, dx, dy, dz);
-    update();
+    if (dx === 0 && dy === 0 && dz === 0) {
+        showFeedback('Enter non-zero dx/dy/dz values', true);
+        return;
+    }
+    console.log(`translate_object(${idx}, ${dx}, ${dy}, ${dz})`);
+    const ok = ctrl().translate_object(idx, dx, dy, dz);
+    if (ok) {
+        showFeedback(`Moved [${idx}] by (${dx}, ${dy}, ${dz})`, false);
+    } else {
+        showFeedback(`Move failed for object [${idx}]`, true);
+    }
 });
 
 // --- Boolean ---
@@ -64,14 +96,11 @@ function getAB() {
 }
 
 function showBoolResult(idx, op) {
-    const el = document.getElementById('objectList');
     if (idx >= 0) {
         window.selectedObject = idx;
-        update();
+        showFeedback(`${op} → object [${idx}]`, false);
     } else {
-        el.textContent = `${op} failed — ensure objects overlap`;
-        el.classList.add('text-error');
-        setTimeout(() => { el.classList.remove('text-error'); update(); }, 3000);
+        showFeedback(`${op} failed — ensure objects overlap`, true);
     }
 }
 
