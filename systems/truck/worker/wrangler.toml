@@ -1,0 +1,26 @@
+name = "truck-cad"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+workers_dev = true
+
+# Custom domain: cad.ubuntusoftware.net
+# Also keeps truck-cad.gedw99.workers.dev active
+routes = [
+  { pattern = "cad.ubuntusoftware.net", custom_domain = true },
+]
+
+# Serve web/gui/ as static assets — HTML, JS, WASM all served from the edge
+[assets]
+directory = "../../../web/gui"
+
+[[r2_buckets]]
+binding = "DOCS_BUCKET"
+bucket_name = "cad-docs"
+
+[vars]
+MY_VAR = "hello world"
+
+[dev]
+ip = "0.0.0.0"
+port = 8787
+local_protocol = "http"

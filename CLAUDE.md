@@ -1,83 +1,83 @@
 # CLAUDE.md
 
-Groupware platform with mail (Stalwart), search (SeekStorm), and real-time messaging (NATS).
+Rust CAD kernel platform using [truck](https://github.com/ricosjp/truck) with collaborative editing via Automerge and RPC via kkrpc.
 
 ## Quick Start
 
 ```sh
-task pc:up      # Start all services
-task pc:down    # Stop all services
-task pc:attach  # Attach to TUI
+xplat task deps:install   # Install dependencies
+xplat process up          # Start all services
+xplat process down        # Stop all services
+xplat process attach      # Attach to TUI
 ```
 
-## Systems
-
-| System | Port | Description |
-|--------|------|-------------|
-| NATS | 4222 | Message broker |
-| Narun | 8081 | HTTP/gRPC gateway to NATS |
-| nats2sse | 8083 | SSE bridge for browsers |
-| Stalwart | 8085 | Mail server (SMTP/IMAP/JMAP) |
-| SeekStorm | 8086 | Full-text search engine |
-
-## Key Tasks
+## Commands
 
 ```sh
-# Dependencies
-task deps:install     # Install all (requires Rust + Go)
-task deps:clean       # Remove all
+# Truck examples (visual)
+xplat task truck:run:shape-viewer
+xplat task truck:run:obj-viewer
 
-# Individual services
-task stalwart:start   # Start mail server
-task seekstorm:start  # Start search engine
-task nats-server:start # Start NATS
+# Build & Test
+xplat task truck:build
+xplat task truck:test
+xplat task truck:ci
 
 # Debug
-task debug            # Show env vars
-task debug:all        # Debug all systems
+xplat task debug
+xplat task debug:all
 ```
-
-## Binaries
-
-Installed to `.bin/` with cross-platform names (`.exe` on Windows):
-
-| Binary | Description |
-|--------|-------------|
-| envsubst | Template processor |
-| stalwart | Mail server |
-| stalwart-cli | Mail server CLI |
-| seekstorm_server | Search engine |
-| nats-server | Message broker |
-| nats | NATS CLI |
-| process-compose | Process orchestrator |
 
 ## Configuration
 
-- `.env` - Default ports and URLs (tracked)
+- `.env` - Default config (tracked), includes `PC_PORT_NUM=8000`
 - `.env.local` - Secrets (not tracked)
-
-Required secrets in `.env.local`:
-```sh
-STALWART_ADMIN_PASSWORD=your-password
-MASTER_KEY_SECRET=seekstorm-key
-SEEKSTORM_API_KEY=your-api-key
-```
-
-## Environment Variables
-
-When adding new env vars:
-1. Add to `.env` with default value
-2. Update `task debug` in root Taskfile.yml
-3. Update relevant `debug:self` task in system Taskfile
-
-Current vars in debug output:
-- NATS_PORT, NATS_URL
-- NARUN_PORT, PC_PORT, NATS2SSE_PORT
-- STALWART_HTTP_PORT, STALWART_SMTP_PORT, STALWART_IMAP_PORT
-- SEEKSTORM_PORT
+- `xplat.yaml` - Manifest (source of truth for processes)
+- `pc.generated.yaml` - Generated from manifest
 
 ## Build Requirements
 
-- **Rust** - For Stalwart and SeekStorm
-- **Go** - For envsubst, NATS tools, process-compose
-- **Task** - Task runner (https://taskfile.dev)
+- **Rust** - For truck B-Rep kernel
+- **Go 1.23+** - For gh CLI, orchestrator
+- **xplat** - Bundles task + process-compose
+
+## Architecture Docs
+
+See `docs/adr/` for architecture decision records:
+- `docs/adr/automerge.md` - CRDT-based collaborative editing (op log, R2 storage)
+- `docs/adr/kkrpc.md` - TypeScript RPC across multiple transports
+- `docs/adr/webgpu.md` - GPU rendering architecture (Tier 1 browser / Tier 3 server)
+
+## LLM Context (for AI assistants)
+
+### Automerge
+Local-first CRDT sync engine for collaborative apps. Used for the op log enabling concurrent editing.
+
+Reference docs for AI use:
+- `docs/llms/automerge-llms.txt` - Index of all Automerge docs
+- `docs/llms/automerge-llms-full.txt` - Complete Automerge documentation (~166KB)
+- Upstream: https://automerge.org/llms-full.txt
+
+Key concepts:
+- Documents are the unit of collaboration (like JSON + git)
+- Repositories manage connections and storage (DocHandles)
+- Document URLs: `automerge:<base58>`
+- JS: `@automerge/automerge` (core) + `@automerge/automerge-repo` (networking/storage)
+- Rust: `automerge` crate (also compiles to WASM)
+- API docs: https://docs.rs/automerge/latest/automerge/
+
+### kkrpc
+TypeScript bidirectional RPC library supporting stdio, WebSocket, HTTP, Workers, iframes, Chrome extensions, Electron, and message queues (RabbitMQ, Kafka, Redis Streams, NATS).
+
+Reference docs for AI use:
+- `docs/llms/kkrpc-llms-full.txt` - Complete kkrpc documentation (~221KB)
+- `.claude/skills/kkrpc/SKILL.md` - Claude skill for TypeScript kkrpc usage
+- `.claude/skills/interop/SKILL.md` - Claude skill for cross-language interop (Go, Python, Rust, Swift)
+- Upstream: https://docs.kkrpc.kunkun.sh/llms-full.txt
+
+Key concepts:
+- `RPCChannel` is the main class for bidirectional communication
+- Transport adapters (IoInterface): `NodeIo`, `DenoIo`, `BunIo`, `WebSocketClientIO`, `HTTPClientIO`, `NatsIO`, etc.
+- Supports callbacks as arguments, property access, enhanced error preservation
+- For interop: use `serialization: { version: "json" }` (not superjson)
+- Protocol: line-delimited JSON with message types: request, response, callback, get, set

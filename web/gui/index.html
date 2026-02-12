@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>CAD</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <!-- DaisyUI Drawer — docs panel on right -->
+    <div class="drawer drawer-end">
+        <input id="docs-drawer" type="checkbox" class="drawer-toggle" />
+
+        <div class="drawer-content">
+
+            <!-- ===== TOOL PANEL (sidebar on desktop, bottom sheet on mobile) ===== -->
+            <div id="ui-panel">
+                <div class="card bg-base-300 shadow-lg">
+                    <div class="card-body p-4 gap-2">
+
+                        <!-- Desktop header with collapse toggle -->
+                        <div class="panel-header hidden lg:flex items-center justify-between">
+                            <h2 class="card-title text-lg">CAD</h2>
+                            <button id="panel-toggle" class="btn btn-ghost btn-xs" title="Toggle panel"
+                                    onclick="document.getElementById('ui-panel').classList.toggle('panel-collapsed')">&#9664;</button>
+                        </div>
+
+                        <!-- Mobile sheet handle -->
+                        <div class="lg:hidden flex justify-center py-1">
+                            <div class="w-10 h-1 rounded-full bg-base-content/30"></div>
+                        </div>
+
+                        <!-- Section: Add Primitive -->
+                        <div data-section="create" class="tool-section">
+                            <div class="divider my-0 text-xs">Add Primitive</div>
+                            <fieldset class="fieldset">
+                                <label class="label text-xs">Size</label>
+                                <input type="number" id="sizeParam" value="1" min="0.1" step="0.1" class="input input-sm w-full" />
+                            </fieldset>
+                            <div class="flex flex-wrap gap-1 mt-1">
+                                <button id="addCube" class="btn btn-primary btn-xs">Cube</button>
+                                <button id="addSphere" class="btn btn-secondary btn-xs">Sphere</button>
+                                <button id="addCylinder" class="btn btn-accent btn-xs">Cylinder</button>
+                                <button id="addTorus" class="btn btn-info btn-xs">Torus</button>
+                            </div>
+                        </div>
+
+                        <!-- Section: Transform -->
+                        <div data-section="transform" class="tool-section">
+                            <div class="divider my-0 text-xs">Transform</div>
+                            <div class="flex gap-1">
+                                <input type="number" id="txVal" value="0.5" step="0.1" class="input input-xs w-16" placeholder="dx"/>
+                                <input type="number" id="tyVal" value="0" step="0.1" class="input input-xs w-16" placeholder="dy"/>
+                                <input type="number" id="tzVal" value="0" step="0.1" class="input input-xs w-16" placeholder="dz"/>
+                            </div>
+                            <button id="translateBtn" class="btn btn-outline btn-xs mt-1">Move Selected</button>
+                        </div>
+
+                        <!-- Section: Boolean -->
+                        <div data-section="boolean" class="tool-section">
+                            <div class="divider my-0 text-xs">Boolean (A op B)</div>
+                            <div class="flex gap-1 items-center">
+                                <input type="number" id="boolA" value="0" min="0" class="input input-xs w-14" />
+                                <span class="text-xs opacity-60">op</span>
+                                <input type="number" id="boolB" value="1" min="0" class="input input-xs w-14" />
+                            </div>
+                            <div class="flex gap-1 mt-1">
+                                <button id="boolUnion" class="btn btn-success btn-xs" title="Merge A and B together">Union</button>
+                                <button id="boolSubtract" class="btn btn-warning btn-xs" title="Cut B from A">Subtract</button>
+                                <button id="boolIntersect" class="btn btn-error btn-xs" title="Keep only overlap">Intersect</button>
+                            </div>
+                            <p class="text-xs opacity-40 mt-1">Tip: objects must overlap</p>
+                        </div>
+
+                        <!-- Section: Scene -->
+                        <div data-section="scene" class="tool-section">
+                            <div class="divider my-0 text-xs">Scene</div>
+                            <div id="objectList" class="text-xs opacity-70 mb-1">Objects: loading...</div>
+                            <div class="flex gap-1">
+                                <button id="deleteBtn" class="btn btn-outline btn-error btn-xs">Delete Sel.</button>
+                                <button id="clearBtn" class="btn btn-outline btn-xs">Clear All</button>
+                            </div>
+                        </div>
+
+                        <!-- Section: File -->
+                        <div data-section="file" class="tool-section">
+                            <div class="divider my-0 text-xs">File</div>
+                            <div class="flex gap-1">
+                                <button id="saveBtn" class="btn btn-outline btn-xs">Save JSON</button>
+                                <button id="loadBtn" class="btn btn-outline btn-xs">Load JSON</button>
+                                <input type="file" id="fileInput" accept=".json" class="hidden" />
+                            </div>
+                        </div>
+
+                        <!-- Controls hint (desktop only) -->
+                        <div class="hidden lg:block">
+                            <div class="divider my-0 text-xs">Controls</div>
+                            <ul class="text-xs opacity-50 space-y-0">
+                                <li>Drag &mdash; Rotate</li>
+                                <li>Scroll &mdash; Zoom</li>
+                                <li>Right-click &mdash; Move light</li>
+                            </ul>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== BOTTOM DOCK (mobile/tablet only) ===== -->
+            <div id="mobile-dock" class="dock dock-sm bg-base-300 hidden max-lg:flex">
+                <button data-tab="create" class="dock-active" onclick="cadUI.setTab('create')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    <span class="dock-label">Create</span>
+                </button>
+                <button data-tab="transform" onclick="cadUI.setTab('transform')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l4-4 4 4M9 5v14"/></svg>
+                    <span class="dock-label">Move</span>
+                </button>
+                <button data-tab="boolean" onclick="cadUI.setTab('boolean')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/></svg>
+                    <span class="dock-label">Bool</span>
+                </button>
+                <button data-tab="scene" onclick="cadUI.setTab('scene')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+                    <span class="dock-label">Scene</span>
+                </button>
+                <button data-tab="file" onclick="cadUI.setTab('file')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <span class="dock-label">File</span>
+                </button>
+            </div>
+
+            <!-- Docs toggle button (top-right) -->
+            <div id="docs-toggle">
+                <label for="docs-drawer" class="btn btn-circle btn-ghost btn-sm text-lg" title="Open documentation">?</label>
+            </div>
+
+            <canvas id="cad-canvas"></canvas>
+        </div>
+
+        <!-- Drawer sidebar — documentation -->
+        <div class="drawer-side">
+            <label for="docs-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+            <div class="bg-base-200 min-h-full p-6 docs-content">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold">User Guide</h2>
+                    <label for="docs-drawer" class="btn btn-sm btn-ghost btn-circle">X</label>
+                </div>
+
+                <!-- Guide content — screenshots + videos are auto-generated by Playwright -->
+                <div class="prose prose-sm" id="docs-body">
+                    <h3>Getting Started</h3>
+                    <p>A parametric 3D modeler running entirely in your browser using WebGPU. Create primitives, combine them with boolean operations, and export your designs as JSON.</p>
+                    <img src="docs/screenshots/01-initial-scene.png" alt="Initial scene" loading="lazy" onerror="this.style.display='none'" />
+                    <video src="docs/lessons/getting-started.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <h3>Adding Primitives</h3>
+                    <p>Set the <em>Size</em> parameter, then click a shape button. Each new primitive is auto-offset so objects partially overlap (ready for booleans).</p>
+                    <ul>
+                        <li><strong>Cube</strong> — box with the given edge length</li>
+                        <li><strong>Sphere</strong> — sphere with the given radius</li>
+                        <li><strong>Cylinder</strong> — radius = size/2, height = size</li>
+                        <li><strong>Torus</strong> — major radius = size, tube radius = size * 0.3</li>
+                    </ul>
+                    <img src="docs/screenshots/04-multiple-primitives.png" alt="Multiple primitives" loading="lazy" onerror="this.style.display='none'" />
+                    <video src="docs/lessons/adding-primitives.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <h3>Transforms</h3>
+                    <p>Select an object by its index, set dx/dy/dz values, and click <strong>Move Selected</strong>.</p>
+                    <img src="docs/screenshots/05-translate.png" alt="Translate object" loading="lazy" onerror="this.style.display='none'" />
+                    <video src="docs/lessons/transforms.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <h3>Boolean Operations</h3>
+                    <p>Combine two overlapping objects using CSG:</p>
+                    <ul>
+                        <li><strong>Union</strong> — merge A and B together</li>
+                        <li><strong>Subtract</strong> — cut B from A</li>
+                        <li><strong>Intersect</strong> — keep only the overlap</li>
+                    </ul>
+                    <p>Enter object indices for A and B, then click the operation. The originals are replaced with the result.</p>
+                    <img src="docs/screenshots/07-boolean-subtract.png" alt="Boolean subtract" loading="lazy" onerror="this.style.display='none'" />
+                    <video src="docs/lessons/boolean-subtract.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+                    <video src="docs/lessons/boolean-union.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <h3>Scene Management</h3>
+                    <p>Objects are listed by index. The selected object is marked with <code>*</code>.</p>
+                    <ul>
+                        <li><strong>Delete Sel.</strong> — remove the selected object</li>
+                        <li><strong>Clear All</strong> — remove everything</li>
+                    </ul>
+
+                    <h3>Save / Load</h3>
+                    <p>Designs save as JSON with full B-Rep data (no tessellation loss).</p>
+                    <ul>
+                        <li><strong>Save JSON</strong> — downloads a <code>.json</code> file</li>
+                        <li><strong>Load JSON</strong> — restores a saved scene</li>
+                    </ul>
+                    <video src="docs/lessons/save-and-load.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <h3>Camera Controls</h3>
+                    <table class="table table-xs">
+                        <thead>
+                            <tr><th>Input</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Left drag</td><td>Rotate camera</td></tr>
+                            <tr><td>Scroll / pinch</td><td>Zoom in/out</td></tr>
+                            <tr><td>Right-click drag</td><td>Move light source</td></tr>
+                            <tr><td>Touch (1 finger)</td><td>Rotate camera</td></tr>
+                            <tr><td>Touch (2 finger pinch)</td><td>Zoom in/out</td></tr>
+                        </tbody>
+                    </table>
+
+                    <h3>Full Workflow</h3>
+                    <p>Create, transform, boolean, and manage — all in one session:</p>
+                    <video src="docs/lessons/full-workflow.webm" controls preload="none" class="rounded-lg w-full mt-2" onerror="this.style.display='none'"></video>
+
+                    <div class="divider"></div>
+                    <h3>Roadmap</h3>
+                    <p>Planned features: rotate/scale transforms, click-to-select, undo/redo, STEP import/export, collaborative editing via Automerge, robotics integration, and more.</p>
+                    <p><a href="https://github.com/joeblew999/plat-trunk/blob/main/docs/ROADMAP.md" class="link link-primary" target="_blank">View full roadmap on GitHub</a></p>
+
+                    <div class="divider"></div>
+                    <p class="text-xs opacity-50">Screenshots and videos auto-generated by Playwright. Run <code>task truck:docs:publish</code> to update.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Responsive UI controller (dock/sheet management) -->
+    <script src="ui-controller.js"></script>
+
+    <script type="module">
+        import init, { SceneController } from './pkg-browser-renderer/truck_webgpu_gui.js';
+
+        async function runWasm() {
+            try {
+                await init();
+                const controller = await new SceneController("cad-canvas");
+                controller.run();
+                window.sceneController = controller;
+                window.selectedObject = 0;
+                console.log("CAD running.");
+                updateObjectList();
+            } catch (e) {
+                console.error("Init error:", e);
+                document.body.innerHTML = `<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>`;
+            }
+        }
+
+        window.updateObjectList = function() {
+            const c = window.sceneController;
+            if (!c) return;
+            const count = c.object_count();
+            const el = document.getElementById('objectList');
+            if (count === 0) {
+                el.textContent = 'Scene empty';
+            } else {
+                const items = [];
+                for (let i = 0; i < count; i++) {
+                    const sel = i === window.selectedObject ? ' *' : '';
+                    items.push(`[${i}]${sel}`);
+                }
+                el.textContent = 'Objects: ' + items.join(' ');
+            }
+        };
+
+        runWasm();
+    </script>
+    <script type="module" src="main.js"></script>
+</body>
+</html>

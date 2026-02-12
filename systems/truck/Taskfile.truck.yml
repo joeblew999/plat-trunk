@@ -9,9 +9,16 @@ version: '3'
 
 vars:
   ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  BIN_DIR: '{{.ROOT_DIR}}/.bin'
   SRC_DIR: '{{.ROOT_DIR}}/.src'
   TRUCK_SRC_DIR: '{{.SRC_DIR}}/truck'
-  TRUCK_REPO: 'github.com/ricosjp/truck'
+  TRUCK_UPSTREAM: 'github.com/ricosjp/truck'
+  TRUCK_FORK: 'github.com/joeblew999/truck'
+  TRUCK_REPO: '{{.TRUCK_FORK}}'
+  # For binary releases (when cargo not available)
+  TRUCK_RELEASE_REPO: 'joeblew999/plat-trunk'
+  TRUCK_VERSION: 'v0.1.0'
+  BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
 
 tasks:
   default:
@@ -27,26 +34,102 @@ tasks:
     cmds:
       - echo "=== Truck Vars ==="
       - echo "ROOT_DIR={{.ROOT_DIR}}"
+      - echo "BIN_DIR={{.BIN_DIR}}"
       - echo "SRC_DIR={{.SRC_DIR}}"
       - echo "TRUCK_SRC_DIR={{.TRUCK_SRC_DIR}}"
+      - echo "TRUCK_UPSTREAM={{.TRUCK_UPSTREAM}}"
+      - echo "TRUCK_FORK={{.TRUCK_FORK}}"
+      - echo "TRUCK_REPO={{.TRUCK_REPO}}"
+      - echo "TRUCK_RELEASE_REPO={{.TRUCK_RELEASE_REPO}}"
+      - echo "TRUCK_VERSION={{.TRUCK_VERSION}}"
+      - echo "---"
+      - cd {{.TRUCK_SRC_DIR}} && echo "HEAD=$(git rev-parse --short HEAD)" && git remote -v | head -4
     silent: true
 
   # ===========================================================================
   # Dependencies
   # ===========================================================================
   "deps:clone":
-    desc: Clone truck repo
+    desc: Clone truck from fork with upstream remote
     status:
       - test -d {{.TRUCK_SRC_DIR}}
     cmds:
       - mkdir -p {{.SRC_DIR}}
-      - git clone https://{{.TRUCK_REPO}}.git {{.TRUCK_SRC_DIR}}
+      - git clone https://{{.TRUCK_FORK}}.git {{.TRUCK_SRC_DIR}}
+      - cd {{.TRUCK_SRC_DIR}} && git remote add upstream https://{{.TRUCK_UPSTREAM}}.git || true
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
+  "deps:install":
+    desc: Install truck binaries (builds if cargo available, downloads otherwise)
+    deps: ["deps:clone"]
+    cmds:
+      - xplat binary install simple-shape-viewer {{.TRUCK_VERSION}} {{.TRUCK_RELEASE_REPO}} --dir {{.BIN_DIR}} --source-cargo {{.TRUCK_SRC_DIR}} --example
+
+  "deps:wasm-pack":
+    desc: Install wasm-pack
+    cmds:
+      - curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+    status:
+      - wasm-pack --version
+
   "deps:clean":
-    desc: Remove truck source
+    desc: Remove truck source and binaries
     cmds:
       - rm -rf {{.TRUCK_SRC_DIR}}
+      - rm -rf {{.BIN_DIR}}
+
+  # ===========================================================================
+  # Fork Workflow (sync upstream, upgrade, PRs)
+  # ===========================================================================
+
+  "fork:sync":
+    desc: Sync fork with upstream (fetch upstream, merge to master, push to fork)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch upstream
+      - cd {{.TRUCK_SRC_DIR}} && git checkout master
+      - cd {{.TRUCK_SRC_DIR}} && git merge upstream/master --ff-only
+      - cd {{.TRUCK_SRC_DIR}} && git push origin master
+
+  "fork:status":
+    desc: Show fork vs upstream status (commits ahead/behind)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch origin && git fetch upstream
+      - |
+        cd {{.TRUCK_SRC_DIR}} && echo "=== Fork Status ==="
+        echo "Local:    $(git rev-parse --short HEAD)"
+        echo "Fork:     $(git rev-parse --short origin/master)"
+        echo "Upstream: $(git rev-parse --short upstream/master)"
+        echo "---"
+        AHEAD=$(git rev-list --count upstream/master..origin/master)
+        BEHIND=$(git rev-list --count origin/master..upstream/master)
+        echo "Fork is $AHEAD commits ahead, $BEHIND commits behind upstream"
+    silent: true
+
+  "fork:branch":
+    desc: "Create a feature branch for PR work (usage: task truck:fork:branch -- my-feature)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git checkout master && git pull origin master
+      - cd {{.TRUCK_SRC_DIR}} && git checkout -b {{.CLI_ARGS}}
+
+  "fork:pr":
+    desc: "Push branch and open PR against upstream (usage: task truck:fork:pr -- 'PR title')"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git push -u origin HEAD
+      - cd {{.TRUCK_SRC_DIR}} && gh pr create --repo {{.TRUCK_UPSTREAM}} --title "{{.CLI_ARGS}}" --fill
+
+  "upgrade":
+    desc: Pull latest truck into .src/ (fetches + resets to fork master)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch origin
+      - cd {{.TRUCK_SRC_DIR}} && git checkout master
+      - cd {{.TRUCK_SRC_DIR}} && git pull origin master
+      - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
+      - echo "Truck updated to $(cd {{.TRUCK_SRC_DIR}} && git rev-parse --short HEAD)"
 
   # ===========================================================================
   # Build & Test (for CI)
@@ -84,10 +167,10 @@ tasks:
   # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
   "run:shape-viewer":
     desc: "View JSON shapes - drag & drop .json files (opens Finder)"
-    deps: ["deps:clone"]
+    deps: ["deps:install"]
     cmds:
       - open {{.TRUCK_SRC_DIR}}/resources/shape/
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example simple-shape-viewer
+      - '{{.BIN_DIR}}/simple-shape-viewer'
 
   # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
   "run:obj-viewer":
@@ -125,6 +208,150 @@ tasks:
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example bsp-animation
+
+  # ===========================================================================
+  # WASM & Cloudflare Worker
+  # ===========================================================================
+  "wasm:build":
+    desc: Compile truck-js to WASM for Cloudflare Workers
+    deps: ["deps:clone", "deps:wasm-pack"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}}/truck-js && wasm-pack build --target bundler --out-dir {{.ROOT_DIR}}/systems/truck/worker/pkg
+
+  "wasm:build-browser-renderer":
+    desc: Compile truck-webgpu-gui to WASM for browser WebGPU rendering
+    deps: ["deps:clone", "deps:wasm-pack"]
+    cmds:
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
+
+  "worker:install-deps":
+    desc: Install Cloudflare Worker JavaScript dependencies
+    cmds:
+      - cd systems/truck/worker && bun install hono wrangler
+
+  "worker:build":
+    desc: Build the Cloudflare Worker
+    deps: ["wasm:build", "worker:install-deps"]
+    cmds:
+      - cd systems/truck/worker && bun x wrangler deploy --dry-run --outdir=dist
+
+  "worker:deploy":
+    desc: Deploy the Cloudflare Worker
+    deps: ["worker:build"]
+    cmds:
+      - cd systems/truck/worker && bun x wrangler deploy
+
+  # ===========================================================================
+  # Frontend (Web GUI)
+  # ===========================================================================
+
+  "frontend:install-deps":
+    desc: Install frontend JavaScript dependencies using Bun
+    cmds:
+      - cd web/truck-gui && bun install
+
+  "frontend:copy-wasm":
+    desc: Copy the truck-js WASM package to the frontend public directory
+    deps: ["wasm:build"]
+    cmds:
+      - rm -rf web/truck-gui/public/pkg
+      - cp -R systems/truck/worker/pkg web/truck-gui/public/pkg
+
+  "frontend:build":
+    desc: Build the frontend application for production
+    deps: ["frontend:install-deps", "frontend:copy-wasm"]
+    cmds:
+      - cd web/truck-gui && bun run build
+
+  "frontend:dev":
+    desc: Start the frontend development server
+    deps: ["frontend:install-deps", "frontend:copy-wasm"]
+    cmds:
+      - cd web/truck-gui && bun run dev
+
+  # ===========================================================================
+  # GUI (Pure JS WebGPU Frontend)
+  # ===========================================================================
+
+  "gui:build":
+    desc: Build browser WebGPU WASM
+    deps: ["wasm:build-browser-renderer"]
+    cmds:
+      - echo "Browser WebGPU WASM is ready in web/gui/pkg-browser-renderer"
+
+  "gui:serve":
+    desc: Serve GUI locally via Wrangler dev (Worker + static assets)
+    deps: ["gui:build", "worker:install-deps"]
+    cmds:
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x wrangler dev
+
+  "gui:deploy":
+    desc: Deploy GUI + API Worker to Cloudflare
+    deps: ["gui:build", "worker:install-deps"]
+    cmds:
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x wrangler deploy
+
+  # ===========================================================================
+  # Testing (Playwright E2E + Doc Screenshots)
+  # ===========================================================================
+
+  "test:install":
+    desc: Install Playwright test dependencies
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun install
+      - cd {{.ROOT_DIR}}/tests && bun x playwright install chromium
+    status:
+      - test -d {{.ROOT_DIR}}/tests/node_modules
+
+  "test:e2e":
+    desc: Run E2E tests against local dev server
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=e2e
+
+  "test:screenshots":
+    desc: Generate doc screenshots (saves to web/gui/docs/screenshots/)
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=screenshots
+
+  "test:lessons":
+    desc: Record lesson videos (saves to web/gui/docs/lessons/)
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=lessons
+
+  "test:all":
+    desc: Run all tests + generate screenshots + record lessons
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test
+
+  "docs:generate":
+    desc: Generate all doc assets (screenshots + lesson videos)
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=screenshots
+      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=lessons
+
+  "docs:upload":
+    desc: Upload doc assets (screenshots + videos) to R2
+    dir: "{{.ROOT_DIR}}/systems/truck/worker"
+    cmds:
+      - |
+        for f in ../../../web/gui/docs/screenshots/*.png; do
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
+        done
+      - |
+        for f in ../../../web/gui/docs/lessons/*.webm; do
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/lessons/$(basename $f)" --file="$f" --ct="video/webm" --remote
+        done
+
+  "docs:publish":
+    desc: Generate doc assets, upload to R2 (no redeploy needed)
+    cmds:
+      - task: docs:generate
+      - task: docs:upload
 
   # Controls: Space=toggle render mode
   "run:collision":

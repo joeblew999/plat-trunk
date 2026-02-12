@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20260212.0",
+    "hono": "^4.11.9",
+    "wrangler": "^4.64.0",
+    "zod": "^4.3.6"
+  }
+}

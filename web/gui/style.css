@@ -1,0 +1,77 @@
+/* CAD GUI styles — responsive layout for desktop/tablet/mobile */
+
+body { margin: 0; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+
+/* ===== DESKTOP (lg: >= 1024px) ===== */
+#ui-panel {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 10;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    width: 18rem;
+    transition: width 0.2s ease;
+}
+#ui-panel .tool-section { display: block; }
+
+/* Desktop panel collapse */
+#ui-panel.panel-collapsed { width: 3rem; overflow: hidden; }
+#ui-panel.panel-collapsed .card-body > *:not(.panel-header) { display: none; }
+#ui-panel.panel-collapsed .panel-header h2 { display: none; }
+
+/* ===== MOBILE + TABLET (< 1024px) ===== */
+@media (max-width: 1023px) {
+    #ui-panel {
+        position: fixed;
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 3.5rem;
+        width: auto;
+        max-height: 50vh;
+        overflow-y: auto;
+        border-radius: 1rem 1rem 0 0;
+        transform: translateY(100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
+    }
+    #ui-panel.sheet-open { transform: translateY(0); }
+    #ui-panel .tool-section { display: none; }
+    #ui-panel .tool-section.active { display: block; }
+}
+
+/* ===== TABLET refinement (768px - 1023px) ===== */
+@media (min-width: 768px) and (max-width: 1023px) {
+    #ui-panel {
+        max-height: 60vh;
+        max-width: 28rem;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%) translateY(100%);
+    }
+    #ui-panel.sheet-open { transform: translateX(-50%) translateY(0); }
+}
+
+/* ===== DOCK ===== */
+#mobile-dock {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* ===== DOCS ===== */
+#docs-toggle {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+}
+.drawer-side { z-index: 50; }
+.docs-content { max-width: 28rem; }
+.docs-content img { border-radius: 0.5rem; border: 1px solid oklch(var(--bc) / 0.2); }
+.docs-content h3 { margin-top: 1.5rem; }

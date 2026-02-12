@@ -14,14 +14,38 @@ license: MIT
 taskfile:
   path: Taskfile.yml
 
-# Process configuration for process-compose (none needed - truck is a library)
-processes: {}
+# Processes for process-compose
+processes:
+  shape-viewer:
+    command: task truck:run:shape-viewer
+    disabled: false
+  obj-viewer:
+    command: task truck:run:obj-viewer
+    disabled: true
+  rotate:
+    command: task truck:run:rotate
+    disabled: true
+  materials:
+    command: task truck:run:materials
+    disabled: true
+  textured:
+    command: task truck:run:textured
+    disabled: true
+  bsp:
+    command: task truck:run:bsp
+    disabled: true
+  collision:
+    command: task truck:run:collision
+    disabled: true
+  shader:
+    command: task truck:run:shader
+    disabled: true
 
 # Environment variables
 env:
   optional:
-    - name: PC_PORT
-      description: Process-compose TUI port
+    - name: PC_PORT_NUM
+      description: Process-compose port
       default: "8000"
 
 # Dependencies - only need xplat which bundles task + process-compose

@@ -43,7 +43,7 @@ tasks:
     status:
       - test -f {{.GH_BIN}}
     cmds:
-      - mkdir -p {{.BIN_DIR}}
+      - xplat os mkdir -p {{.BIN_DIR}}
       - echo "Installing gh CLI via Go..."
       - GOWORK=off GOBIN={{.BIN_DIR}} go install {{.GH_GO_PKG}}
       - echo "Installed gh to {{.GH_BIN}}"

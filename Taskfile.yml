@@ -33,6 +33,10 @@ includes:
     taskfile: ./systems/gh/Taskfile.gh.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
+  skills:
+    taskfile: ./.claude/skills/Taskfile.skills.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
 
 vars:
   BIN_DIR: .bin
@@ -88,6 +92,7 @@ tasks:
       - task: envsubst:debug:self
       - task: truck:debug:self
       - task: gh:debug:self
+      - task: skills:debug:self
 
   # ===========================================================================
   # Deps
@@ -96,8 +101,9 @@ tasks:
     desc: Install all external dependencies
     deps:
       - envsubst:deps:install
-      - truck:deps:clone
+      - truck:deps:install
       - gh:deps:install
+      - skills:update
 
   deps:clean:
     desc: Remove all installed dependencies
@@ -105,3 +111,4 @@ tasks:
       - rm -rf {{.BIN_DIR}}
       - rm -rf {{.SRC_DIR}}
       - rm -rf {{.DATA_DIR}}
+      - task: skills:clean

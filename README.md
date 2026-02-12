@@ -1,6 +1,16 @@
 # plat-trunk
 
+https://github.com/joeblew999/plat-trunk
+
 Rust CAD kernel platform using [truck](https://github.com/ricosjp/truck).
+
+## URLs
+
+| Environment | URL |
+|-------------|-----|
+| **Production** | https://cad.ubuntusoftware.net |
+| **Workers Dev** | https://truck-cad.gedw99.workers.dev |
+| **Local Dev** | http://localhost:8787 |
 
 ## Quick Start
 
@@ -11,19 +21,26 @@ curl -fsSL https://github.com/joeblew999/ubuntu-website/releases/latest/download
 # Install dependencies
 xplat task deps:install
 
-# Run examples
-xplat task truck:run:shape-viewer
-xplat task truck:run:obj-viewer
+# Build WASM + run local dev server
+xplat task truck:gui:build    # Build WASM module
+xplat task truck:gui:serve    # Start local dev (localhost:8787)
+xplat task truck:gui:deploy   # Deploy to Cloudflare
 ```
 
 ## Commands
 
 ```bash
-# Services
-xplat task up              # Start services with TUI
-xplat task up:detached     # Start in background
-xplat task down            # Stop services
-xplat task attach          # Attach to TUI
+# CAD GUI (browser)
+xplat task truck:gui:build    # Build WASM → web/gui/pkg-browser-renderer/
+xplat task truck:gui:serve    # Local dev via wrangler (localhost:8787)
+xplat task truck:gui:deploy   # Deploy to Cloudflare Workers
+
+# Process Compose (uses PC_PORT_NUM from .env)
+xplat process up              # Start with TUI
+xplat process up -D -t=false  # Start detached
+xplat process down            # Stop
+xplat process attach          # Attach to TUI
+xplat process list            # List processes
 
 # Truck examples (visual - opens window)
 xplat task truck:run:shape-viewer    # View JSON shapes (drag & drop)
@@ -42,10 +59,16 @@ xplat task truck:make:cylinder
 xplat task truck:make:torus
 xplat task truck:make:bottle
 
-# Build & Test
+# Build & Test (Rust)
 xplat task truck:build     # Build truck library
 xplat task truck:test      # Run tests
 xplat task truck:ci        # Full CI (check + test)
+
+# E2E Tests + Doc Screenshots (Playwright)
+xplat task truck:test:install      # Install Playwright + Chromium
+xplat task truck:test:e2e          # Run E2E tests (needs local server)
+xplat task truck:test:screenshots  # Generate doc screenshots
+xplat task truck:test:all          # Run everything
 
 # GitHub
 xplat task gh:login        # Login to GitHub
@@ -61,3 +84,15 @@ xplat task debug:all       # Show all system vars
 - [xplat](https://github.com/joeblew999/ubuntu-website) (bundles task + process-compose)
 - Rust (for truck)
 - Go 1.23+ (for gh CLI)
+
+## Configuration
+
+- `.env` - Default config (tracked), includes `PC_PORT_NUM=8000`
+- `.env.local` - Secrets (not tracked)
+- `xplat.yaml` - Manifest (source of truth for processes)
+- `pc.generated.yaml` - Generated from manifest (auto-detected by xplat process)
+
+```bash
+# Regenerate pc.generated.yaml from xplat.yaml
+xplat manifest gen-process
+```
