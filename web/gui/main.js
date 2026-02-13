@@ -1,4 +1,4 @@
-// CAD command UI — calls WASM SceneController directly.
+// CAD command UI — calls WASM SceneController (UUID-based API).
 // When Automerge is available, operations go through cadDocManager for collaborative sync.
 // When not, snapshot-based undo via undoManager is used as fallback.
 
@@ -21,82 +21,88 @@ function showFeedback(msg, isError) {
     }, 2000);
 }
 
-// Auto-offset: shift new primitives along X so they partially overlap (useful for booleans).
-function autoOffset(idx) {
-    if (!ctrl() || idx <= 0) return;
+// Auto-offset: shift new primitives along X so they partially overlap.
+// Returns the UUID of the offset target (same as input).
+function autoOffset(objectId) {
+    if (!ctrl()) return;
+    const ids = ctrl().object_ids();
+    const idx = ids.indexOf(objectId);
+    if (idx <= 0) return;
     const size = getSize();
     const dx = idx * size * 0.7;
-    ctrl().translate_object(idx, dx, 0, 0);
+    ctrl().translate_object(objectId, dx, 0, 0);
 }
 
 // --- Primitives ---
-document.getElementById('addCube')?.addEventListener('click', () => {
+function addPrimitive(addFn, docType, docParams) {
     if (!ctrl()) return;
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('add_cube', { size: getSize() });
+        const groupId = crypto.randomUUID();
+        const resultId = mgr.applyOperation(docType, docParams, groupId);
+        if (resultId) {
+            // Auto-offset as grouped op
+            const ids = ctrl().object_ids();
+            const idx = ids.indexOf(resultId);
+            if (idx > 0) {
+                const dx = idx * (docParams.size || 1.0) * 0.7;
+                mgr.applyOperation('translate', { objectId: resultId, dx, dy: 0, dz: 0 }, groupId);
+            }
+            window.selectedObjectId = resultId;
+        }
+        update();
     } else {
-        undo()?.captureBeforeMutation('Add cube');
-        const idx = ctrl().add_cube(getSize());
-        autoOffset(idx);
-        window.selectedObject = idx;
+        undo()?.captureBeforeMutation(`Add ${docType}`);
+        const id = addFn();
+        autoOffset(id);
+        window.selectedObjectId = id;
         update();
     }
+}
+
+document.getElementById('addCube')?.addEventListener('click', () => {
+    addPrimitive(
+        () => ctrl().add_cube(getSize()),
+        'add_cube',
+        { size: getSize() },
+    );
 });
 
 document.getElementById('addSphere')?.addEventListener('click', () => {
-    if (!ctrl()) return;
-    const mgr = docMgr();
-    if (mgr) {
-        mgr.applyOperation('add_sphere', { size: getSize() });
-    } else {
-        undo()?.captureBeforeMutation('Add sphere');
-        const idx = ctrl().add_sphere(getSize());
-        autoOffset(idx);
-        window.selectedObject = idx;
-        update();
-    }
+    addPrimitive(
+        () => ctrl().add_sphere(getSize()),
+        'add_sphere',
+        { size: getSize() },
+    );
 });
 
 document.getElementById('addCylinder')?.addEventListener('click', () => {
-    if (!ctrl()) return;
-    const mgr = docMgr();
-    if (mgr) {
-        mgr.applyOperation('add_cylinder', { radius: getSize() * 0.5, height: getSize() });
-    } else {
-        undo()?.captureBeforeMutation('Add cylinder');
-        const idx = ctrl().add_cylinder(getSize() * 0.5, getSize());
-        autoOffset(idx);
-        window.selectedObject = idx;
-        update();
-    }
+    addPrimitive(
+        () => ctrl().add_cylinder(getSize() * 0.5, getSize()),
+        'add_cylinder',
+        { radius: getSize() * 0.5, height: getSize() },
+    );
 });
 
 document.getElementById('addTorus')?.addEventListener('click', () => {
-    if (!ctrl()) return;
-    const mgr = docMgr();
-    if (mgr) {
-        mgr.applyOperation('add_torus', { majorRadius: getSize(), minorRadius: getSize() * 0.3 });
-    } else {
-        undo()?.captureBeforeMutation('Add torus');
-        const idx = ctrl().add_torus(getSize(), getSize() * 0.3);
-        autoOffset(idx);
-        window.selectedObject = idx;
-        update();
-    }
+    addPrimitive(
+        () => ctrl().add_torus(getSize(), getSize() * 0.3),
+        'add_torus',
+        { majorRadius: getSize(), minorRadius: getSize() * 0.3 },
+    );
 });
 
 // --- Transform ---
 document.getElementById('translateBtn')?.addEventListener('click', () => {
     if (!ctrl()) return;
-    const idx = window.selectedObject ?? 0;
-    const count = ctrl().object_count();
-    if (count === 0) {
+    const ids = ctrl().object_ids();
+    if (ids.length === 0) {
         showFeedback('No objects to move', true);
         return;
     }
-    if (idx >= count) {
-        showFeedback(`Object [${idx}] doesn't exist (${count} objects)`, true);
+    const objectId = window.selectedObjectId || ids[0];
+    if (!ids.includes(objectId)) {
+        showFeedback('Selected object not found', true);
         return;
     }
     const dx = parseFloat(document.getElementById('txVal').value) || 0;
@@ -109,32 +115,32 @@ document.getElementById('translateBtn')?.addEventListener('click', () => {
 
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('translate', { objectIndex: idx, dx, dy, dz });
-        showFeedback(`Moved [${idx}] by (${dx}, ${dy}, ${dz})`, false);
+        mgr.applyOperation('translate', { objectId, dx, dy, dz });
+        showFeedback(`Moved ${objectId.slice(0, 8)} by (${dx}, ${dy}, ${dz})`, false);
     } else {
-        undo()?.captureBeforeMutation(`Move [${idx}] by (${dx},${dy},${dz})`);
-        console.log(`translate_object(${idx}, ${dx}, ${dy}, ${dz})`);
-        const ok = ctrl().translate_object(idx, dx, dy, dz);
+        undo()?.captureBeforeMutation(`Move ${objectId.slice(0, 8)}`);
+        const ok = ctrl().translate_object(objectId, dx, dy, dz);
         if (ok) {
-            showFeedback(`Moved [${idx}] by (${dx}, ${dy}, ${dz})`, false);
+            showFeedback(`Moved ${objectId.slice(0, 8)} by (${dx}, ${dy}, ${dz})`, false);
         } else {
-            showFeedback(`Move failed for object [${idx}]`, true);
+            showFeedback('Move failed', true);
         }
     }
 });
 
 // --- Boolean ---
-function getAB() {
-    return [
-        parseInt(document.getElementById('boolA').value) || 0,
-        parseInt(document.getElementById('boolB').value) || 0,
-    ];
+// Get UUID pairs for boolean ops: use object_ids() by index from UI inputs
+function getABIds() {
+    const ids = ctrl()?.object_ids() || [];
+    const a = parseInt(document.getElementById('boolA').value) || 0;
+    const b = parseInt(document.getElementById('boolB').value) || 0;
+    return [ids[a] || '', ids[b] || ''];
 }
 
-function showBoolResult(idx, op) {
-    if (idx >= 0) {
-        window.selectedObject = idx;
-        showFeedback(`${op} → object [${idx}]`, false);
+function showBoolResult(resultId, op) {
+    if (resultId) {
+        window.selectedObjectId = resultId;
+        showFeedback(`${op} → ${resultId.slice(0, 8)}`, false);
     } else {
         showFeedback(`${op} failed — ensure objects overlap`, true);
     }
@@ -142,50 +148,63 @@ function showBoolResult(idx, op) {
 
 document.getElementById('boolUnion')?.addEventListener('click', () => {
     if (!ctrl()) return;
-    const [a, b] = getAB();
+    const [idA, idB] = getABIds();
+    if (!idA || !idB) { showFeedback('Invalid object indices', true); return; }
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('boolean_union', { a, b });
+        const resultId = mgr.applyOperation('boolean_union', { idA, idB });
+        showBoolResult(resultId, 'Union');
     } else {
-        undo()?.captureBeforeMutation(`Union [${a}] + [${b}]`);
-        showBoolResult(ctrl().boolean_union(a, b), 'Union');
+        undo()?.captureBeforeMutation('Union');
+        showBoolResult(ctrl().boolean_union(idA, idB) || null, 'Union');
     }
 });
 
 document.getElementById('boolSubtract')?.addEventListener('click', () => {
     if (!ctrl()) return;
-    const [a, b] = getAB();
+    const [idA, idB] = getABIds();
+    if (!idA || !idB) { showFeedback('Invalid object indices', true); return; }
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('boolean_subtract', { a, b });
+        const resultId = mgr.applyOperation('boolean_subtract', { idA, idB });
+        showBoolResult(resultId, 'Subtract');
     } else {
-        undo()?.captureBeforeMutation(`Subtract [${b}] from [${a}]`);
-        showBoolResult(ctrl().boolean_subtract(a, b), 'Subtract');
+        undo()?.captureBeforeMutation('Subtract');
+        showBoolResult(ctrl().boolean_subtract(idA, idB) || null, 'Subtract');
     }
 });
 
 document.getElementById('boolIntersect')?.addEventListener('click', () => {
     if (!ctrl()) return;
-    const [a, b] = getAB();
+    const [idA, idB] = getABIds();
+    if (!idA || !idB) { showFeedback('Invalid object indices', true); return; }
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('boolean_intersect', { a, b });
+        const resultId = mgr.applyOperation('boolean_intersect', { idA, idB });
+        showBoolResult(resultId, 'Intersect');
     } else {
-        undo()?.captureBeforeMutation(`Intersect [${a}] ∩ [${b}]`);
-        showBoolResult(ctrl().boolean_intersect(a, b), 'Intersect');
+        undo()?.captureBeforeMutation('Intersect');
+        showBoolResult(ctrl().boolean_intersect(idA, idB) || null, 'Intersect');
     }
 });
 
 // --- Scene management ---
 document.getElementById('deleteBtn')?.addEventListener('click', () => {
     if (!ctrl()) return;
+    const ids = ctrl().object_ids();
+    const objectId = window.selectedObjectId || ids[0];
+    if (!objectId || !ids.includes(objectId)) {
+        showFeedback('No object selected', true);
+        return;
+    }
     const mgr = docMgr();
     if (mgr) {
-        mgr.applyOperation('delete', { objectIndex: window.selectedObject || 0 });
+        mgr.applyOperation('delete', { objectId });
     } else {
-        undo()?.captureBeforeMutation(`Delete [${window.selectedObject || 0}]`);
-        ctrl().delete_object(window.selectedObject || 0);
-        window.selectedObject = 0;
+        undo()?.captureBeforeMutation('Delete');
+        ctrl().delete_object(objectId);
+        const remaining = ctrl().object_ids();
+        window.selectedObjectId = remaining.length > 0 ? remaining[remaining.length - 1] : null;
         update();
     }
 });
@@ -198,7 +217,7 @@ document.getElementById('clearBtn')?.addEventListener('click', () => {
     } else {
         undo()?.captureBeforeMutation('Clear scene');
         ctrl().clear_scene();
-        window.selectedObject = 0;
+        window.selectedObjectId = null;
         update();
     }
 });
@@ -246,7 +265,7 @@ document.getElementById('newDocBtn')?.addEventListener('click', async () => {
         if (name === null) return;
         ctrl()?.clear_scene();
         await window.cadDocManager.createDocument(name);
-        window.selectedObject = 0;
+        window.selectedObjectId = null;
         update();
         showFeedback('New document created', false);
     }
@@ -300,7 +319,8 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
     reader.onload = () => {
         undo()?.captureBeforeMutation('Load file');
         ctrl().import_scene(reader.result);
-        window.selectedObject = 0;
+        const ids = ctrl().object_ids();
+        window.selectedObjectId = ids.length > 0 ? ids[0] : null;
         update();
     };
     reader.readAsText(file);
@@ -333,7 +353,8 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
                 const json = await res.text();
                 undo()?.captureBeforeMutation(`Load example: ${select.value}`);
                 ctrl().import_scene(json);
-                window.selectedObject = 0;
+                const ids = ctrl().object_ids();
+                window.selectedObjectId = ids.length > 0 ? ids[0] : null;
                 update();
                 showFeedback(`Loaded: ${select.options[select.selectedIndex].text}`, false);
             } catch (err) {

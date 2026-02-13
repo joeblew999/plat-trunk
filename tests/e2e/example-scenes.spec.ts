@@ -73,10 +73,11 @@ test.describe('Generate Example Scenes', () => {
     // Boolean subtract: cube - cylinder = punched cube
     const result = await page.evaluate(() => {
       const ctrl = window['sceneController'];
-      return ctrl.boolean_subtract(0, 1);
+      const ids = ctrl.object_ids();
+      return ctrl.boolean_subtract(ids[0], ids[1]);
     });
     await page.waitForTimeout(500);
-    expect(result).toBeGreaterThanOrEqual(0);
+    expect(result).toBeTruthy();
 
     const entry = await saveExample(page, 'punched-cube', 'Punched Cube', 'A cube with a cylindrical hole through the center.');
     manifest.push(entry);
@@ -89,8 +90,8 @@ test.describe('Generate Example Scenes', () => {
     // Add second cube with offset
     await page.evaluate(() => {
       const ctrl = window['sceneController'];
-      const idx = ctrl.add_cube(0.5);
-      ctrl.translate_object(idx, 0.7, 0, 0);
+      const cubeId = ctrl.add_cube(0.5);
+      ctrl.translate_object(cubeId, 0.7, 0, 0);
     });
     await page.waitForTimeout(500);
     expect(await getObjectCount(page)).toBe(2);
@@ -98,10 +99,11 @@ test.describe('Generate Example Scenes', () => {
     // Boolean union
     const result = await page.evaluate(() => {
       const ctrl = window['sceneController'];
-      return ctrl.boolean_union(0, 1);
+      const ids = ctrl.object_ids();
+      return ctrl.boolean_union(ids[0], ids[1]);
     });
     await page.waitForTimeout(500);
-    expect(result).toBeGreaterThanOrEqual(0);
+    expect(result).toBeTruthy();
 
     const entry = await saveExample(page, 'two-cubes-union', 'Merged Cubes', 'Two overlapping cubes merged into one solid.');
     manifest.push(entry);
@@ -129,10 +131,10 @@ test.describe('Generate Example Scenes', () => {
     // Add 2 more cubes, translate them up
     await page.evaluate(() => {
       const ctrl = window['sceneController'];
-      const idx1 = ctrl.add_cube(1.0);
-      ctrl.translate_object(idx1, 0, 1.0, 0);
-      const idx2 = ctrl.add_cube(0.7);
-      ctrl.translate_object(idx2, 0, 2.2, 0);
+      const id1 = ctrl.add_cube(1.0);
+      ctrl.translate_object(id1, 0, 1.0, 0);
+      const id2 = ctrl.add_cube(0.7);
+      ctrl.translate_object(id2, 0, 2.2, 0);
     });
     await page.waitForTimeout(500);
     expect(await getObjectCount(page)).toBe(3);

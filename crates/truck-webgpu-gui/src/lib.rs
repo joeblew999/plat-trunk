@@ -8,6 +8,9 @@ use std::f64::consts::PI;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
 use wasm_bindgen::prelude::*;
 use winit::event::*;
 use winit::event_loop::EventLoop;
@@ -39,9 +42,16 @@ macro_rules! error {
 // ---------------------------------------------------------------------------
 
 struct SceneObject {
+    id: Uuid,
     solid: Solid,
     polygon: PolygonInstance,
     wireframe: WireFrameInstance,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExportEntry {
+    id: String,
+    solid: Solid,
 }
 
 // ---------------------------------------------------------------------------
@@ -53,13 +63,22 @@ struct SharedState {
     creator: InstanceCreator,
     surface: wgpu::Surface<'static>,
     objects: Vec<SceneObject>,
-    selected: Option<usize>,
+    id_to_index: HashMap<String, usize>,
+    selected: Option<String>,
     // Mouse interaction
     rotate_flag: bool,
     prev_cursor: Vector2,
     // Touch interaction (iOS / mobile)
     touches: HashMap<u64, Vector2>,
     prev_pinch_dist: Option<f64>,
+}
+
+/// Rebuild the id→index lookup after any mutation that changes Vec ordering.
+fn rebuild_id_index(s: &mut SharedState) {
+    s.id_to_index.clear();
+    for (i, obj) in s.objects.iter().enumerate() {
+        s.id_to_index.insert(obj.id.to_string(), i);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +168,17 @@ fn rebuild_scene(s: &mut SharedState) {
     }
 }
 
-fn add_solid_to_state(s: &mut SharedState, solid: Solid) -> usize {
+fn add_solid_to_state(s: &mut SharedState, solid: Solid) -> String {
+    let id = Uuid::new_v4();
     let idx = s.objects.len();
     let color = color_for_index(idx);
     let (polygon, wireframe) = solid_to_instances(&s.creator, &solid, color);
     s.scene.add_object(&polygon);
     s.scene.add_object(&wireframe);
-    s.objects.push(SceneObject { solid, polygon, wireframe });
-    idx
+    let id_str = id.to_string();
+    s.id_to_index.insert(id_str.clone(), idx);
+    s.objects.push(SceneObject { id, solid, polygon, wireframe });
+    id_str
 }
 
 // ---------------------------------------------------------------------------
@@ -313,25 +335,26 @@ impl SceneController {
         let mut scene = Scene::new(device_handler, &scene_desc);
         let creator = scene.instance_creator();
 
-        // Start with a default cube
-        let solid = make_cube(1.0);
-        let (polygon, wireframe) = solid_to_instances(&creator, &solid, color_for_index(0));
-        scene.add_object(&polygon);
-        scene.add_object(&wireframe);
-
         log!("WASM: truck Scene ready. Drag=rotate, Scroll=zoom, Right-click=light.");
 
-        let state = Rc::new(RefCell::new(SharedState {
+        let mut shared = SharedState {
             scene,
             creator,
             surface,
-            objects: vec![SceneObject { solid, polygon, wireframe }],
-            selected: Some(0),
+            objects: Vec::new(),
+            id_to_index: HashMap::new(),
+            selected: None,
             rotate_flag: false,
             prev_cursor: Vector2::zero(),
             touches: HashMap::new(),
             prev_pinch_dist: None,
-        }));
+        };
+
+        // Start with a default cube
+        let default_id = add_solid_to_state(&mut shared, make_cube(1.0));
+        shared.selected = Some(default_id);
+
+        let state = Rc::new(RefCell::new(shared));
 
         Ok(SceneController {
             event_loop: Some(event_loop),
@@ -517,7 +540,7 @@ impl SceneController {
     // =====================================================================
 
     #[wasm_bindgen]
-    pub fn add_cube(&self, size: f64) -> usize {
+    pub fn add_cube(&self, size: f64) -> String {
         log!("WASM: add_cube({})", size);
         let solid = make_cube(size);
         let mut s = self.state.borrow_mut();
@@ -525,7 +548,7 @@ impl SceneController {
     }
 
     #[wasm_bindgen]
-    pub fn add_sphere(&self, radius: f64) -> usize {
+    pub fn add_sphere(&self, radius: f64) -> String {
         log!("WASM: add_sphere({})", radius);
         let solid = make_sphere(radius);
         let mut s = self.state.borrow_mut();
@@ -533,7 +556,7 @@ impl SceneController {
     }
 
     #[wasm_bindgen]
-    pub fn add_cylinder(&self, radius: f64, height: f64) -> usize {
+    pub fn add_cylinder(&self, radius: f64, height: f64) -> String {
         log!("WASM: add_cylinder({}, {})", radius, height);
         let solid = make_cylinder(radius, height);
         let mut s = self.state.borrow_mut();
@@ -541,7 +564,7 @@ impl SceneController {
     }
 
     #[wasm_bindgen]
-    pub fn add_torus(&self, major_r: f64, minor_r: f64) -> usize {
+    pub fn add_torus(&self, major_r: f64, minor_r: f64) -> String {
         log!("WASM: add_torus({}, {})", major_r, minor_r);
         let solid = make_torus(major_r, minor_r);
         let mut s = self.state.borrow_mut();
@@ -553,23 +576,25 @@ impl SceneController {
     // =====================================================================
 
     #[wasm_bindgen]
-    pub fn translate_object(&self, idx: usize, dx: f64, dy: f64, dz: f64) -> bool {
+    pub fn translate_object(&self, id: &str, dx: f64, dy: f64, dz: f64) -> bool {
         let mut s = self.state.borrow_mut();
-        if idx >= s.objects.len() { return false; }
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        let obj_id = s.objects[idx].id;
         let solid = builder::translated(&s.objects[idx].solid, Vector3::new(dx, dy, dz));
         let color = color_for_index(idx);
         let (polygon, wireframe) = solid_to_instances(&s.creator, &solid, color);
-        s.objects[idx] = SceneObject { solid, polygon, wireframe };
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe };
         rebuild_scene(&mut s);
         true
     }
 
     #[wasm_bindgen]
-    pub fn rotate_object(&self, idx: usize, axis_x: f64, axis_y: f64, axis_z: f64, angle_deg: f64) -> bool {
+    pub fn rotate_object(&self, id: &str, axis_x: f64, axis_y: f64, axis_z: f64, angle_deg: f64) -> bool {
         let mut s = self.state.borrow_mut();
-        if idx >= s.objects.len() { return false; }
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let axis = Vector3::new(axis_x, axis_y, axis_z);
         if axis.so_small() { return false; }
+        let obj_id = s.objects[idx].id;
         let solid = builder::rotated(
             &s.objects[idx].solid,
             Point3::origin(),
@@ -578,7 +603,7 @@ impl SceneController {
         );
         let color = color_for_index(idx);
         let (polygon, wireframe) = solid_to_instances(&s.creator, &solid, color);
-        s.objects[idx] = SceneObject { solid, polygon, wireframe };
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe };
         rebuild_scene(&mut s);
         true
     }
@@ -592,10 +617,12 @@ impl SceneController {
     /// Note: booleans work reliably with cubes + cylinders (tsweep geometry).
     /// Spheres/tori (rsweep/NURBS) may fail — truck-shapeops limitation.
     #[wasm_bindgen]
-    pub fn boolean_union(&self, idx_a: usize, idx_b: usize) -> i32 {
-        log!("WASM: boolean_union({}, {})", idx_a, idx_b);
+    pub fn boolean_union(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_union({}, {})", id_a, id_b);
         let mut s = self.state.borrow_mut();
-        if idx_a >= s.objects.len() || idx_b >= s.objects.len() || idx_a == idx_b { return -1; }
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
 
         // Try direct or() first
         let result = truck_shapeops::or(
@@ -618,24 +645,27 @@ impl SceneController {
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
-                let idx = add_solid_to_state(&mut s, solid);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
                 rebuild_scene(&mut s);
-                idx as i32
+                new_id
             }
             None => {
                 error!("Boolean union failed — try cubes/cylinders (spheres/tori not yet supported for booleans)");
-                -1
+                String::new()
             }
         }
     }
 
-    /// Subtract object B from A, replacing both with the result. Returns new index.
+    /// Subtract object B from A, replacing both with the result. Returns new UUID (empty on failure).
     /// Note: works reliably with cubes + cylinders. Spheres/tori may fail.
     #[wasm_bindgen]
-    pub fn boolean_subtract(&self, idx_a: usize, idx_b: usize) -> i32 {
-        log!("WASM: boolean_subtract({}, {})", idx_a, idx_b);
+    pub fn boolean_subtract(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_subtract({}, {})", id_a, id_b);
         let mut s = self.state.borrow_mut();
-        if idx_a >= s.objects.len() || idx_b >= s.objects.len() || idx_a == idx_b { return -1; }
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
         let mut not_b = s.objects[idx_b].solid.clone();
         not_b.not();
         let result = truck_shapeops::and(&s.objects[idx_a].solid, &not_b, 0.05);
@@ -644,37 +674,41 @@ impl SceneController {
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
-                let idx = add_solid_to_state(&mut s, solid);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
                 rebuild_scene(&mut s);
-                idx as i32
+                new_id
             }
             None => {
                 error!("Boolean subtract failed — try cubes/cylinders (spheres/tori not yet supported for booleans)");
-                -1
+                String::new()
             }
         }
     }
 
-    /// Intersect two objects. Returns new index.
+    /// Intersect two objects. Returns new UUID (empty on failure).
     /// Note: works reliably with cubes + cylinders. Spheres/tori may fail.
     #[wasm_bindgen]
-    pub fn boolean_intersect(&self, idx_a: usize, idx_b: usize) -> i32 {
-        log!("WASM: boolean_intersect({}, {})", idx_a, idx_b);
+    pub fn boolean_intersect(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_intersect({}, {})", id_a, id_b);
         let mut s = self.state.borrow_mut();
-        if idx_a >= s.objects.len() || idx_b >= s.objects.len() || idx_a == idx_b { return -1; }
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
         let result = truck_shapeops::and(&s.objects[idx_a].solid, &s.objects[idx_b].solid, 0.05);
         match result {
             Some(solid) => {
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
-                let idx = add_solid_to_state(&mut s, solid);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
                 rebuild_scene(&mut s);
-                idx as i32
+                new_id
             }
             None => {
                 error!("Boolean intersect failed — try cubes/cylinders (spheres/tori not yet supported for booleans)");
-                -1
+                String::new()
             }
         }
     }
@@ -684,10 +718,11 @@ impl SceneController {
     // =====================================================================
 
     #[wasm_bindgen]
-    pub fn delete_object(&self, idx: usize) -> bool {
+    pub fn delete_object(&self, id: &str) -> bool {
         let mut s = self.state.borrow_mut();
-        if idx >= s.objects.len() { return false; }
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         s.objects.remove(idx);
+        rebuild_id_index(&mut s);
         rebuild_scene(&mut s);
         true
     }
@@ -696,6 +731,7 @@ impl SceneController {
     pub fn clear_scene(&self) {
         let mut s = self.state.borrow_mut();
         s.objects.clear();
+        s.id_to_index.clear();
         s.scene.clear_objects();
     }
 
@@ -704,10 +740,19 @@ impl SceneController {
         self.state.borrow().objects.len()
     }
 
+    /// Returns all object UUIDs in scene order.
     #[wasm_bindgen]
-    pub fn select_object(&self, idx: usize) {
-        self.state.borrow_mut().selected = if idx < self.state.borrow().objects.len() {
-            Some(idx)
+    pub fn object_ids(&self) -> Vec<String> {
+        self.state.borrow().objects.iter().map(|o| o.id.to_string()).collect()
+    }
+
+    #[wasm_bindgen]
+    pub fn select_object(&self, id: &str) {
+        let s = self.state.borrow();
+        let valid = s.id_to_index.contains_key(id);
+        drop(s);
+        self.state.borrow_mut().selected = if valid {
+            Some(id.to_string())
         } else {
             None
         };
@@ -717,12 +762,15 @@ impl SceneController {
     // Save / Load (JSON serialization of truck Solids)
     // =====================================================================
 
-    /// Export entire scene as JSON string. This is the file format.
+    /// Export entire scene as JSON string with UUIDs.
     #[wasm_bindgen]
     pub fn export_scene(&self) -> String {
         let s = self.state.borrow();
-        let solids: Vec<_> = s.objects.iter().map(|obj| &obj.solid).collect();
-        serde_json::to_string_pretty(&solids).unwrap_or_else(|e| {
+        let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| ExportEntry {
+            id: obj.id.to_string(),
+            solid: obj.solid.clone(),
+        }).collect();
+        serde_json::to_string_pretty(&entries).unwrap_or_else(|e| {
             error!("Export failed: {}", e);
             "[]".to_string()
         })
@@ -731,8 +779,8 @@ impl SceneController {
     /// Import scene from JSON string. Replaces current scene.
     #[wasm_bindgen]
     pub fn import_scene(&self, json: &str) -> bool {
-        let solids: Vec<Solid> = match serde_json::from_str(json) {
-            Ok(s) => s,
+        let entries: Vec<ExportEntry> = match serde_json::from_str(json) {
+            Ok(e) => e,
             Err(e) => {
                 error!("Import failed: {}", e);
                 return false;
@@ -740,9 +788,17 @@ impl SceneController {
         };
         let mut s = self.state.borrow_mut();
         s.objects.clear();
+        s.id_to_index.clear();
         s.scene.clear_objects();
-        for solid in solids {
-            add_solid_to_state(&mut s, solid);
+        for entry in entries {
+            let id = Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::new_v4());
+            let idx = s.objects.len();
+            let color = color_for_index(idx);
+            let (polygon, wireframe) = solid_to_instances(&s.creator, &entry.solid, color);
+            s.scene.add_object(&polygon);
+            s.scene.add_object(&wireframe);
+            s.id_to_index.insert(id.to_string(), idx);
+            s.objects.push(SceneObject { id, solid: entry.solid, polygon, wireframe });
         }
         log!("WASM: Imported {} objects", s.objects.len());
         true

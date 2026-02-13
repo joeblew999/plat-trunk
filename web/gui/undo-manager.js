@@ -41,7 +41,8 @@ class UndoManager {
         this.redoStack.push({ snapshot: current, desc: entry.desc });
 
         ctrl.import_scene(entry.snapshot);
-        window.selectedObject = 0;
+        const ids = ctrl.object_ids();
+        window.selectedObjectId = ids.length > 0 ? ids[0] : null;
         if (window.updateObjectList) window.updateObjectList();
         this.updateButtons();
 
@@ -60,7 +61,8 @@ class UndoManager {
         this.undoStack.push({ snapshot: current, desc: entry.desc });
 
         ctrl.import_scene(entry.snapshot);
-        window.selectedObject = 0;
+        const ids = ctrl.object_ids();
+        window.selectedObjectId = ids.length > 0 ? ids[0] : null;
         if (window.updateObjectList) window.updateObjectList();
         this.updateButtons();
 

@@ -72,5 +72,8 @@ see [kkrpc.md](kkrpc.md) for full compilation strategy, build commands, optimiza
 
 - [kkrpc.md](kkrpc.md) — WASM boundary layer, transports, compilation strategy, zero-copy rules
 - [automerge.md](automerge.md) — CRDT sync, storage, state management
+- [undo-redo.md](undo-redo.md) — undo/redo, collaborative state, R2 sync, operation log
 - [truck.md](truck.md) — Rust B-Rep CAD kernel
 - [webgpu.md](webgpu.md) — GPU rendering architecture, Tier 1 + Tier 3
+- [direct_vs_parametric.md](direct_vs_parametric.md) — direct vs parametric modeling, constraint solver
+- [mcp.md](mcp.md) — API stack (hono, Better-Auth, OpenAPI, MCP)

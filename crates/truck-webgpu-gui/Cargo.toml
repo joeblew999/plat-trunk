@@ -27,6 +27,10 @@ truck-shapeops = { version = "0.4.0", path = "../../.src/truck/truck-shapeops", 
 
 # Serialization (save/load solids as JSON)
 serde_json = "1.0"
+serde = { version = "1", features = ["derive"] }
+
+# Stable object identity (UUID v4 for WASM)
+uuid = { version = "1", features = ["v4", "js", "serde"] }
 
 [features]
 default = []

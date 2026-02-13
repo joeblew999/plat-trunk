@@ -88,6 +88,7 @@
                         <div data-section="scene" class="tool-section">
                             <div class="divider my-0 text-xs">Scene</div>
                             <div id="objectList" class="text-xs opacity-70 mb-1">Objects: loading...</div>
+                            <div id="timelineStrip" class="flex gap-1 overflow-x-auto pb-1 mb-1"></div>
                             <div class="flex gap-1 mb-1">
                                 <button id="undoBtn" class="btn btn-outline btn-xs" disabled>Undo</button>
                                 <button id="redoBtn" class="btn btn-outline btn-xs" disabled>Redo</button>
@@ -208,7 +209,9 @@
                 const controller = await new SceneController("cad-canvas");
                 controller.run();
                 window.sceneController = controller;
-                window.selectedObject = 0;
+                // Set initial selection to the default cube UUID
+                const initIds = controller.object_ids();
+                window.selectedObjectId = initIds.length > 0 ? initIds[0] : null;
                 console.log("CAD running.");
                 updateObjectList();
 
@@ -230,16 +233,15 @@
         window.updateObjectList = function() {
             const c = window.sceneController;
             if (!c) return;
-            const count = c.object_count();
+            const ids = c.object_ids();
             const el = document.getElementById('objectList');
-            if (count === 0) {
+            if (ids.length === 0) {
                 el.textContent = 'Scene empty';
             } else {
-                const items = [];
-                for (let i = 0; i < count; i++) {
-                    const sel = i === window.selectedObject ? ' *' : '';
-                    items.push(`[${i}]${sel}`);
-                }
+                const items = ids.map((id, i) => {
+                    const sel = id === window.selectedObjectId ? '*' : '';
+                    return `[${i}:${id.slice(0, 4)}]${sel}`;
+                });
                 el.textContent = 'Objects: ' + items.join(' ');
             }
         };

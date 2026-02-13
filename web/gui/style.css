@@ -75,3 +75,9 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .docs-content { max-width: 28rem; }
 .docs-content img { border-radius: 0.5rem; border: 1px solid oklch(var(--bc) / 0.2); }
 .docs-content h3 { margin-top: 1.5rem; }
+
+/* ===== TIMELINE ===== */
+#timelineStrip { scrollbar-width: thin; }
+#timelineStrip .timeline-chip-disabled { opacity: 0.35; text-decoration: line-through; }
+#timelineStrip .timeline-chip-own { border-left: 2px solid oklch(var(--p)); }
+#timelineStrip .timeline-chip-remote { border-left: 2px solid oklch(var(--s)); }

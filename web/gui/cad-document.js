@@ -5,9 +5,9 @@
 //   { name, createdAt, operations: CadOperation[], snapshotJson?, snapshotAtOpIndex? }
 //
 // Each CadOperation:
-//   { id, type, params, enabled, timestamp, actorId }
+//   { id, type, params, enabled, timestamp, actorId, groupId? }
 //
-// Undo = set enabled=false on last own op. Redo = re-enable first disabled own op.
+// Undo = set enabled=false on last own op (or entire group). Redo = re-enable.
 // Scene is rebuilt by replaying all enabled ops from the last checkpoint.
 
 import { Repo, isValidAutomergeUrl } from '@automerge/automerge-repo';
@@ -22,6 +22,9 @@ class CadDocumentManager {
         this.handle = null;
         this.actorId = this._getOrCreateActorId();
         this._replayInProgress = false;
+        // Maps opId → resultObjectId (UUID returned by WASM for add/boolean ops)
+        this._opResultMap = new Map();
+        this._syncAdapter = null;
     }
 
     _getOrCreateActorId() {
@@ -46,6 +49,11 @@ class CadDocumentManager {
             network: adapters,
             storage: new IndexedDBStorageAdapter('cad-docs'),
         });
+
+        // Wire WorkerSyncAdapter as persistence sidecar
+        if (window.WorkerSyncAdapter) {
+            this._syncAdapter = new window.WorkerSyncAdapter();
+        }
 
         // Check URL for ?doc= parameter
         const params = new URLSearchParams(window.location.search);
@@ -76,6 +84,7 @@ class CadDocumentManager {
         localStorage.setItem('cad-last-doc-url', this.handle.url);
         this._listenForChanges();
         this._updateDocInfo();
+        this._renderTimeline();
         return this.handle.url;
     }
 
@@ -90,9 +99,10 @@ class CadDocumentManager {
         return url;
     }
 
-    /** Apply a new CAD operation — adds to op log and executes */
-    async applyOperation(type, params = {}) {
-        if (!this.handle || !this._ctrl()) return;
+    /** Apply a new CAD operation — adds to op log and executes.
+     *  Returns the result object UUID (for add/boolean ops) or null. */
+    applyOperation(type, params = {}, groupId = null) {
+        if (!this.handle || !this._ctrl()) return null;
 
         const op = {
             id: crypto.randomUUID(),
@@ -101,6 +111,7 @@ class CadDocumentManager {
             enabled: true,
             timestamp: Date.now(),
             actorId: this.actorId,
+            groupId: groupId || null,
         };
 
         this.handle.change((d) => {
@@ -117,12 +128,17 @@ class CadDocumentManager {
         });
 
         // Execute immediately (no need to replay entire log)
-        this._executeOp(op);
+        const resultId = this._executeOp(op);
+        if (resultId) {
+            this._opResultMap.set(op.id, resultId);
+        }
         if (window.updateObjectList) window.updateObjectList();
         window.undoManager?.updateButtons();
+        this._renderTimeline();
+        return resultId;
     }
 
-    /** Undo last own enabled operation — sets enabled=false and replays */
+    /** Undo last own enabled operation (or entire group) — sets enabled=false and replays */
     undo() {
         if (!this.handle) return false;
         const doc = this.handle.docSync();
@@ -131,8 +147,18 @@ class CadDocumentManager {
         // Find last enabled op by this actor
         for (let i = doc.operations.length - 1; i >= 0; i--) {
             if (doc.operations[i].actorId === this.actorId && doc.operations[i].enabled) {
+                const targetGroupId = doc.operations[i].groupId;
                 this.handle.change((d) => {
-                    d.operations[i].enabled = false;
+                    if (targetGroupId) {
+                        // Disable ALL ops in this group
+                        for (let j = 0; j < d.operations.length; j++) {
+                            if (d.operations[j].groupId === targetGroupId) {
+                                d.operations[j].enabled = false;
+                            }
+                        }
+                    } else {
+                        d.operations[i].enabled = false;
+                    }
                 });
                 this._replayScene();
                 return true;
@@ -141,7 +167,7 @@ class CadDocumentManager {
         return false;
     }
 
-    /** Redo — re-enable first disabled own op (from end of disabled streak) */
+    /** Redo — re-enable first disabled own op/group (from end of disabled streak) */
     redo() {
         if (!this.handle) return false;
         const doc = this.handle.docSync();
@@ -158,8 +184,18 @@ class CadDocumentManager {
         }
         if (target === -1) return false;
 
+        const targetGroupId = doc.operations[target].groupId;
         this.handle.change((d) => {
-            d.operations[target].enabled = true;
+            if (targetGroupId) {
+                // Re-enable ALL ops in this group
+                for (let j = 0; j < d.operations.length; j++) {
+                    if (d.operations[j].groupId === targetGroupId) {
+                        d.operations[j].enabled = true;
+                    }
+                }
+            } else {
+                d.operations[target].enabled = true;
+            }
         });
         this._replayScene();
         return true;
@@ -174,7 +210,6 @@ class CadDocumentManager {
     get canRedo() {
         const doc = this.handle?.docSync();
         if (!doc) return false;
-        // Check if there are disabled own ops after last enabled own op
         let foundDisabled = false;
         for (let i = doc.operations.length - 1; i >= 0; i--) {
             if (doc.operations[i].actorId === this.actorId) {
@@ -197,10 +232,12 @@ class CadDocumentManager {
             return;
         }
 
+        // Save current selection to try to preserve it
+        const prevSelectedId = window.selectedObjectId || null;
+
         // Find nearest valid snapshot checkpoint
         let startIndex = 0;
         if (doc.snapshotJson && doc.snapshotAtOpIndex) {
-            // Check if all ops before checkpoint are still enabled
             let snapshotValid = true;
             for (let i = 0; i < doc.snapshotAtOpIndex && i < doc.operations.length; i++) {
                 if (!doc.operations[i].enabled) {
@@ -218,61 +255,90 @@ class CadDocumentManager {
             ctrl.clear_scene();
         }
 
+        // Clear result map for replay
+        this._opResultMap.clear();
+
         // Replay enabled ops from startIndex
         for (let i = startIndex; i < doc.operations.length; i++) {
             if (doc.operations[i].enabled) {
-                this._executeOp(doc.operations[i]);
+                const resultId = this._executeOp(doc.operations[i]);
+                if (resultId) {
+                    this._opResultMap.set(doc.operations[i].id, resultId);
+                }
             }
         }
 
-        window.selectedObject = 0;
+        // Restore selection: if previous object still exists, keep it; else select last
+        const ids = ctrl.object_ids();
+        if (prevSelectedId && ids.includes(prevSelectedId)) {
+            window.selectedObjectId = prevSelectedId;
+        } else if (ids.length > 0) {
+            window.selectedObjectId = ids[ids.length - 1];
+        } else {
+            window.selectedObjectId = null;
+        }
+
         if (window.updateObjectList) window.updateObjectList();
         window.undoManager?.updateButtons();
+        this._renderTimeline();
         this._replayInProgress = false;
     }
 
-    /** Execute a single operation against the WASM SceneController */
+    /** Execute a single operation against the WASM SceneController.
+     *  Returns the result object UUID for add/boolean ops, or null. */
     _executeOp(op) {
         const ctrl = this._ctrl();
-        if (!ctrl) return;
+        if (!ctrl) return null;
 
         const p = op.params || {};
 
         switch (op.type) {
             case 'add_cube':
-                ctrl.add_cube(p.size || 1.0);
-                break;
+                return ctrl.add_cube(p.size || 1.0);
             case 'add_sphere':
-                ctrl.add_sphere(p.size || 1.0);
-                break;
+                return ctrl.add_sphere(p.size || 1.0);
             case 'add_cylinder':
-                ctrl.add_cylinder(p.radius || 0.5, p.height || 1.0);
-                break;
+                return ctrl.add_cylinder(p.radius || 0.5, p.height || 1.0);
             case 'add_torus':
-                ctrl.add_torus(p.majorRadius || 1.0, p.minorRadius || 0.3);
-                break;
+                return ctrl.add_torus(p.majorRadius || 1.0, p.minorRadius || 0.3);
             case 'translate': {
-                const idx = p.objectIndex ?? 0;
-                ctrl.translate_object(idx, p.dx || 0, p.dy || 0, p.dz || 0);
-                break;
+                // Resolve object UUID: use objectId directly, or look up from prior op result
+                const objectId = p.objectId || this._opResultMap.get(p.sourceOpId) || null;
+                if (objectId) {
+                    ctrl.translate_object(objectId, p.dx || 0, p.dy || 0, p.dz || 0);
+                }
+                return null;
             }
-            case 'boolean_union':
-                ctrl.boolean_union(p.a ?? 0, p.b ?? 1);
-                break;
-            case 'boolean_subtract':
-                ctrl.boolean_subtract(p.a ?? 0, p.b ?? 1);
-                break;
-            case 'boolean_intersect':
-                ctrl.boolean_intersect(p.a ?? 0, p.b ?? 1);
-                break;
-            case 'delete':
-                ctrl.delete_object(p.objectIndex ?? 0);
-                break;
+            case 'rotate': {
+                const objectId = p.objectId || this._opResultMap.get(p.sourceOpId) || null;
+                if (objectId) {
+                    ctrl.rotate_object(objectId, p.axisX || 0, p.axisY || 1, p.axisZ || 0, p.angleDeg || 0);
+                }
+                return null;
+            }
+            case 'boolean_union': {
+                const result = ctrl.boolean_union(p.idA, p.idB);
+                return result || null;
+            }
+            case 'boolean_subtract': {
+                const result = ctrl.boolean_subtract(p.idA, p.idB);
+                return result || null;
+            }
+            case 'boolean_intersect': {
+                const result = ctrl.boolean_intersect(p.idA, p.idB);
+                return result || null;
+            }
+            case 'delete': {
+                const objectId = p.objectId || null;
+                if (objectId) ctrl.delete_object(objectId);
+                return null;
+            }
             case 'clear':
                 ctrl.clear_scene();
-                break;
+                return null;
             default:
                 console.warn('Unknown op type:', op.type);
+                return null;
         }
     }
 
@@ -295,6 +361,116 @@ class CadDocumentManager {
             el.textContent = doc.name || 'Untitled';
             el.title = this.handle.url;
         }
+    }
+
+    /** Render operation timeline chips */
+    _renderTimeline() {
+        const strip = document.getElementById('timelineStrip');
+        if (!strip) return;
+        const doc = this.handle?.docSync();
+        if (!doc || !doc.operations) {
+            strip.innerHTML = '';
+            return;
+        }
+
+        const TYPE_COLORS = {
+            add_cube: 'btn-primary',
+            add_sphere: 'btn-secondary',
+            add_cylinder: 'btn-accent',
+            add_torus: 'btn-info',
+            translate: 'btn-ghost',
+            rotate: 'btn-ghost',
+            boolean_union: 'btn-success',
+            boolean_subtract: 'btn-warning',
+            boolean_intersect: 'btn-error',
+            delete: 'btn-error',
+            clear: 'btn-ghost',
+        };
+
+        const TYPE_LABELS = {
+            add_cube: 'Cube',
+            add_sphere: 'Sphere',
+            add_cylinder: 'Cyl',
+            add_torus: 'Torus',
+            translate: 'Move',
+            rotate: 'Rot',
+            boolean_union: 'Union',
+            boolean_subtract: 'Sub',
+            boolean_intersect: 'Inter',
+            delete: 'Del',
+            clear: 'Clear',
+        };
+
+        // Group consecutive ops with same groupId into single chip
+        const chips = [];
+        let i = 0;
+        while (i < doc.operations.length) {
+            const op = doc.operations[i];
+            if (op.groupId) {
+                // Collect all ops with this groupId
+                const group = [];
+                const gid = op.groupId;
+                for (let j = i; j < doc.operations.length; j++) {
+                    if (doc.operations[j].groupId === gid) {
+                        group.push(doc.operations[j]);
+                    }
+                }
+                // Label: primary op type + count
+                const primary = group[0];
+                const label = (TYPE_LABELS[primary.type] || primary.type) +
+                    (group.length > 1 ? `+${group.length - 1}` : '');
+                chips.push({
+                    label,
+                    color: TYPE_COLORS[primary.type] || 'btn-ghost',
+                    enabled: primary.enabled,
+                    own: primary.actorId === this.actorId,
+                    groupId: gid,
+                    opIndex: i,
+                });
+                // Skip past all grouped ops
+                i += group.length;
+            } else {
+                chips.push({
+                    label: TYPE_LABELS[op.type] || op.type,
+                    color: TYPE_COLORS[op.type] || 'btn-ghost',
+                    enabled: op.enabled,
+                    own: op.actorId === this.actorId,
+                    groupId: null,
+                    opIndex: i,
+                });
+                i++;
+            }
+        }
+
+        strip.innerHTML = chips.map((chip, ci) => {
+            const disabled = chip.enabled ? '' : 'timeline-chip-disabled';
+            const own = chip.own ? 'timeline-chip-own' : 'timeline-chip-remote';
+            return `<button class="btn btn-xs ${chip.color} ${disabled} ${own}" data-chip="${ci}" title="${chip.enabled ? 'Click to disable' : 'Click to re-enable'}">${chip.label}</button>`;
+        }).join('');
+
+        // Click handler for toggling ops
+        strip.querySelectorAll('[data-chip]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const ci = parseInt(btn.dataset.chip);
+                const chip = chips[ci];
+                if (!chip.own) return; // can only toggle own ops
+                this.handle.change((d) => {
+                    if (chip.groupId) {
+                        for (let j = 0; j < d.operations.length; j++) {
+                            if (d.operations[j].groupId === chip.groupId) {
+                                d.operations[j].enabled = !chip.enabled;
+                            }
+                        }
+                    } else {
+                        d.operations[chip.opIndex].enabled = !chip.enabled;
+                    }
+                });
+                this._replayScene();
+            });
+        });
+
+        // Auto-scroll to end
+        strip.scrollLeft = strip.scrollWidth;
     }
 
     /** Get the current document URL for sharing */

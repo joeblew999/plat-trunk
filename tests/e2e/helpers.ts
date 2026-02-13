@@ -52,3 +52,25 @@ export async function getObjectCount(page: Page): Promise<number> {
     return ctrl ? ctrl.object_count() : 0;
   });
 }
+
+/** Get all object UUIDs from the scene */
+export async function getObjectIds(page: Page): Promise<string[]> {
+  return await page.evaluate(() => {
+    const ctrl = window['sceneController'];
+    return ctrl ? ctrl.object_ids() : [];
+  });
+}
+
+/** Add a primitive via WASM and return its UUID */
+export async function addPrimitive(page: Page, type: string, params: Record<string, number> = {}): Promise<string> {
+  return await page.evaluate(({ type, params }) => {
+    const ctrl = window['sceneController'];
+    switch (type) {
+      case 'cube': return ctrl.add_cube(params.size || 1.0);
+      case 'sphere': return ctrl.add_sphere(params.radius || 1.0);
+      case 'cylinder': return ctrl.add_cylinder(params.radius || 0.5, params.height || 1.0);
+      case 'torus': return ctrl.add_torus(params.majorRadius || 1.0, params.minorRadius || 0.3);
+      default: throw new Error(`Unknown type: ${type}`);
+    }
+  }, { type, params });
+}
