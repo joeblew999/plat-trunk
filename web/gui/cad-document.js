@@ -1,5 +1,6 @@
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
-// Replaces snapshot-based undo with a CRDT op log that syncs across peers.
+// Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
+// cadCommand() always executes WASM directly; this records ops after the fact.
 //
 // Document schema:
 //   { name, createdAt, operations: CadOperation[], snapshotJson?, snapshotAtOpIndex? }
@@ -10,9 +11,7 @@
 // Undo = set enabled=false on last own op (or entire group). Redo = re-enable.
 // Scene is rebuilt by replaying all enabled ops from the last checkpoint.
 
-import { Repo, isValidAutomergeUrl } from '@automerge/automerge-repo';
-import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { BroadcastChannelNetworkAdapter } from '@automerge/automerge-repo-network-broadcastchannel';
+import { Repo, isValidAutomergeUrl, IndexedDBStorageAdapter, BroadcastChannelNetworkAdapter } from './automerge-bundle.js';
 
 const SNAPSHOT_INTERVAL = 10; // checkpoint every N ops for faster replay
 
@@ -22,8 +21,8 @@ class CadDocumentManager {
         this.handle = null;
         this.actorId = this._getOrCreateActorId();
         this._replayInProgress = false;
-        // Maps opId → resultObjectId (UUID returned by WASM for add/boolean ops)
-        this._opResultMap = new Map();
+        // Track how many ops we've already seen locally (for detecting remote adds)
+        this._localOpCount = 0;
         this._syncAdapter = null;
     }
 
@@ -81,6 +80,18 @@ class CadDocumentManager {
         });
 
         await this.handle.doc();
+
+        // Record the default cube (created by Rust SceneController::new) into the op log
+        // so it's replayable in other tabs. We don't execute — WASM already has it.
+        const ctrl = this._ctrl();
+        if (ctrl) {
+            const ids = ctrl.object_ids();
+            if (ids.length > 0) {
+                this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
+            }
+        }
+
+        this._localOpCount = this._getDocOpCount();
         localStorage.setItem('cad-last-doc-url', this.handle.url);
         this._listenForChanges();
         this._updateDocInfo();
@@ -90,28 +101,29 @@ class CadDocumentManager {
 
     /** Load an existing document by Automerge URL */
     async loadDocument(url) {
-        this.handle = this.repo.find(url);
-        await this.handle.doc();
+        this.handle = await this.repo.find(url);
         localStorage.setItem('cad-last-doc-url', url);
         this._listenForChanges();
         await this._replayScene();
+        this._localOpCount = this._getDocOpCount();
         this._updateDocInfo();
         return url;
     }
 
-    /** Apply a new CAD operation — adds to op log and executes.
-     *  Returns the result object UUID (for add/boolean ops) or null. */
-    applyOperation(type, params = {}, groupId = null) {
-        if (!this.handle || !this._ctrl()) return null;
+    /** Record a completed operation into the Automerge op log.
+     *  Fire-and-forget — WASM has already executed. This is for undo/redo and cross-tab sync.
+     *  (Like bc?.broadcast() in test-hono.) */
+    record(type, params = {}, meta = {}) {
+        if (!this.handle) return;
 
         const op = {
             id: crypto.randomUUID(),
             type,
-            params,
+            params: { ...params, objectId: meta.objectId || params.objectId || null },
             enabled: true,
             timestamp: Date.now(),
             actorId: this.actorId,
-            groupId: groupId || null,
+            groupId: meta.groupId || null,
         };
 
         this.handle.change((d) => {
@@ -127,21 +139,15 @@ class CadDocumentManager {
             }
         });
 
-        // Execute immediately (no need to replay entire log)
-        const resultId = this._executeOp(op);
-        if (resultId) {
-            this._opResultMap.set(op.id, resultId);
-        }
+        this._localOpCount = this._getDocOpCount();
         if (window.updateObjectList) window.updateObjectList();
-        window.undoManager?.updateButtons();
         this._renderTimeline();
-        return resultId;
     }
 
     /** Undo last own enabled operation (or entire group) — sets enabled=false and replays */
     undo() {
         if (!this.handle) return false;
-        const doc = this.handle.docSync();
+        const doc = this.handle.doc();
         if (!doc) return false;
 
         // Find last enabled op by this actor
@@ -150,7 +156,6 @@ class CadDocumentManager {
                 const targetGroupId = doc.operations[i].groupId;
                 this.handle.change((d) => {
                     if (targetGroupId) {
-                        // Disable ALL ops in this group
                         for (let j = 0; j < d.operations.length; j++) {
                             if (d.operations[j].groupId === targetGroupId) {
                                 d.operations[j].enabled = false;
@@ -161,6 +166,7 @@ class CadDocumentManager {
                     }
                 });
                 this._replayScene();
+                this._localOpCount = this._getDocOpCount();
                 return true;
             }
         }
@@ -170,16 +176,15 @@ class CadDocumentManager {
     /** Redo — re-enable first disabled own op/group (from end of disabled streak) */
     redo() {
         if (!this.handle) return false;
-        const doc = this.handle.docSync();
+        const doc = this.handle.doc();
         if (!doc) return false;
 
-        // Find first disabled op by this actor (scanning from end backward through disabled streak)
         let target = -1;
         for (let i = doc.operations.length - 1; i >= 0; i--) {
             if (doc.operations[i].actorId === this.actorId && !doc.operations[i].enabled) {
                 target = i;
             } else if (doc.operations[i].actorId === this.actorId && doc.operations[i].enabled) {
-                break; // stop at first enabled own op
+                break;
             }
         }
         if (target === -1) return false;
@@ -187,7 +192,6 @@ class CadDocumentManager {
         const targetGroupId = doc.operations[target].groupId;
         this.handle.change((d) => {
             if (targetGroupId) {
-                // Re-enable ALL ops in this group
                 for (let j = 0; j < d.operations.length; j++) {
                     if (d.operations[j].groupId === targetGroupId) {
                         d.operations[j].enabled = true;
@@ -198,17 +202,18 @@ class CadDocumentManager {
             }
         });
         this._replayScene();
+        this._localOpCount = this._getDocOpCount();
         return true;
     }
 
     get canUndo() {
-        const doc = this.handle?.docSync();
+        const doc = this.handle?.doc();
         if (!doc) return false;
         return doc.operations.some(op => op.actorId === this.actorId && op.enabled);
     }
 
     get canRedo() {
-        const doc = this.handle?.docSync();
+        const doc = this.handle?.doc();
         if (!doc) return false;
         let foundDisabled = false;
         for (let i = doc.operations.length - 1; i >= 0; i--) {
@@ -220,19 +225,19 @@ class CadDocumentManager {
         return foundDisabled;
     }
 
-    /** Replay all enabled ops to rebuild the scene from scratch */
+    /** Replay all enabled ops to rebuild the scene from scratch.
+     *  Only used by undo/redo and remote sync — not every command. */
     async _replayScene() {
         const ctrl = this._ctrl();
         if (!ctrl || this._replayInProgress) return;
 
         this._replayInProgress = true;
-        const doc = this.handle.docSync();
+        const doc = this.handle.doc();
         if (!doc) {
             this._replayInProgress = false;
             return;
         }
 
-        // Save current selection to try to preserve it
         const prevSelectedId = window.selectedObjectId || null;
 
         // Find nearest valid snapshot checkpoint
@@ -255,20 +260,15 @@ class CadDocumentManager {
             ctrl.clear_scene();
         }
 
-        // Clear result map for replay
-        this._opResultMap.clear();
-
-        // Replay enabled ops from startIndex
+        // Replay enabled ops from startIndex using shared executeWasm()
         for (let i = startIndex; i < doc.operations.length; i++) {
             if (doc.operations[i].enabled) {
-                const resultId = this._executeOp(doc.operations[i]);
-                if (resultId) {
-                    this._opResultMap.set(doc.operations[i].id, resultId);
-                }
+                const op = doc.operations[i];
+                window.executeWasm(ctrl, op.type, op.params);
             }
         }
 
-        // Restore selection: if previous object still exists, keep it; else select last
+        // Restore selection
         const ids = ctrl.object_ids();
         if (prevSelectedId && ids.includes(prevSelectedId)) {
             window.selectedObjectId = prevSelectedId;
@@ -279,43 +279,41 @@ class CadDocumentManager {
         }
 
         if (window.updateObjectList) window.updateObjectList();
-        window.undoManager?.updateButtons();
         this._renderTimeline();
+        // Update Datastar reactive signals after replay
+        if (window.buildUIState && window.updateSignals) {
+            window.updateSignals(window.buildUIState());
+        }
         this._replayInProgress = false;
     }
 
-    /** Execute a single operation against the WASM SceneController.
-     *  Delegates to shared executeWasm() from cad-commands.js.
-     *  Returns the result object UUID for add/boolean ops, or null. */
-    _executeOp(op) {
-        const ctrl = this._ctrl();
-        if (!ctrl) return null;
-
-        // Clone params and resolve sourceOpId references for replay
-        const p = { ...op.params };
-        if (p.sourceOpId && !p.objectId) {
-            p.objectId = this._opResultMap.get(p.sourceOpId) || null;
-        }
-
-        const result = window.executeWasm(ctrl, op.type, p);
-        return result.objectId || null;
-    }
-
-    /** Listen for remote changes and replay scene */
+    /** Listen for remote changes via Automerge and replay scene.
+     *  Uses patchInfo.source to distinguish local vs remote changes. */
     _listenForChanges() {
         if (!this.handle) return;
         this.handle.on('change', (evt) => {
-            if (!this._replayInProgress) {
+            if (this._replayInProgress) return;
+
+            // Only replay for remote changes — local ops are already executed by cadCommand()
+            const source = evt?.patchInfo?.source;
+            if (source === 'receiveSyncMessage' || source === 'applyChanges') {
                 this._replayScene();
+                this._localOpCount = this._getDocOpCount();
             }
         });
+    }
+
+    /** Get current op count from doc */
+    _getDocOpCount() {
+        const doc = this.handle?.doc();
+        return doc?.operations?.length || 0;
     }
 
     /** Update the document info display in the UI */
     _updateDocInfo() {
         const el = document.getElementById('docInfo');
         if (!el || !this.handle) return;
-        const doc = this.handle.docSync();
+        const doc = this.handle.doc();
         if (doc) {
             el.textContent = doc.name || 'Untitled';
             el.title = this.handle.url;
@@ -326,7 +324,7 @@ class CadDocumentManager {
     _renderTimeline() {
         const strip = document.getElementById('timelineStrip');
         if (!strip) return;
-        const doc = this.handle?.docSync();
+        const doc = this.handle?.doc();
         if (!doc || !doc.operations) {
             strip.innerHTML = '';
             return;
@@ -370,7 +368,6 @@ class CadDocumentManager {
         while (i < doc.operations.length) {
             const op = doc.operations[i];
             if (op.groupId) {
-                // Collect all ops with this groupId
                 const group = [];
                 const gid = op.groupId;
                 for (let j = i; j < doc.operations.length; j++) {
@@ -378,7 +375,6 @@ class CadDocumentManager {
                         group.push(doc.operations[j]);
                     }
                 }
-                // Label: primary op type + count
                 const primary = group[0];
                 const label = (TYPE_LABELS[primary.type] || primary.type) +
                     (group.length > 1 ? `+${group.length - 1}` : '');
@@ -390,7 +386,6 @@ class CadDocumentManager {
                     groupId: gid,
                     opIndex: i,
                 });
-                // Skip past all grouped ops
                 i += group.length;
             } else {
                 chips.push({
@@ -416,7 +411,7 @@ class CadDocumentManager {
             btn.addEventListener('click', () => {
                 const ci = parseInt(btn.dataset.chip);
                 const chip = chips[ci];
-                if (!chip.own) return; // can only toggle own ops
+                if (!chip.own) return;
                 this.handle.change((d) => {
                     if (chip.groupId) {
                         for (let j = 0; j < d.operations.length; j++) {
@@ -429,6 +424,7 @@ class CadDocumentManager {
                     }
                 });
                 this._replayScene();
+                this._localOpCount = this._getDocOpCount();
             });
         });
 
@@ -443,7 +439,7 @@ class CadDocumentManager {
 
     /** Get operation count stats */
     get stats() {
-        const doc = this.handle?.docSync();
+        const doc = this.handle?.doc();
         if (!doc) return { total: 0, enabled: 0, disabled: 0 };
         const enabled = doc.operations.filter(op => op.enabled).length;
         return {

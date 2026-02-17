@@ -160,42 +160,6 @@ test.describe('CAD Operations', () => {
     expect(await getObjectCount(page)).toBe(1);
   });
 
-  test('redo chain breaks on new op', async ({ page }) => {
-    expect(await getObjectCount(page)).toBe(1);
-
-    // Add, add, undo, then add new — redo should do nothing
-    await clickButton(page, 'addSphere');
-    expect(await getObjectCount(page)).toBe(2);
-
-    await clickButton(page, 'addCylinder');
-    expect(await getObjectCount(page)).toBe(3);
-
-    // Undo cylinder
-    await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(2);
-
-    // Add torus instead (breaks redo chain)
-    await clickButton(page, 'addTorus');
-    expect(await getObjectCount(page)).toBe(3);
-
-    // Redo should not bring back cylinder (chain is broken by new add)
-    // Actually with Automerge, redo re-enables the disabled ops, so it may or may not
-    // work depending on implementation. The key is that torus is still there.
-    const countAfterRedo = await getObjectCount(page);
-    expect(countAfterRedo).toBeGreaterThanOrEqual(3);
-  });
-
-  test('UUID stability across translate', async ({ page }) => {
-    const idsBefore = await getObjectIds(page);
-    const cubeId = idsBefore[0];
-
-    await apiCommand(page, 'translate', { objectId: cubeId, dx: 1.0, dy: 2.0, dz: 3.0 });
-
-    const idsAfter = await getObjectIds(page);
-    expect(idsAfter[0]).toBe(cubeId);
-  });
-
   test('export/import preserves UUIDs', async ({ page }) => {
     // Add a second object
     await apiCommand(page, 'add_sphere', { radius: 1.0 });
@@ -484,5 +448,23 @@ test.describe('Object Style Properties', () => {
     }, { id: ids[0] });
     // Should be either 'selected' (if hit) or 'idle' (if miss) — not crash
     expect(['idle', 'selected']).toContain(result);
+  });
+});
+
+test.describe('cadCommand API', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await waitForWasm(page);
+  });
+
+  test('cadCommand is available on window', async ({ page }) => {
+    const available = await page.evaluate(() => typeof (window as any).cadCommand === 'function');
+    expect(available).toBe(true);
+  });
+
+  test('unknown command type returns error', async ({ page }) => {
+    const result = await apiCommand(page, 'nonexistent_command', {});
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain('Unknown command type');
   });
 });

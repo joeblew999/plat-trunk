@@ -26,7 +26,7 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testIgnore: [/doc-screenshots\.spec\.ts/, /doc-lessons\.spec\.ts/, /cross-tab-sync\.spec\.ts/],
+      testIgnore: [/doc-screenshots\.spec\.ts/, /doc-lessons\.spec\.ts/, /cross-tab-sync\.spec\.ts/, /example-scenes\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -61,6 +61,12 @@ export default defineConfig({
           size: { width: 1280, height: 800 },
         },
       },
+    },
+    {
+      // Generate example scene JSON files (run on demand, not during default e2e)
+      name: 'examples',
+      testMatch: /example-scenes\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });

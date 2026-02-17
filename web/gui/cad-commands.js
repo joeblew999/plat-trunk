@@ -7,7 +7,7 @@
 /**
  * Execute a command directly on the WASM SceneController.
  * This is the canonical mapping from command type + params → WASM method call.
- * Used by cadCommand(), api-bridge.js, and cad-document.js _executeOp().
+ * Used by cadCommand() and cad-document.js _replayScene().
  *
  * @param {object} ctrl - The WASM SceneController instance
  * @param {string} type - Command type (e.g., 'add_cube', 'translate')
@@ -122,8 +122,8 @@ function buildUIState() {
       selectedId: window.selectedObjectId || null,
       boolSelA: window.boolSelA || null,
       boolSelB: window.boolSelB || null,
-      canUndo: mgr ? mgr.canUndo : (window.undoManager?.canUndo ?? false),
-      canRedo: mgr ? mgr.canRedo : (window.undoManager?.canRedo ?? false),
+      canUndo: mgr?.canUndo ?? false,
+      canRedo: mgr?.canRedo ?? false,
       interactionMode: ctrl.get_interaction_mode(),
     };
   } catch (err) {
@@ -184,7 +184,7 @@ function updateSignals(state) {
  * @returns {object} Result including any objectId/success + UI state
  */
 function cadCommand(type, params = {}, options = {}) {
-  const { skipAutomerge = false, skipUndo = false, groupId = null, source = 'gui' } = options;
+  const { skipAutomerge = false, groupId = null, source = 'gui' } = options;
 
   const ctrl = window.sceneController;
   if (!ctrl) return { error: 'SceneController not ready' };
@@ -194,17 +194,12 @@ function cadCommand(type, params = {}, options = {}) {
   let result;
 
   try {
+    // Always execute directly — WASM is truth (single gateway, like test-hono)
+    result = executeWasm(ctrl, type, params);
+
+    // Record in op log after the fact (fire-and-forget, like bc?.broadcast() in test-hono)
     if (mgr && !skipAutomerge) {
-      // Automerge path: records op + executes via _executeOp()
-      const resultId = mgr.applyOperation(type, params, groupId);
-      result = resultId ? { objectId: resultId } : {};
-    } else if (window.undoManager && !skipAutomerge && !skipUndo) {
-      // Snapshot undo path: capture before, execute, state recorded
-      window.undoManager.captureBeforeMutation(`${type}`);
-      result = executeWasm(ctrl, type, params);
-    } else {
-      // Direct WASM execution (API path, skipUndo, or no undo system)
-      result = executeWasm(ctrl, type, params);
+      mgr.record(type, params, { objectId: result.objectId, groupId });
     }
   } catch (err) {
     result = { error: String(err) };

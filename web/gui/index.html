@@ -13,16 +13,9 @@
         import { root, mergePatch, beginBatch, endBatch } from './datastar.js';
         window._ds = { root, mergePatch, beginBatch, endBatch };
     </script>
-    <script type="importmap">
-    {
-        "imports": {
-            "@automerge/automerge": "https://esm.sh/@automerge/automerge@3",
-            "@automerge/automerge-repo": "https://esm.sh/@automerge/automerge-repo@2",
-            "@automerge/automerge-repo-storage-indexeddb": "https://esm.sh/@automerge/automerge-repo-storage-indexeddb@2",
-            "@automerge/automerge-repo-network-broadcastchannel": "https://esm.sh/@automerge/automerge-repo-network-broadcastchannel@2"
-        }
-    }
-    </script>
+    <!-- Automerge vendored locally: automerge-bundle.js + automerge_wasm_bg.wasm
+         Versions: @automerge/automerge@3.2.4, @automerge/automerge-repo@2.5.2
+         To update: see comment at top of automerge-bundle.js -->
 </head>
 <body data-signals="{
     objectCount: 0, sceneEmpty: true, selectedId: null,
@@ -338,9 +331,6 @@
         </div>
     </div>
 
-    <!-- Responsive UI controller (dock/sheet management) -->
-    <script src="ui-controller.js"></script>
-
     <!-- Load docs content from separate file -->
     <script>
         (function() {
@@ -374,7 +364,12 @@
                 console.log("CAD running.");
                 updateObjectList();
 
-                // Initialize Automerge document manager after WASM is ready
+                // Wait for cadDocManager (ES module loads automerge-bundle.js + WASM)
+                let _amRetries = 0;
+                while (!window.cadDocManager && _amRetries < 30) {
+                    await new Promise(r => setTimeout(r, 100));
+                    _amRetries++;
+                }
                 if (window.cadDocManager) {
                     try {
                         await window.cadDocManager.init();
@@ -382,6 +377,8 @@
                     } catch (err) {
                         console.warn("Automerge init failed (falling back to local-only):", err);
                     }
+                } else {
+                    console.warn("cadDocManager not available after 3s, running without Automerge");
                 }
             } catch (e) {
                 console.error("Init error:", e);
@@ -409,7 +406,6 @@
     </script>
     <script src="sync-adapter.js"></script>
     <script type="module" src="cad-document.js"></script>
-    <script src="undo-manager.js"></script>
     <script src="cad-commands.js"></script>
     <script type="module" src="main.js"></script>
     <script src="sketch-ui.js"></script>

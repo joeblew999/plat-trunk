@@ -1,11 +1,9 @@
 // CAD command UI — calls WASM SceneController (UUID-based API).
-// When Automerge is available, operations go through cadDocManager for collaborative sync.
-// When not, snapshot-based undo via undoManager is used as fallback.
+// All mutations go through cadCommand() (cad-commands.js). Automerge records ops after execution.
 
 function ctrl() { return window.sceneController; }
 function getSize() { return parseFloat(document.getElementById('sizeParam').value) || 1.0; }
 function update() { if (window.updateObjectList) window.updateObjectList(); }
-function undo() { return window.undoManager; }
 function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
 // Multi-select state for boolean operations
 window.boolSelA = null;  // First selected object (A)
@@ -33,20 +31,14 @@ function setSelection(id, addToSet) {
 function addPrimitive(type, params) {
     if (!ctrl()) return;
     const groupId = crypto.randomUUID();
-    const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
-    // For snapshot undo: capture state once for the whole add+offset group
-    if (!mgr && window.undoManager) {
-        window.undoManager.captureBeforeMutation(type);
-    }
-    // skipUndo: snapshot already captured above; Automerge uses groupId internally
-    const result = cadCommand(type, params, { groupId, skipUndo: !mgr });
+    const result = cadCommand(type, params, { groupId });
     if (result.objectId) {
         // Auto-offset as grouped op
         const ids = ctrl().object_ids();
         const idx = ids.indexOf(result.objectId);
         if (idx > 0) {
             const dx = idx * (params.size || 1.0) * 0.7;
-            cadCommand('translate', { objectId: result.objectId, dx, dy: 0, dz: 0 }, { groupId, skipUndo: !mgr });
+            cadCommand('translate', { objectId: result.objectId, dx, dy: 0, dz: 0 }, { groupId });
         }
         setSelection(result.objectId);
     }
@@ -146,15 +138,13 @@ document.getElementById('clearBtn')?.addEventListener('click', () => {
     setSelection(null);
 });
 
-// --- Undo / Redo (meta-operations — not routed through cadCommand) ---
+// --- Undo / Redo (via Automerge op log — not routed through cadCommand) ---
 document.getElementById('undoBtn')?.addEventListener('click', () => {
-    const mgr = docMgr();
-    if (mgr) mgr.undo(); else undo()?.undo();
+    docMgr()?.undo();
 });
 
 document.getElementById('redoBtn')?.addEventListener('click', () => {
-    const mgr = docMgr();
-    if (mgr) mgr.redo(); else undo()?.redo();
+    docMgr()?.redo();
 });
 
 // Keyboard shortcuts: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo, S = sketch tab
@@ -176,15 +166,11 @@ document.addEventListener('keydown', (e) => {
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
-        const mgr = docMgr();
-        if (mgr) mgr.undo();
-        else undo()?.undo();
+        docMgr()?.undo();
     }
     if ((e.ctrlKey || e.metaKey) && ((e.key === 'z' && e.shiftKey) || e.key === 'y')) {
         e.preventDefault();
-        const mgr = docMgr();
-        if (mgr) mgr.redo();
-        else undo()?.redo();
+        docMgr()?.redo();
     }
 });
 
@@ -318,19 +304,15 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
 
         const result = ctrl().end_gizmo_drag();
         if (result && result.objectId) {
-            // Commit to Automerge op log
+            // Record in Automerge op log (WASM already applied during drag)
             const mgr = docMgr();
             if (mgr) {
-                mgr.applyOperation('translate', {
+                mgr.record('translate', {
                     objectId: result.objectId,
                     dx: result.dx,
                     dy: result.dy,
                     dz: result.dz,
                 });
-            } else {
-                // For snapshot-based undo, we already applied the transform live.
-                // Just capture the final state.
-                undo()?.captureBeforeMutation('Gizmo translate');
             }
         }
         update();
@@ -414,3 +396,56 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
         // No examples available yet — that's fine
     }
 })();
+
+// --- Responsive UI controller (mobile dock/sheet + desktop panel) ---
+window.cadUI = {
+    activeTab: null,
+
+    setTab(name) {
+        const panel = document.getElementById('ui-panel');
+        if (this.activeTab === name && panel.classList.contains('sheet-open')) {
+            panel.classList.remove('sheet-open');
+            this.activeTab = null;
+            this._updateDock(null);
+            return;
+        }
+        this.activeTab = name;
+        panel.querySelectorAll('.tool-section').forEach(s => {
+            s.classList.toggle('active', s.dataset.section === name);
+        });
+        panel.classList.add('sheet-open');
+        this._updateDock(name);
+    },
+
+    _updateDock(name) {
+        document.querySelectorAll('#mobile-dock button[data-tab]').forEach(btn => {
+            btn.classList.toggle('dock-active', btn.dataset.tab === name);
+        });
+    },
+
+    init() {
+        const canvas = document.getElementById('cad-canvas');
+        if (canvas) {
+            canvas.addEventListener('pointerdown', () => {
+                if (window.innerWidth < 1024) {
+                    const panel = document.getElementById('ui-panel');
+                    if (panel.classList.contains('sheet-open')) {
+                        panel.classList.remove('sheet-open');
+                        this.activeTab = null;
+                        this._updateDock(null);
+                    }
+                }
+            });
+        }
+        window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
+            if (e.matches) {
+                const panel = document.getElementById('ui-panel');
+                panel.classList.remove('sheet-open');
+                panel.querySelectorAll('.tool-section').forEach(s => s.classList.remove('active'));
+                this.activeTab = null;
+            }
+        });
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => cadUI.init());

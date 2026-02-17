@@ -3,7 +3,6 @@
 
 (function setupSketchUI() {
     function ctrl() { return window.sceneController; }
-    function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
     function update() { if (window.updateObjectList) window.updateObjectList(); }
     function showFeedback(msg, isError) {
         const el = document.getElementById('objectList');
@@ -213,29 +212,18 @@
         // Export sketch JSON before extrude (for Automerge replay)
         const sketchJson = ctrl().sketch_export();
 
-        const mgr = docMgr();
-        if (mgr && sketchJson) {
-            // Go through Automerge op log: extrude clears active sketch internally
-            const objectId = mgr.applyOperation('sketch_extrude', { sketchJson, height });
-            if (objectId) {
-                window.selectedObjectId = objectId;
-                resetState();
-                update();
-                showFeedback(`Extruded! Object: ${objectId.slice(0, 8)}`, false);
-            } else {
-                showFeedback('Extrude failed (ensure edges form closed loop)', true);
-            }
+        // Use cadCommand() — single gateway (records in Automerge automatically)
+        const result = window.cadCommand
+            ? window.cadCommand('sketch_extrude', { sketchJson, height })
+            : { objectId: ctrl().sketch_extrude(height) };
+
+        if (result?.objectId) {
+            window.selectedObjectId = result.objectId;
+            resetState();
+            update();
+            showFeedback(`Extruded! Object: ${result.objectId.slice(0, 8)}`, false);
         } else {
-            // Fallback: direct WASM call
-            const objectId = ctrl().sketch_extrude(height);
-            if (objectId) {
-                window.selectedObjectId = objectId;
-                resetState();
-                update();
-                showFeedback(`Extruded! Object: ${objectId.slice(0, 8)}`, false);
-            } else {
-                showFeedback('Extrude failed (ensure edges form closed loop)', true);
-            }
+            showFeedback('Extrude failed (ensure edges form closed loop)', true);
         }
     });
 

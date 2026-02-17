@@ -1,90 +1,99 @@
 /**
- * Cross-Tab SSE Signal Sync — verifies that Datastar signals propagate
- * between browser tabs via the Worker SSE broadcast.
+ * Cross-Tab Automerge Scene Sync — verifies that WASM scene state
+ * propagates between browser tabs via Automerge BroadcastChannel.
  *
- * Flow: Tab A action → cadCommand() POSTs state with broadcast:true
- *       → Worker sets pendingSignals → SSE loop sends datastar-patch-signals
- *       → Tab B's api-bridge applies signals to Datastar reactive store
+ * Flow: Tab A cadCommand() → applyOperation() → handle.change()
+ *       → BroadcastChannel → Tab B handle.on('change') → _replayScene()
+ *       → Tab B's WASM scene rebuilt from op log
  *
- * Note: Only UI signals sync (objectCount, canUndo, selectedId, etc.),
- * NOT the actual WASM scene. Each tab has its own SceneController.
+ * Both tabs share the same Automerge document (Tab B opens with ?doc=<url>).
+ * This tests actual geometry sync, not just Datastar UI signals.
  *
  * Run with:  npx playwright test --project=sync
  */
 import { test, expect } from '@playwright/test';
-import { waitForWasm, apiCommand } from './helpers';
+import {
+  waitForWasm,
+  waitForAutomerge,
+  waitForObjectCount,
+  getObjectCount,
+  apiCommand,
+} from './helpers';
 
-/** Read a Datastar signal value from the page */
-async function getSignal(page: import('@playwright/test').Page, key: string): Promise<unknown> {
-  return page.evaluate((k) => {
-    const ds = (window as any)._ds;
-    return ds?.root?.[k] ?? null;
-  }, key);
-}
+test.describe('Cross-Tab Automerge Scene Sync', () => {
+  test('WASM scene syncs from Tab A to Tab B via Automerge BroadcastChannel', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    });
 
-/** Wait for a Datastar signal to reach an expected value (with timeout) */
-async function waitForSignal(
-  page: import('@playwright/test').Page,
-  key: string,
-  expected: unknown,
-  timeoutMs = 5000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const val = await getSignal(page, key);
-    if (val === expected) return val;
-    await page.waitForTimeout(100);
-  }
-  const actual = await getSignal(page, key);
-  expect(actual, `Signal "${key}" did not reach ${expected} within ${timeoutMs}ms`).toBe(expected);
-  return actual;
-}
+    // --- Tab A: open app, wait for WASM + Automerge ---
+    const tabA = await context.newPage();
+    await tabA.goto('/');
+    await waitForWasm(tabA);
+    await waitForAutomerge(tabA);
 
-test.describe('Cross-Tab SSE Signal Sync', () => {
-  test('signals propagate from Tab A to Tab B via Worker SSE', async ({ browser }) => {
+    // Tab A starts with 1 object (default cube, now tracked in Automerge op log)
+    expect(await getObjectCount(tabA)).toBe(1);
+
+    // Get Tab A's Automerge document URL for sharing
+    const docUrl = await tabA.evaluate(() => (window as any).cadDocManager.documentUrl);
+    expect(docUrl).toBeTruthy();
+    expect(docUrl).toMatch(/^automerge:/);
+
+    // --- Tab B: join the same Automerge document ---
+    const tabB = await context.newPage();
+    await tabB.goto(`/?doc=${encodeURIComponent(docUrl)}`);
+    await waitForWasm(tabB);
+    await waitForAutomerge(tabB);
+
+    // Tab B replays the op log → should have 1 object (the default cube)
+    await waitForObjectCount(tabB, 1);
+
+    // --- Tab A: add a cube ---
+    await apiCommand(tabA, 'add_cube', { size: 1.0 });
+    expect(await getObjectCount(tabA)).toBe(2);
+
+    // Tab B: WASM scene should update via Automerge sync + _replayScene()
+    await waitForObjectCount(tabB, 2);
+
+    // --- Tab A: add a sphere ---
+    await apiCommand(tabA, 'add_sphere', { size: 0.8 });
+    expect(await getObjectCount(tabA)).toBe(3);
+
+    // Tab B: should see the sphere too
+    await waitForObjectCount(tabB, 3);
+
+    await context.close();
+  });
+
+  test('undo on Tab A triggers scene rebuild on Tab B', async ({ browser }) => {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
     });
 
     const tabA = await context.newPage();
-    const tabB = await context.newPage();
-
-    // Load app in both tabs
     await tabA.goto('/');
     await waitForWasm(tabA);
-    await tabB.goto('/');
+    await waitForAutomerge(tabA);
+
+    const docUrl = await tabA.evaluate(() => (window as any).cadDocManager.documentUrl);
+
+    const tabB = await context.newPage();
+    await tabB.goto(`/?doc=${encodeURIComponent(docUrl)}`);
     await waitForWasm(tabB);
+    await waitForAutomerge(tabB);
+    await waitForObjectCount(tabB, 1);
 
-    // Give SSE connections time to establish
-    await tabA.waitForTimeout(2000);
-
-    // Verify api-bridge and Datastar are ready on Tab B
-    const bridgeReady = await tabB.evaluate(() => !!(window as any).apiBridge);
-    expect(bridgeReady).toBe(true);
-    const dsReady = await tabB.evaluate(() => !!(window as any)._ds?.root);
-    expect(dsReady).toBe(true);
-
-    // Both tabs start with 1 object (default cube)
-    expect(await tabA.evaluate(() => (window as any).sceneController.object_count())).toBe(1);
-    expect(await tabB.evaluate(() => (window as any).sceneController.object_count())).toBe(1);
-
-    // --- Tab A: add a cube ---
+    // Tab A: add cube (now 2 objects)
     await apiCommand(tabA, 'add_cube', { size: 1.0 });
-    expect(await tabA.evaluate(() => (window as any).sceneController.object_count())).toBe(2);
+    await waitForObjectCount(tabB, 2);
 
-    // Tab B: Datastar objectCount signal should arrive via SSE
-    await waitForSignal(tabB, 'objectCount', 2);
+    // Tab A: undo via Automerge (sets enabled=false, replays)
+    await tabA.evaluate(() => (window as any).cadDocManager.undo());
+    expect(await getObjectCount(tabA)).toBe(1);
 
-    // Tab B's own WASM scene is unchanged — only display signals sync
-    expect(await tabB.evaluate(() => (window as any).sceneController.object_count())).toBe(1);
-
-    // canUndo should also have been broadcast
-    const tabBCanUndo = await getSignal(tabB, 'canUndo');
-    expect(tabBCanUndo).toBe(true);
-
-    // Add another shape — signals update again
-    await apiCommand(tabA, 'add_sphere', { size: 0.8 });
-    await waitForSignal(tabB, 'objectCount', 3);
+    // Tab B: should see undo via Automerge BroadcastChannel sync
+    await waitForObjectCount(tabB, 1);
 
     await context.close();
   });

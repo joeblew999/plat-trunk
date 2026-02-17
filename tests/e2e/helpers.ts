@@ -95,3 +95,35 @@ export async function apiCommand(
     { t: type, p: params },
   );
 }
+
+/** Wait for Automerge CadDocumentManager to fully initialize (handle + ops loaded).
+ *  This ensures the default cube has been recorded in the op log and the scene is ready. */
+export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
+  await page.waitForFunction(
+    () => {
+      const mgr = (window as any).cadDocManager;
+      if (!mgr?.handle) return false;
+      // Ensure the doc has been loaded and has at least one op (the default cube)
+      const doc = mgr.handle.docSync?.();
+      return doc && doc.operations && doc.operations.length > 0;
+    },
+    { timeout: timeoutMs },
+  );
+}
+
+/** Wait for WASM scene object_count() to reach expected value (polls WASM, not signals) */
+export async function waitForObjectCount(
+  page: Page,
+  expected: number,
+  timeoutMs = 5_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = await getObjectCount(page);
+    if (count === expected) return count;
+    await page.waitForTimeout(100);
+  }
+  const actual = await getObjectCount(page);
+  expect(actual, `object_count() did not reach ${expected} within ${timeoutMs}ms`).toBe(expected);
+  return actual;
+}

@@ -167,14 +167,14 @@
         },
 
         _commitToAutomerge(style) {
-            const mgr = window.cadDocManager;
-            if (mgr && typeof mgr.applyOperation === 'function') {
-                mgr.applyOperation('set_style', {
+            // Record in Automerge op log (WASM already applied during live preview)
+            const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
+            if (mgr) {
+                mgr.record('set_style', {
                     objectId: this._currentObjectId,
                     style: style,
                 });
             }
-            // Snapshot-based undo fallback is handled by main.js before calling set_object_style
         },
 
         _bindControls(ids) {
