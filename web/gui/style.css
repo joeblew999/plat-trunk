@@ -64,12 +64,32 @@ canvas { display: block; width: 100vw; height: 100vh; }
     padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
+/* ===== PROPERTIES PANEL (desktop: right side) ===== */
+#props-panel {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    width: 16rem;
+}
+#props-panel.props-hidden { display: none; }
+@media (max-width: 1023px) {
+    #props-panel { display: none !important; }
+}
+
 /* ===== DOCS ===== */
 #docs-toggle {
     position: absolute;
     top: 1rem;
     right: 1rem;
     z-index: 10;
+    transition: right 0.2s ease;
+}
+/* Shift docs button left when props panel is visible */
+#props-panel:not(.props-hidden) ~ #docs-toggle {
+    right: 18rem;
 }
 .drawer-side { z-index: 50; }
 .docs-content { max-width: 28rem; }

@@ -15,6 +15,7 @@ console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
 log = "0.4.29"
 wasm-bindgen-futures = "0.4.42"
+js-sys = "0.3.83"
 
 # Truck rendering stack (Scene, Camera, Lights, PBR shaders, InstanceCreator)
 truck-platform = { version = "0.6.0", path = "../../.src/truck/truck-platform" }
@@ -31,6 +32,9 @@ serde = { version = "1", features = ["derive"] }
 
 # Stable object identity (UUID v4 for WASM)
 uuid = { version = "1", features = ["v4", "js", "serde"] }
+
+# 2D constraint solver for parametric sketching
+kcl-ezpz = { path = "../../.src/ezpz/kcl-ezpz" }
 
 [features]
 default = []

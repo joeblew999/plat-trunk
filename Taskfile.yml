@@ -33,6 +33,14 @@ includes:
     taskfile: ./systems/gh/Taskfile.gh.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
+  ezpz:
+    taskfile: ./systems/ezpz/Taskfile.ezpz.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+  docs:
+    taskfile: ./systems/docs/Taskfile.docs.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
   skills:
     taskfile: ./.claude/skills/Taskfile.skills.yml
     vars:
@@ -91,8 +99,19 @@ tasks:
       - task: debug
       - task: envsubst:debug:self
       - task: truck:debug:self
+      - task: ezpz:debug:self
       - task: gh:debug:self
+      - task: docs:debug:self
       - task: skills:debug:self
+
+  # ===========================================================================
+  # Deploy
+  # ===========================================================================
+  deploy:
+    desc: Deploy everything (CAD Worker + Hugo docs site)
+    cmds:
+      - task: truck:deploy:full
+      - task: docs:deploy
 
   # ===========================================================================
   # Deps
@@ -102,6 +121,7 @@ tasks:
     deps:
       - envsubst:deps:install
       - truck:deps:install
+      - ezpz:deps:clone
       - gh:deps:install
       - skills:update
 

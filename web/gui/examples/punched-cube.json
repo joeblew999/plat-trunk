@@ -1,12 +1,27 @@
 [
   {
-    "id": "b79d677c-b953-4460-8172-c37c26a2aaa4",
+    "id": "d8e64f6d-169e-42d9-a816-7ed033e28390",
     "solid": {
       "boundaries": [
         {
           "vertices": [
             {
               "x": -0.5,
+              "y": 0.5,
+              "z": -0.5
+            },
+            {
+              "x": -0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
+            {
+              "x": -0.5,
+              "y": -0.5,
+              "z": 0.5
+            },
+            {
+              "x": -0.5,
               "y": -0.5,
               "z": -0.5
             },
@@ -18,21 +33,6 @@
             {
               "x": 0.5,
               "y": -0.5,
-              "z": 0.5
-            },
-            {
-              "x": -0.5,
-              "y": -0.5,
-              "z": 0.5
-            },
-            {
-              "x": -0.5,
-              "y": 0.5,
-              "z": -0.5
-            },
-            {
-              "x": -0.5,
-              "y": 0.5,
               "z": 0.5
             },
             {
@@ -76,31 +76,51 @@
                 "Line": [
                   {
                     "x": -0.5,
-                    "y": -0.5,
+                    "y": 0.5,
                     "z": -0.5
                   },
                   {
-                    "x": 0.5,
-                    "y": -0.5,
-                    "z": -0.5
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": 0.5
                   }
                 ]
               }
             },
             {
               "vertices": [
-                1,
+                2,
+                1
+              ],
+              "curve": {
+                "Line": [
+                  {
+                    "x": -0.5,
+                    "y": -0.5,
+                    "z": 0.5
+                  },
+                  {
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": 0.5
+                  }
+                ]
+              }
+            },
+            {
+              "vertices": [
+                3,
                 2
               ],
               "curve": {
                 "Line": [
                   {
-                    "x": 0.5,
+                    "x": -0.5,
                     "y": -0.5,
                     "z": -0.5
                   },
                   {
-                    "x": 0.5,
+                    "x": -0.5,
                     "y": -0.5,
                     "z": 0.5
                   }
@@ -110,27 +130,7 @@
             {
               "vertices": [
                 3,
-                2
-              ],
-              "curve": {
-                "Line": [
-                  {
-                    "x": -0.5,
-                    "y": -0.5,
-                    "z": 0.5
-                  },
-                  {
-                    "x": 0.5,
-                    "y": -0.5,
-                    "z": 0.5
-                  }
-                ]
-              }
-            },
-            {
-              "vertices": [
-                0,
-                3
+                0
               ],
               "curve": {
                 "Line": [
@@ -141,28 +141,8 @@
                   },
                   {
                     "x": -0.5,
-                    "y": -0.5,
-                    "z": 0.5
-                  }
-                ]
-              }
-            },
-            {
-              "vertices": [
-                4,
-                5
-              ],
-              "curve": {
-                "Line": [
-                  {
-                    "x": -0.5,
                     "y": 0.5,
                     "z": -0.5
-                  },
-                  {
-                    "x": -0.5,
-                    "y": 0.5,
-                    "z": 0.5
                   }
                 ]
               }
@@ -170,26 +150,6 @@
             {
               "vertices": [
                 3,
-                5
-              ],
-              "curve": {
-                "Line": [
-                  {
-                    "x": -0.5,
-                    "y": -0.5,
-                    "z": 0.5
-                  },
-                  {
-                    "x": -0.5,
-                    "y": 0.5,
-                    "z": 0.5
-                  }
-                ]
-              }
-            },
-            {
-              "vertices": [
-                0,
                 4
               ],
               "curve": {
@@ -200,8 +160,8 @@
                     "z": -0.5
                   },
                   {
-                    "x": -0.5,
-                    "y": 0.5,
+                    "x": 0.5,
+                    "y": -0.5,
                     "z": -0.5
                   }
                 ]
@@ -209,8 +169,8 @@
             },
             {
               "vertices": [
-                1,
-                6
+                4,
+                5
               ],
               "curve": {
                 "Line": [
@@ -221,8 +181,28 @@
                   },
                   {
                     "x": 0.5,
-                    "y": 0.5,
-                    "z": -0.5
+                    "y": -0.5,
+                    "z": 0.5
+                  }
+                ]
+              }
+            },
+            {
+              "vertices": [
+                2,
+                5
+              ],
+              "curve": {
+                "Line": [
+                  {
+                    "x": -0.5,
+                    "y": -0.5,
+                    "z": 0.5
+                  },
+                  {
+                    "x": 0.5,
+                    "y": -0.5,
+                    "z": 0.5
                   }
                 ]
               }
@@ -235,8 +215,8 @@
               "curve": {
                 "Line": [
                   {
-                    "x": -0.5,
-                    "y": 0.5,
+                    "x": 0.5,
+                    "y": -0.5,
                     "z": -0.5
                   },
                   {
@@ -269,7 +249,7 @@
             },
             {
               "vertices": [
-                2,
+                5,
                 7
               ],
               "curve": {
@@ -289,7 +269,27 @@
             },
             {
               "vertices": [
-                5,
+                0,
+                6
+              ],
+              "curve": {
+                "Line": [
+                  {
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": -0.5
+                  },
+                  {
+                    "x": 0.5,
+                    "y": 0.5,
+                    "z": -0.5
+                  }
+                ]
+              }
+            },
+            {
+              "vertices": [
+                1,
                 7
               ],
               "curve": {
@@ -822,7 +822,7 @@
                   },
                   {
                     "index": 1,
-                    "orientation": true
+                    "orientation": false
                   },
                   {
                     "index": 2,
@@ -830,11 +830,11 @@
                   },
                   {
                     "index": 3,
-                    "orientation": false
+                    "orientation": true
                   }
                 ]
               ],
-              "orientation": true,
+              "orientation": false,
               "surface": {
                 "Plane": {
                   "o": {
@@ -843,8 +843,8 @@
                     "z": -0.5
                   },
                   "p": {
-                    "x": 0.5,
-                    "y": -0.5,
+                    "x": -0.5,
+                    "y": 0.5,
                     "z": -0.5
                   },
                   "q": {
@@ -864,61 +864,19 @@
                   },
                   {
                     "index": 5,
-                    "orientation": false
-                  },
-                  {
-                    "index": 3,
-                    "orientation": false
-                  },
-                  {
-                    "index": 6,
                     "orientation": true
-                  }
-                ]
-              ],
-              "orientation": false,
-              "surface": {
-                "Plane": {
-                  "o": {
-                    "x": -0.5,
-                    "y": -0.5,
-                    "z": -0.5
-                  },
-                  "p": {
-                    "x": -0.5,
-                    "y": 0.5,
-                    "z": -0.5
-                  },
-                  "q": {
-                    "x": -0.5,
-                    "y": -0.5,
-                    "z": 0.5
-                  }
-                }
-              }
-            },
-            {
-              "boundaries": [
-                [
-                  {
-                    "index": 0,
-                    "orientation": true
-                  },
-                  {
-                    "index": 7,
-                    "orientation": true
-                  },
-                  {
-                    "index": 8,
-                    "orientation": false
                   },
                   {
                     "index": 6,
                     "orientation": false
+                  },
+                  {
+                    "index": 2,
+                    "orientation": false
                   }
                 ]
               ],
-              "orientation": false,
+              "orientation": true,
               "surface": {
                 "Plane": {
                   "o": {
@@ -933,8 +891,8 @@
                   },
                   "q": {
                     "x": -0.5,
-                    "y": 0.5,
-                    "z": -0.5
+                    "y": -0.5,
+                    "z": 0.5
                   }
                 }
               }
@@ -947,15 +905,15 @@
                     "orientation": true
                   },
                   {
-                    "index": 9,
+                    "index": 8,
                     "orientation": true
                   },
                   {
-                    "index": 10,
+                    "index": 9,
                     "orientation": false
                   },
                   {
-                    "index": 1,
+                    "index": 5,
                     "orientation": false
                   }
                 ]
@@ -985,11 +943,49 @@
               "boundaries": [
                 [
                   {
-                    "index": 2,
+                    "index": 4,
+                    "orientation": true
+                  },
+                  {
+                    "index": 7,
                     "orientation": true
                   },
                   {
                     "index": 10,
+                    "orientation": false
+                  },
+                  {
+                    "index": 3,
+                    "orientation": false
+                  }
+                ]
+              ],
+              "orientation": false,
+              "surface": {
+                "Plane": {
+                  "o": {
+                    "x": -0.5,
+                    "y": -0.5,
+                    "z": -0.5
+                  },
+                  "p": {
+                    "x": 0.5,
+                    "y": -0.5,
+                    "z": -0.5
+                  },
+                  "q": {
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": -0.5
+                  }
+                }
+              }
+            },
+            {
+              "boundaries": [
+                [
+                  {
+                    "index": 8,
                     "orientation": true
                   },
                   {
@@ -997,7 +993,53 @@
                     "orientation": false
                   },
                   {
-                    "index": 5,
+                    "index": 0,
+                    "orientation": false
+                  },
+                  {
+                    "index": 10,
+                    "orientation": true
+                  }
+                ]
+              ],
+              "orientation": false,
+              "surface": {
+                "Plane": {
+                  "o": {
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": -0.5
+                  },
+                  "p": {
+                    "x": 0.5,
+                    "y": 0.5,
+                    "z": -0.5
+                  },
+                  "q": {
+                    "x": -0.5,
+                    "y": 0.5,
+                    "z": 0.5
+                  }
+                }
+              }
+            },
+            {
+              "boundaries": [
+                [
+                  {
+                    "index": 6,
+                    "orientation": true
+                  },
+                  {
+                    "index": 9,
+                    "orientation": true
+                  },
+                  {
+                    "index": 11,
+                    "orientation": false
+                  },
+                  {
+                    "index": 1,
                     "orientation": false
                   }
                 ],
@@ -1330,52 +1372,21 @@
                   ]
                 }
               }
-            },
-            {
-              "boundaries": [
-                [
-                  {
-                    "index": 9,
-                    "orientation": true
-                  },
-                  {
-                    "index": 11,
-                    "orientation": false
-                  },
-                  {
-                    "index": 4,
-                    "orientation": false
-                  },
-                  {
-                    "index": 8,
-                    "orientation": true
-                  }
-                ]
-              ],
-              "orientation": false,
-              "surface": {
-                "Plane": {
-                  "o": {
-                    "x": -0.5,
-                    "y": 0.5,
-                    "z": -0.5
-                  },
-                  "p": {
-                    "x": 0.5,
-                    "y": 0.5,
-                    "z": -0.5
-                  },
-                  "q": {
-                    "x": -0.5,
-                    "y": 0.5,
-                    "z": 0.5
-                  }
-                }
-              }
             }
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.2,
+        0.6,
+        1.0,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   }
 ]

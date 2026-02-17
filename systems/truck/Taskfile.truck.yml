@@ -142,23 +142,43 @@ tasks:
       - cd {{.TRUCK_SRC_DIR}} && cargo build --release
 
   test:
-    desc: Run truck tests
+    desc: Run truck upstream tests
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo test
+
+  "test:api":
+    desc: Run Hono API tests with vitest
+    cmds:
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
+
+  "test:crate":
+    desc: Run truck-webgpu-gui crate tests (sketch, golden resources)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+
+  "test:sketch":
+    desc: Run sketch E2E tests (requires gui:serve running)
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test e2e/sketch.spec.ts --project=e2e
 
   check:
     desc: Run cargo check (fast compile check)
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo check
 
   ci:
-    desc: Run full CI pipeline (check + test)
+    desc: Run full CI pipeline (check + test + WASM build)
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
       - cd {{.TRUCK_SRC_DIR}} && cargo test
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
 
   # ===========================================================================
   # Visual Examples (opens a window)
@@ -304,10 +324,16 @@ tasks:
       - test -d {{.ROOT_DIR}}/tests/node_modules
 
   "test:e2e":
-    desc: Run E2E tests against local dev server
+    desc: Run E2E tests (fast mode, minimal delays)
     deps: ["test:install"]
     cmds:
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=e2e
+
+  "test:e2e:slow":
+    desc: Run E2E tests with slow pauses and video recording
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && SLOW=1 bun x playwright test --project=e2e
 
   "test:screenshots":
     desc: Generate doc screenshots (saves to web/gui/docs/screenshots/)
@@ -444,6 +470,12 @@ tasks:
   # ===========================================================================
   # Resources - Sample files included with truck
   # ===========================================================================
+
+  "resources:verify":
+    desc: Verify all resource JSON shapes load and round-trip correctly
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test --test resources_golden
 
   "resources:list":
     desc: List sample files

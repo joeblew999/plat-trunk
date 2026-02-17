@@ -20,6 +20,7 @@ import {
   waitForWasm,
   clickButton,
   setInput,
+  getObjectIds,
   LESSONS_DIR,
 } from './helpers';
 
@@ -124,9 +125,12 @@ test.describe('Lesson Videos', () => {
     // Show both objects overlapping (pause so viewer sees the "before")
     await page.waitForTimeout(1500);
 
-    // Set up boolean: A=0 (cube), B=1 (cylinder)
-    await setInput(page, 'boolA', '0');
-    await setInput(page, 'boolB', '1');
+    // Set up boolean selection: A = cube, B = cylinder
+    const ids = await getObjectIds(page);
+    await page.evaluate(({ a, b }) => {
+      (window as any).boolSelA = a;
+      (window as any).boolSelB = b;
+    }, { a: ids[0], b: ids[1] });
     await page.waitForTimeout(800);
 
     // SUBTRACT — punch the cylinder out of the cube
@@ -150,9 +154,12 @@ test.describe('Lesson Videos', () => {
     // Show both cubes overlapping (pause so viewer sees the "before")
     await page.waitForTimeout(1500);
 
-    // Set up boolean: A=0, B=1
-    await setInput(page, 'boolA', '0');
-    await setInput(page, 'boolB', '1');
+    // Set up boolean selection: A = first cube, B = second cube
+    const ids = await getObjectIds(page);
+    await page.evaluate(({ a, b }) => {
+      (window as any).boolSelA = a;
+      (window as any).boolSelB = b;
+    }, { a: ids[0], b: ids[1] });
     await page.waitForTimeout(800);
 
     // UNION — merge the two cubes into one solid
@@ -198,8 +205,11 @@ test.describe('Lesson Videos', () => {
     await clickButton(page, 'addCylinder');
     await page.waitForTimeout(1500);
 
-    // Step 3: Move the cylinder up to make it dramatic
-    await page.evaluate(() => { window['selectedObject'] = 2; });
+    // Step 3: Move the cylinder up — select it first by UUID
+    const ids = await getObjectIds(page);
+    // ids: [defaultCube, sphere, cylinder]
+    const cylinderId = ids[ids.length - 1];
+    await page.evaluate((id) => { (window as any).selectedObjectId = id; }, cylinderId);
     await setInput(page, 'txVal', '0');
     await setInput(page, 'tyVal', '1.0');
     await setInput(page, 'tzVal', '0');
@@ -207,16 +217,23 @@ test.describe('Lesson Videos', () => {
     await page.waitForTimeout(2000);
 
     // Step 4: Boolean subtract — punch cylinder from cube
-    await setInput(page, 'boolA', '0');
-    await setInput(page, 'boolB', '2');
+    await page.evaluate(({ a, b }) => {
+      (window as any).boolSelA = a;
+      (window as any).boolSelB = b;
+    }, { a: ids[0], b: cylinderId });
     await page.waitForTimeout(500);
     await clickButton(page, 'boolSubtract');
     await page.waitForTimeout(2500);
 
-    // Step 5: Delete the sphere (now index 1 after boolean result at 0)
-    await page.evaluate(() => { window['selectedObject'] = 1; });
-    await clickButton(page, 'deleteBtn');
-    await page.waitForTimeout(1500);
+    // Step 5: Delete the sphere
+    const idsAfterBool = await getObjectIds(page);
+    // Find the sphere (still in scene after boolean consumed cube + cylinder)
+    const sphereId = idsAfterBool.find((id: string) => id !== idsAfterBool[0]) || idsAfterBool[1];
+    if (sphereId) {
+      await page.evaluate((id) => { (window as any).selectedObjectId = id; }, sphereId);
+      await clickButton(page, 'deleteBtn');
+      await page.waitForTimeout(1500);
+    }
 
     // Step 6: Clear all
     await clickButton(page, 'clearBtn');

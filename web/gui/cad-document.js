@@ -285,61 +285,20 @@ class CadDocumentManager {
     }
 
     /** Execute a single operation against the WASM SceneController.
+     *  Delegates to shared executeWasm() from cad-commands.js.
      *  Returns the result object UUID for add/boolean ops, or null. */
     _executeOp(op) {
         const ctrl = this._ctrl();
         if (!ctrl) return null;
 
-        const p = op.params || {};
-
-        switch (op.type) {
-            case 'add_cube':
-                return ctrl.add_cube(p.size || 1.0);
-            case 'add_sphere':
-                return ctrl.add_sphere(p.size || 1.0);
-            case 'add_cylinder':
-                return ctrl.add_cylinder(p.radius || 0.5, p.height || 1.0);
-            case 'add_torus':
-                return ctrl.add_torus(p.majorRadius || 1.0, p.minorRadius || 0.3);
-            case 'translate': {
-                // Resolve object UUID: use objectId directly, or look up from prior op result
-                const objectId = p.objectId || this._opResultMap.get(p.sourceOpId) || null;
-                if (objectId) {
-                    ctrl.translate_object(objectId, p.dx || 0, p.dy || 0, p.dz || 0);
-                }
-                return null;
-            }
-            case 'rotate': {
-                const objectId = p.objectId || this._opResultMap.get(p.sourceOpId) || null;
-                if (objectId) {
-                    ctrl.rotate_object(objectId, p.axisX || 0, p.axisY || 1, p.axisZ || 0, p.angleDeg || 0);
-                }
-                return null;
-            }
-            case 'boolean_union': {
-                const result = ctrl.boolean_union(p.idA, p.idB);
-                return result || null;
-            }
-            case 'boolean_subtract': {
-                const result = ctrl.boolean_subtract(p.idA, p.idB);
-                return result || null;
-            }
-            case 'boolean_intersect': {
-                const result = ctrl.boolean_intersect(p.idA, p.idB);
-                return result || null;
-            }
-            case 'delete': {
-                const objectId = p.objectId || null;
-                if (objectId) ctrl.delete_object(objectId);
-                return null;
-            }
-            case 'clear':
-                ctrl.clear_scene();
-                return null;
-            default:
-                console.warn('Unknown op type:', op.type);
-                return null;
+        // Clone params and resolve sourceOpId references for replay
+        const p = { ...op.params };
+        if (p.sourceOpId && !p.objectId) {
+            p.objectId = this._opResultMap.get(p.sourceOpId) || null;
         }
+
+        const result = window.executeWasm(ctrl, op.type, p);
+        return result.objectId || null;
     }
 
     /** Listen for remote changes and replay scene */
@@ -385,6 +344,8 @@ class CadDocumentManager {
             boolean_intersect: 'btn-error',
             delete: 'btn-error',
             clear: 'btn-ghost',
+            set_style: 'btn-ghost',
+            sketch_extrude: 'btn-primary',
         };
 
         const TYPE_LABELS = {
@@ -399,6 +360,8 @@ class CadDocumentManager {
             boolean_intersect: 'Inter',
             delete: 'Del',
             clear: 'Clear',
+            set_style: 'Style',
+            sketch_extrude: 'Extrude',
         };
 
         // Group consecutive ops with same groupId into single chip

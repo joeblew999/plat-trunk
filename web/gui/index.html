@@ -7,6 +7,12 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="style.css" />
+    <script type="module" src="datastar.js"></script>
+    <script type="module">
+        // Bridge: expose Datastar signal API to non-module scripts (main.js, cad-commands.js)
+        import { root, mergePatch, beginBatch, endBatch } from './datastar.js';
+        window._ds = { root, mergePatch, beginBatch, endBatch };
+    </script>
     <script type="importmap">
     {
         "imports": {
@@ -18,7 +24,12 @@
     }
     </script>
 </head>
-<body>
+<body data-signals="{
+    objectCount: 0, sceneEmpty: true, selectedId: null,
+    boolSelA: null, boolSelB: null, boolLabel: 'Click A, shift+click B', boolReady: false,
+    canUndo: false, canRedo: false,
+    feedback: '', feedbackError: false
+}">
     <!-- DaisyUI Drawer — docs panel on right -->
     <div class="drawer drawer-end">
         <input id="docs-drawer" type="checkbox" class="drawer-toggle" />
@@ -71,11 +82,9 @@
                         <!-- Section: Boolean -->
                         <div data-section="boolean" class="tool-section">
                             <div class="divider my-0 text-xs">Boolean (A op B)</div>
-                            <div class="flex gap-1 items-center">
-                                <input type="number" id="boolA" value="0" min="0" class="input input-xs w-14" />
-                                <span class="text-xs opacity-60">op</span>
-                                <input type="number" id="boolB" value="1" min="0" class="input input-xs w-14" />
-                            </div>
+                            <p id="boolLabel" class="text-xs opacity-40"
+                               data-text="$boolLabel"
+                               data-class="{'opacity-40': !$boolReady, 'text-success': $boolReady}">Click A, shift+click B</p>
                             <div class="flex gap-1 mt-1">
                                 <button id="boolUnion" class="btn btn-success btn-xs" title="Merge A and B together">Union</button>
                                 <button id="boolSubtract" class="btn btn-warning btn-xs" title="Cut B from A">Subtract</button>
@@ -84,18 +93,121 @@
                             <p class="text-xs opacity-40 mt-1">Tip: objects must overlap</p>
                         </div>
 
+                        <!-- Section: Sketch (parametric) -->
+                        <div data-section="sketch" class="tool-section">
+                            <div class="divider my-0 text-xs">Sketch &amp; Extrude</div>
+                            <div class="flex gap-1 items-center">
+                                <select id="sketchPlane" class="select select-xs w-20">
+                                    <option value="xy">XY</option>
+                                    <option value="xz">XZ</option>
+                                    <option value="yz">YZ</option>
+                                </select>
+                                <button id="sketchBeginBtn" class="btn btn-primary btn-xs">Begin Sketch</button>
+                            </div>
+                            <!-- Quick rectangle shortcut -->
+                            <div class="flex gap-1 items-center mt-1">
+                                <input type="number" id="sketchRectW" value="2" step="0.1" min="0.1" class="input input-xs w-14" placeholder="W"/>
+                                <span class="text-xs opacity-40">x</span>
+                                <input type="number" id="sketchRectH" value="1" step="0.1" min="0.1" class="input input-xs w-14" placeholder="H"/>
+                                <button id="sketchQuickRectBtn" class="btn btn-outline btn-xs">Rect</button>
+                            </div>
+                            <!-- Active sketch controls (hidden until sketch begins) -->
+                            <div id="sketch-active-controls" style="display:none">
+                                <div id="sketchInfo" class="text-xs opacity-60 mt-1">No active sketch</div>
+                                <!-- Add point -->
+                                <div class="flex gap-1 items-center mt-1">
+                                    <input type="number" id="sketchPtX" value="0" step="0.1" class="input input-xs w-14" placeholder="x"/>
+                                    <input type="number" id="sketchPtY" value="0" step="0.1" class="input input-xs w-14" placeholder="y"/>
+                                    <button id="sketchAddPointBtn" class="btn btn-outline btn-xs">+Pt</button>
+                                </div>
+                                <!-- Add edge -->
+                                <div class="flex gap-1 items-center mt-1">
+                                    <select id="sketchEdgeP0" class="select select-xs w-20 sketch-point-select"><option value="">--</option></select>
+                                    <span class="text-xs opacity-40">to</span>
+                                    <select id="sketchEdgeP1" class="select select-xs w-20 sketch-point-select"><option value="">--</option></select>
+                                    <button id="sketchAddEdgeBtn" class="btn btn-outline btn-xs">+Edge</button>
+                                </div>
+                                <!-- Add constraint -->
+                                <div class="mt-1">
+                                    <select id="sketchConstraintType" class="select select-xs w-full">
+                                        <option value="">Add constraint...</option>
+                                        <option value="fixed">Fixed</option>
+                                        <option value="horizontal">Horizontal</option>
+                                        <option value="vertical">Vertical</option>
+                                        <option value="distance">Distance</option>
+                                        <option value="horizontal_distance">H-Distance</option>
+                                        <option value="vertical_distance">V-Distance</option>
+                                        <option value="coincident">Coincident</option>
+                                        <option value="parallel">Parallel</option>
+                                        <option value="perpendicular">Perpendicular</option>
+                                        <option value="equal_length">Equal Length</option>
+                                        <option value="midpoint">Midpoint</option>
+                                    </select>
+                                    <div id="sketchConPointsRow" class="flex gap-1 mt-1" style="display:none">
+                                        <select id="sketchConP0" class="select select-xs w-20 sketch-point-select"><option value="">P0</option></select>
+                                        <select id="sketchConP1" class="select select-xs w-20 sketch-point-select"><option value="">P1</option></select>
+                                    </div>
+                                    <div id="sketchConEdgesRow" class="flex gap-1 mt-1" style="display:none">
+                                        <select id="sketchConEdge0" class="select select-xs w-20 sketch-edge-select"><option value="">E0</option></select>
+                                        <select id="sketchConEdge1" class="select select-xs w-20 sketch-edge-select"><option value="">E1</option></select>
+                                    </div>
+                                    <div id="sketchConValueRow" class="flex gap-1 mt-1" style="display:none">
+                                        <input type="number" id="sketchConValue" value="1" step="0.1" class="input input-xs w-16" placeholder="val"/>
+                                    </div>
+                                    <div id="sketchConValue2Row" class="flex gap-1 mt-1" style="display:none">
+                                        <input type="number" id="sketchConValue2" value="0" step="0.1" class="input input-xs w-16" placeholder="y"/>
+                                    </div>
+                                    <button id="sketchAddConstraintBtn" class="btn btn-outline btn-xs mt-1">Add Constraint</button>
+                                </div>
+                                <!-- Solve / Extrude / Cancel -->
+                                <div class="flex gap-1 mt-1">
+                                    <button id="sketchSolveBtn" class="btn btn-outline btn-xs">Solve</button>
+                                    <input type="number" id="sketchExtrudeHeight" value="1" step="0.1" min="0.01" class="input input-xs w-14" placeholder="H"/>
+                                    <button id="sketchExtrudeBtn" class="btn btn-success btn-xs">Extrude</button>
+                                </div>
+                                <button id="sketchCancelBtn" class="btn btn-outline btn-error btn-xs mt-1">Cancel Sketch</button>
+                            </div>
+                        </div>
+
                         <!-- Section: Scene -->
                         <div data-section="scene" class="tool-section">
                             <div class="divider my-0 text-xs">Scene</div>
                             <div id="objectList" class="text-xs opacity-70 mb-1">Objects: loading...</div>
+                            <div id="feedbackMsg" class="text-xs mb-1" style="min-height:1.25rem"
+                                 data-show="$feedback"
+                                 data-text="$feedback"
+                                 data-class="{'text-error': $feedbackError, 'text-success': !$feedbackError}"></div>
                             <div id="timelineStrip" class="flex gap-1 overflow-x-auto pb-1 mb-1"></div>
                             <div class="flex gap-1 mb-1">
-                                <button id="undoBtn" class="btn btn-outline btn-xs" disabled>Undo</button>
-                                <button id="redoBtn" class="btn btn-outline btn-xs" disabled>Redo</button>
+                                <button id="undoBtn" class="btn btn-outline btn-xs" disabled
+                                        data-attr-disabled="!$canUndo">Undo</button>
+                                <button id="redoBtn" class="btn btn-outline btn-xs" disabled
+                                        data-attr-disabled="!$canRedo">Redo</button>
                             </div>
                             <div class="flex gap-1">
                                 <button id="deleteBtn" class="btn btn-outline btn-error btn-xs">Delete Sel.</button>
                                 <button id="clearBtn" class="btn btn-outline btn-xs">Clear All</button>
+                            </div>
+                            <!-- Inline style controls (mobile only — desktop uses right panel) -->
+                            <div id="mobile-style-section" class="lg:hidden mt-2" style="display:none">
+                                <div class="divider my-0 text-xs">Style</div>
+                                <div class="text-xs opacity-60 mb-1" id="mobile-props-id">Object: ---</div>
+                                <fieldset class="fieldset">
+                                    <label class="label text-xs">Color</label>
+                                    <input type="color" id="mobilePropColor" value="#3399ff" class="w-full h-8 cursor-pointer rounded" />
+                                </fieldset>
+                                <fieldset class="fieldset mt-1">
+                                    <label class="label text-xs">Opacity <span id="mobilePropOpacityVal" class="opacity-60">1.0</span></label>
+                                    <input type="range" id="mobilePropOpacity" min="0" max="1" step="0.05" value="1" class="range range-xs" />
+                                </fieldset>
+                                <fieldset class="fieldset mt-1">
+                                    <label class="label text-xs">Roughness <span id="mobilePropRoughnessVal" class="opacity-60">0.3</span></label>
+                                    <input type="range" id="mobilePropRoughness" min="0" max="1" step="0.05" value="0.3" class="range range-xs" />
+                                </fieldset>
+                                <fieldset class="fieldset mt-1">
+                                    <label class="label text-xs">Reflectance <span id="mobilePropReflectanceVal" class="opacity-60">0.5</span></label>
+                                    <input type="range" id="mobilePropReflectance" min="0" max="1" step="0.05" value="0.5" class="range range-xs" />
+                                </fieldset>
                             </div>
                         </div>
 
@@ -115,17 +227,25 @@
                             <select id="exampleSelect" class="select select-xs w-full">
                                 <option value="">Load example...</option>
                             </select>
+                            <div class="divider my-0 text-xs mt-2">Developer</div>
+                            <div class="flex flex-wrap gap-1">
+                                <a href="/api-docs" target="_blank" class="btn btn-outline btn-xs">API Ref</a>
+                                <a href="https://cad-docs.pages.dev/" target="_blank" class="btn btn-outline btn-xs">Docs</a>
+                                <a href="https://github.com/joeblew999/plat-trunk" target="_blank" class="btn btn-outline btn-xs">GitHub</a>
+                            </div>
                         </div>
 
                         <!-- Controls hint (desktop only) -->
                         <div class="hidden lg:block">
                             <div class="divider my-0 text-xs">Controls</div>
                             <ul class="text-xs opacity-50 space-y-0">
-                                <li>Drag &mdash; Rotate</li>
+                                <li>Click object &mdash; Select</li>
+                                <li>Drag arrow &mdash; Move along axis</li>
+                                <li>Escape &mdash; Cancel drag</li>
+                                <li>Delete &mdash; Delete selected</li>
+                                <li>Drag &mdash; Rotate camera</li>
                                 <li>Scroll &mdash; Zoom</li>
-                                <li>Right-click &mdash; Move light</li>
-                                <li>Ctrl+Z &mdash; Undo</li>
-                                <li>Ctrl+Shift+Z &mdash; Redo</li>
+                                <li>Ctrl+Z / Ctrl+Shift+Z &mdash; Undo/Redo</li>
                             </ul>
                         </div>
 
@@ -147,6 +267,10 @@
                     <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/></svg>
                     <span class="dock-label">Bool</span>
                 </button>
+                <button data-tab="sketch" onclick="cadUI.setTab('sketch')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20L20 4M4 4l16 16"/></svg>
+                    <span class="dock-label">Sketch</span>
+                </button>
                 <button data-tab="scene" onclick="cadUI.setTab('scene')">
                     <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
                     <span class="dock-label">Scene</span>
@@ -155,6 +279,41 @@
                     <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                     <span class="dock-label">File</span>
                 </button>
+            </div>
+
+            <!-- ===== PROPERTIES PANEL (desktop right side) ===== -->
+            <div id="props-panel" class="props-hidden">
+                <div class="card bg-base-300 shadow-lg">
+                    <div class="card-body p-4 gap-2">
+                        <div class="flex items-center justify-between">
+                            <h2 class="card-title text-lg">Properties</h2>
+                            <button id="props-close" class="btn btn-ghost btn-xs" title="Close"
+                                    onclick="document.getElementById('props-panel').classList.add('props-hidden')">X</button>
+                        </div>
+                        <div id="props-empty" class="text-xs opacity-50 py-4 text-center">
+                            No object selected
+                        </div>
+                        <div id="props-content" style="display:none">
+                            <div class="text-xs opacity-60 mb-2" id="props-object-id">Object: ---</div>
+                            <fieldset class="fieldset">
+                                <label class="label text-xs">Color</label>
+                                <input type="color" id="propColor" value="#3399ff" class="w-full h-8 cursor-pointer rounded" />
+                            </fieldset>
+                            <fieldset class="fieldset mt-1">
+                                <label class="label text-xs">Opacity <span id="propOpacityVal" class="opacity-60">1.0</span></label>
+                                <input type="range" id="propOpacity" min="0" max="1" step="0.05" value="1" class="range range-xs" />
+                            </fieldset>
+                            <fieldset class="fieldset mt-1">
+                                <label class="label text-xs">Roughness <span id="propRoughnessVal" class="opacity-60">0.3</span></label>
+                                <input type="range" id="propRoughness" min="0" max="1" step="0.05" value="0.3" class="range range-xs" />
+                            </fieldset>
+                            <fieldset class="fieldset mt-1">
+                                <label class="label text-xs">Reflectance <span id="propReflectanceVal" class="opacity-60">0.5</span></label>
+                                <input type="range" id="propReflectance" min="0" max="1" step="0.05" value="0.5" class="range range-xs" />
+                            </fieldset>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Docs toggle button (top-right) -->
@@ -251,6 +410,10 @@
     <script src="sync-adapter.js"></script>
     <script type="module" src="cad-document.js"></script>
     <script src="undo-manager.js"></script>
+    <script src="cad-commands.js"></script>
     <script type="module" src="main.js"></script>
+    <script src="sketch-ui.js"></script>
+    <script src="properties-panel.js"></script>
+    <script src="api-bridge.js"></script>
 </body>
 </html>

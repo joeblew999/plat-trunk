@@ -7,6 +7,14 @@ export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../web/gui/docs/scree
 /** Directory where lesson videos are saved */
 export const LESSONS_DIR = path.resolve(__dirname, '../../web/gui/docs/lessons');
 
+/** Slow mode: set SLOW=1 for longer pauses (useful for video recording / debugging) */
+export const IS_SLOW = !!process.env.SLOW;
+
+/** Pause between steps — short in fast mode, longer in slow/video mode */
+export async function pause(page: Page) {
+  await page.waitForTimeout(IS_SLOW ? 500 : 50);
+}
+
 /** Wait for the WASM SceneController to be ready */
 export async function waitForWasm(page: Page) {
   // Wait for the module to load and SceneController to be available
@@ -14,14 +22,13 @@ export async function waitForWasm(page: Page) {
     timeout: 30_000,
   });
   // Give the first render a moment to complete
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(IS_SLOW ? 1000 : 200);
 }
 
 /** Click a button by its ID and wait for the scene to update */
 export async function clickButton(page: Page, id: string) {
   await page.click(`#${id}`);
-  // Allow the WASM scene to re-render
-  await page.waitForTimeout(500);
+  await pause(page);
 }
 
 /** Set an input value by ID */
@@ -73,4 +80,18 @@ export async function addPrimitive(page: Page, type: string, params: Record<stri
       default: throw new Error(`Unknown type: ${type}`);
     }
   }, { type, params });
+}
+
+/** Execute a CAD command via the unified cadCommand() dispatcher.
+ *  This is the preferred way to drive scene changes from tests — uses the
+ *  same code path as GUI buttons and the HTTP API. */
+export async function apiCommand(
+  page: Page,
+  type: string,
+  params: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  return await page.evaluate(
+    ({ t, p }) => (window as any).cadCommand(t, p, { source: 'test' }),
+    { t: type, p: params },
+  );
 }

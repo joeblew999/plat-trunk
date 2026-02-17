@@ -1,6 +1,6 @@
 [
   {
-    "id": "00aba778-9ae1-4992-bd4e-6c33c42bb67c",
+    "id": "d3068803-5e8a-41ca-b30f-200fb9283470",
     "solid": {
       "boundaries": [
         {
@@ -544,6 +544,17 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.2,
+        0.6,
+        1.0,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   }
 ]

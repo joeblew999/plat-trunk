@@ -1,6 +1,6 @@
 [
   {
-    "id": "370c74d6-7db7-4e17-8e7c-7c1c294c6860",
+    "id": "f69c8bb8-b699-4eb6-abc0-f2131a500b81",
     "solid": {
       "boundaries": [
         {
@@ -544,10 +544,21 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.2,
+        0.6,
+        1.0,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   },
   {
-    "id": "8025eaa8-086d-42cf-8379-539abb03780d",
+    "id": "82d1b3e5-e71f-43e7-8192-b652e9d06c48",
     "solid": {
       "boundaries": [
         {
@@ -1091,10 +1102,21 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        1.0,
+        0.4,
+        0.3,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   },
   {
-    "id": "4e9d79cf-e710-41da-94ab-d40cf226f4bc",
+    "id": "ff1d5415-4657-42af-ada6-07fb6943757c",
     "solid": {
       "boundaries": [
         {
@@ -1638,6 +1660,17 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.3,
+        0.9,
+        0.4,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   }
 ]

@@ -1,0 +1,1846 @@
+// WASM application: rendering, scene management, gizmo interaction.
+// This module is only compiled for wasm32 targets.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::f64::consts::PI;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use wasm_bindgen::prelude::*;
+use winit::event::*;
+use winit::event_loop::EventLoop;
+use winit::platform::web::WindowAttributesExtWebSys;
+use winit::window::Window;
+
+use truck_meshalgo::prelude::*;
+use truck_modeling::*;
+use truck_platform::*;
+use truck_rendimpl::*;
+
+use crate::{make_cube, make_sphere, make_cylinder, make_torus};
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    fn error(s: &str);
+}
+
+macro_rules! log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
+macro_rules! error {
+    ($($t:tt)*) => (error(&format_args!($($t)*).to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Scene object: a solid + its rendered instances
+// ---------------------------------------------------------------------------
+
+/// Per-object visual style (color + PBR material properties).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ObjectStyle {
+    albedo: [f64; 4],      // RGBA, each [0,1]
+    roughness: f64,        // [0,1]
+    reflectance: f64,      // [0,1]
+    ambient_ratio: f64,    // [0,1]
+}
+
+impl Default for ObjectStyle {
+    fn default() -> Self {
+        ObjectStyle {
+            albedo: [0.2, 0.6, 1.0, 1.0],
+            roughness: 0.3,
+            reflectance: 0.5,
+            ambient_ratio: 0.05,
+        }
+    }
+}
+
+impl ObjectStyle {
+    fn from_index(idx: usize) -> Self {
+        let c = COLORS[idx % COLORS.len()];
+        ObjectStyle {
+            albedo: c,
+            roughness: 0.3,
+            reflectance: 0.5,
+            ambient_ratio: 0.05,
+        }
+    }
+
+    fn to_material_color(&self) -> Vector4 {
+        Vector4::new(self.albedo[0], self.albedo[1], self.albedo[2], self.albedo[3])
+    }
+}
+
+/// CPU-side mesh data for ray-triangle picking.
+/// Designed so a BVH acceleration structure can be dropped in later
+/// (it would index into the same `positions` and `triangles` arrays).
+struct PickMesh {
+    positions: Vec<Point3>,
+    triangles: Vec<[usize; 3]>,  // indices into positions
+}
+
+impl PickMesh {
+    /// Compute a bounding sphere from the (already-transformed) pick mesh positions.
+    fn bounding_sphere(&self) -> (Point3, f64) {
+        if self.positions.is_empty() {
+            return (Point3::origin(), 0.0);
+        }
+        let n = self.positions.len() as f64;
+        let sum = self.positions.iter().fold(Vector3::zero(), |acc, p| acc + p.to_vec());
+        let center = Point3::from_vec(sum / n);
+        let radius = self.positions.iter()
+            .map(|p| (*p - center).magnitude())
+            .fold(0.0_f64, f64::max);
+        (center, radius)
+    }
+}
+
+struct SceneObject {
+    id: Uuid,
+    solid: Solid,
+    polygon: PolygonInstance,
+    wireframe: WireFrameInstance,
+    style: ObjectStyle,
+    pick_mesh: PickMesh,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExportEntry {
+    id: String,
+    solid: Solid,
+    #[serde(default)]
+    style: Option<ObjectStyle>,
+}
+
+// ---------------------------------------------------------------------------
+// Gizmo interaction
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+impl Axis {
+    fn unit_vector(&self) -> Vector3 {
+        match self {
+            Axis::X => Vector3::unit_x(),
+            Axis::Y => Vector3::unit_y(),
+            Axis::Z => Vector3::unit_z(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum InteractionMode {
+    Idle,
+    Selected { object_id: String },
+    Dragging {
+        object_id: String,
+        axis: Axis,
+        cumulative_delta: [f64; 3],
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+
+struct SharedState {
+    scene: Scene,
+    creator: InstanceCreator,
+    surface: wgpu::Surface<'static>,
+    objects: Vec<SceneObject>,
+    id_to_index: HashMap<String, usize>,
+    selected: Option<String>,
+    // Mouse interaction
+    rotate_flag: bool,
+    prev_cursor: Vector2,
+    // Touch interaction (iOS / mobile)
+    touches: HashMap<u64, Vector2>,
+    prev_pinch_dist: Option<f64>,
+    // Gizmo interaction
+    interaction: InteractionMode,
+    bounding_spheres: Vec<(String, Point3, f64)>, // (object_id, center, radius)
+    // JS callbacks
+    on_select: Option<js_sys::Function>,
+    on_drag_complete: Option<js_sys::Function>,
+    // Parametric sketch
+    active_sketch: Option<crate::sketch::Sketch>,
+}
+
+/// Rebuild the id→index lookup after any mutation that changes Vec ordering.
+fn rebuild_id_index(s: &mut SharedState) {
+    s.id_to_index.clear();
+    for (i, obj) in s.objects.iter().enumerate() {
+        s.id_to_index.insert(obj.id.to_string(), i);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Picking helpers
+// ---------------------------------------------------------------------------
+
+fn rebuild_bounding_spheres(s: &mut SharedState) {
+    s.bounding_spheres.clear();
+    for obj in &s.objects {
+        let (center, radius) = obj.pick_mesh.bounding_sphere();
+        s.bounding_spheres.push((obj.id.to_string(), center, radius));
+    }
+}
+
+fn ray_sphere_intersect(
+    ray_origin: Point3,
+    ray_dir: Vector3,
+    center: Point3,
+    radius: f64,
+) -> Option<f64> {
+    let oc = ray_origin - center;
+    let a = ray_dir.dot(ray_dir);
+    let b = 2.0 * oc.dot(ray_dir);
+    let c = oc.dot(oc) - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let t = (-b - disc.sqrt()) / (2.0 * a);
+    if t > 0.0 {
+        Some(t)
+    } else {
+        // Try the other root (we might be inside the sphere)
+        let t2 = (-b + disc.sqrt()) / (2.0 * a);
+        if t2 > 0.0 { Some(t2) } else { None }
+    }
+}
+
+/// Möller–Trumbore ray-triangle intersection with a small pick tolerance.
+/// The tolerance relaxes the barycentric bounds so triangles are slightly
+/// larger for picking — this closes gaps between smooth-shaded visual
+/// surfaces and the underlying flat triangle mesh on curved objects.
+const PICK_EPS: f64 = 0.03;
+
+fn ray_triangle_intersect(
+    ray_origin: Point3,
+    ray_dir: Vector3,
+    v0: Point3,
+    v1: Point3,
+    v2: Point3,
+) -> Option<f64> {
+    let edge1 = v1 - v0;
+    let edge2 = v2 - v0;
+    let h = ray_dir.cross(edge2);
+    let a = edge1.dot(h);
+    if a.abs() < 1e-10 {
+        return None; // Ray parallel to triangle
+    }
+    let f = 1.0 / a;
+    let s = ray_origin - v0;
+    let u = f * s.dot(h);
+    if u < -PICK_EPS || u > 1.0 + PICK_EPS {
+        return None;
+    }
+    let q = s.cross(edge1);
+    let v = f * ray_dir.dot(q);
+    if v < -PICK_EPS || u + v > 1.0 + PICK_EPS {
+        return None;
+    }
+    let t = f * edge2.dot(q);
+    if t > 1e-6 { Some(t) } else { None }
+}
+
+/// Test a ray against all triangles in a PickMesh.
+/// Returns the closest hit distance, or None.
+fn ray_pick_mesh_intersect(
+    ray_origin: Point3,
+    ray_dir: Vector3,
+    mesh: &PickMesh,
+) -> Option<f64> {
+    let mut best_t: Option<f64> = None;
+    for tri in &mesh.triangles {
+        let v0 = mesh.positions[tri[0]];
+        let v1 = mesh.positions[tri[1]];
+        let v2 = mesh.positions[tri[2]];
+        if let Some(t) = ray_triangle_intersect(ray_origin, ray_dir, v0, v1, v2) {
+            if best_t.map_or(true, |bt| t < bt) {
+                best_t = Some(t);
+            }
+        }
+    }
+    best_t
+}
+
+/// Pick the closest object hit by a ray from NDC coordinates.
+/// Two-phase: (1) broadphase bounding-sphere reject, (2) narrowphase ray-triangle.
+fn pick_object(s: &SharedState, ndc_x: f64, ndc_y: f64) -> Option<String> {
+    let camera = &s.scene.studio_config().camera;
+    let ray = camera.ray(Point2::new(ndc_x, ndc_y));
+    let origin = ray.origin();
+    let dir = ray.direction();
+
+    // Broadphase: collect candidate objects whose bounding sphere is hit
+    let mut candidates: Vec<(usize, f64)> = Vec::new(); // (object index, sphere t)
+    for (i, obj) in s.objects.iter().enumerate() {
+        let id_str = obj.id.to_string();
+        if let Some(bs) = s.bounding_spheres.iter().find(|(bid, _, _)| *bid == id_str) {
+            if ray_sphere_intersect(origin, dir, bs.1, bs.2).is_some() {
+                candidates.push((i, 0.0));
+            }
+        }
+    }
+
+    // Narrowphase: ray-triangle test on each candidate
+    let mut closest: Option<(String, f64)> = None;
+    for (idx, _) in &candidates {
+        let obj = &s.objects[*idx];
+        if let Some(t) = ray_pick_mesh_intersect(origin, dir, &obj.pick_mesh) {
+            if closest.as_ref().map_or(true, |(_, best_t)| t < *best_t) {
+                closest = Some((obj.id.to_string(), t));
+            }
+        }
+    }
+    closest.map(|(id, _)| id)
+}
+
+/// Minimum distance from a ray to a line segment.
+fn ray_to_segment_distance(
+    ray_origin: Point3,
+    ray_dir: Vector3,
+    seg_a: Point3,
+    seg_b: Point3,
+) -> f64 {
+    let u = ray_dir;
+    let v = seg_b - seg_a;
+    let w = ray_origin - seg_a;
+    let a = u.dot(u);
+    let b = u.dot(v);
+    let c = v.dot(v);
+    let d = u.dot(w);
+    let e = v.dot(w);
+    let denom = a * c - b * b;
+
+    let (sc, tc) = if denom < 1e-10 {
+        // Nearly parallel
+        (0.0, if b > c { d / b } else { e / c })
+    } else {
+        let sc = (b * e - c * d) / denom;
+        let tc = (a * e - b * d) / denom;
+        (sc.max(0.0), tc.clamp(0.0, 1.0))
+    };
+
+    let closest_on_ray = ray_origin + u * sc;
+    let closest_on_seg = seg_a + v * tc;
+    (closest_on_ray - closest_on_seg).magnitude()
+}
+
+/// Compute how far to move along `axis_dir` based on mouse NDC delta.
+/// Projects the world-space axis onto screen space, then maps the NDC delta.
+fn compute_axis_drag_delta(
+    camera: &Camera,
+    origin: Point3,
+    axis_dir: Vector3,
+    ndc_x: f64,
+    ndc_y: f64,
+    prev_ndc_x: f64,
+    prev_ndc_y: f64,
+) -> f64 {
+    // Cast rays for current and previous mouse positions
+    let ray_cur = camera.ray(Point2::new(ndc_x, ndc_y));
+    let ray_prev = camera.ray(Point2::new(prev_ndc_x, prev_ndc_y));
+
+    // Find closest point on the axis line to each ray
+    let t_cur = closest_point_on_axis(ray_cur.origin(), ray_cur.direction(), origin, axis_dir);
+    let t_prev = closest_point_on_axis(ray_prev.origin(), ray_prev.direction(), origin, axis_dir);
+
+    t_cur - t_prev
+}
+
+/// Find the parameter t along the axis (origin + t*axis_dir) that is closest to the given ray.
+fn closest_point_on_axis(
+    ray_origin: Point3,
+    ray_dir: Vector3,
+    axis_origin: Point3,
+    axis_dir: Vector3,
+) -> f64 {
+    let w = ray_origin - axis_origin;
+    let a = axis_dir.dot(axis_dir);
+    let b = axis_dir.dot(ray_dir);
+    let c = ray_dir.dot(ray_dir);
+    let d = axis_dir.dot(w);
+    let e = ray_dir.dot(w);
+    let denom = a * c - b * b;
+    if denom.abs() < 1e-10 {
+        return 0.0; // Axis parallel to ray
+    }
+    (b * e - c * d) / denom
+}
+
+// ---------------------------------------------------------------------------
+// Colors for multiple objects
+// ---------------------------------------------------------------------------
+
+const COLORS: &[[f64; 4]] = &[
+    [0.2, 0.6, 1.0, 1.0], // blue
+    [1.0, 0.4, 0.3, 1.0], // red
+    [0.3, 0.9, 0.4, 1.0], // green
+    [1.0, 0.8, 0.2, 1.0], // yellow
+    [0.8, 0.3, 0.9, 1.0], // purple
+    [0.2, 0.9, 0.9, 1.0], // cyan
+];
+
+// ---------------------------------------------------------------------------
+// Geometry: truck solid -> renderable instances
+// ---------------------------------------------------------------------------
+
+/// Extract a PickMesh from a truck PolygonMesh for CPU-side ray-triangle picking.
+fn extract_pick_mesh(poly: &PolygonMesh) -> PickMesh {
+    let positions = poly.positions().clone();
+    // Use faces().triangle_iter() to triangulate all faces (tris + quads + n-gons)
+    let triangles: Vec<[usize; 3]> = poly
+        .faces()
+        .triangle_iter()
+        .map(|tri| [tri[0].pos, tri[1].pos, tri[2].pos])
+        .collect();
+    PickMesh { positions, triangles }
+}
+
+fn solid_to_instances(
+    creator: &InstanceCreator,
+    solid: &Solid,
+    style: &ObjectStyle,
+) -> (PolygonInstance, WireFrameInstance, PickMesh) {
+    let mut bdd_box = BoundingBox::new();
+    solid
+        .boundaries()
+        .iter()
+        .flatten()
+        .flat_map(Face::boundaries)
+        .flatten()
+        .for_each(|edge| {
+            let curve = edge.oriented_curve();
+            bdd_box += match curve {
+                Curve::Line(line) => vec![line.0, line.1].into_iter().collect(),
+                Curve::BSplineCurve(curve) => {
+                    let bdb = curve.roughly_bounding_box();
+                    vec![bdb.max(), bdb.min()].into_iter().collect()
+                }
+                Curve::NurbsCurve(curve) => curve.roughly_bounding_box(),
+                Curve::IntersectionCurve(_) => BoundingBox::new(),
+            };
+        });
+    // Only normalize by size — do NOT re-center.
+    // Centering would force all objects back to origin, making translate invisible.
+    let size = bdd_box.size();
+    let mat = Matrix4::from_scale(size);
+
+    let mesh_solid = solid.triangulation(size * 0.005);
+    let curves = mesh_solid
+        .edge_iter()
+        .map(|edge| edge.curve())
+        .collect::<Vec<_>>();
+
+    let poly = mesh_solid.to_polygon();
+    let inv_mat = mat.invert().unwrap();
+    // Use a finer tessellation for the pick mesh so curved surfaces
+    // (sphere, torus) have more triangles and fewer gaps vs. the visual surface.
+    let pick_solid = solid.triangulation(size * 0.002);
+    let pick_poly = pick_solid.to_polygon();
+    let raw_pick = extract_pick_mesh(&pick_poly);
+    let pick_mesh = PickMesh {
+        positions: raw_pick.positions.iter().map(|p| inv_mat.transform_point(*p)).collect(),
+        triangles: raw_pick.triangles,
+    };
+
+    let polygon_state = PolygonState {
+        matrix: inv_mat,
+        material: Material {
+            albedo: style.to_material_color(),
+            roughness: style.roughness,
+            reflectance: style.reflectance,
+            ambient_ratio: style.ambient_ratio,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let wire_state = WireFrameState {
+        matrix: mat.invert().unwrap(),
+        ..Default::default()
+    };
+
+    (
+        creator.create_instance(&poly, &polygon_state),
+        creator.create_instance(&curves, &wire_state),
+        pick_mesh,
+    )
+}
+
+fn rebuild_scene(s: &mut SharedState) {
+    s.scene.clear_objects();
+    let selected_id = s.selected.as_deref();
+    for obj in &s.objects {
+        let id_str = obj.id.to_string();
+        let is_selected = selected_id == Some(id_str.as_str());
+        s.scene.add_object(&obj.polygon);
+        if is_selected {
+            // Highlight: render wireframe in bright yellow/gold for selected object
+            let mut highlight_wire = obj.wireframe.clone_instance();
+            *highlight_wire.instance_state_mut() = WireFrameState {
+                matrix: obj.wireframe.instance_state().matrix,
+                color: Vector4::new(1.0, 0.85, 0.0, 1.0), // gold highlight
+            };
+            s.scene.add_object(&highlight_wire);
+        } else {
+            s.scene.add_object(&obj.wireframe);
+        }
+    }
+    // Add gizmo arrows if an object is selected
+    add_gizmo_arrows(s);
+}
+
+/// Gizmo axis colors: X=red, Y=green, Z=blue
+const GIZMO_COLORS: [(Axis, [f64; 4]); 3] = [
+    (Axis::X, [1.0, 0.2, 0.2, 1.0]),
+    (Axis::Y, [0.2, 1.0, 0.2, 1.0]),
+    (Axis::Z, [0.3, 0.3, 1.0, 1.0]),
+];
+
+fn add_gizmo_arrows(s: &mut SharedState) {
+    let object_id = match &s.interaction {
+        InteractionMode::Selected { object_id } | InteractionMode::Dragging { object_id, .. } => {
+            object_id.clone()
+        }
+        InteractionMode::Idle => return,
+    };
+
+    // Find the selected object's bounding sphere center
+    let gizmo_origin = s.bounding_spheres.iter()
+        .find(|(id, _, _)| *id == object_id)
+        .map(|(_, center, _)| *center);
+    let origin = match gizmo_origin {
+        Some(o) => o,
+        None => return,
+    };
+
+    // Arrow length proportional to camera distance for consistent screen size
+    let cam_pos = s.scene.studio_config().camera.position();
+    let cam_dist = (cam_pos - origin).magnitude();
+    let arrow_len = cam_dist * 0.25;
+
+    // Which axis is being dragged (if any)?
+    let dragging_axis = match &s.interaction {
+        InteractionMode::Dragging { axis, .. } => Some(*axis),
+        _ => None,
+    };
+
+    for (axis, color) in &GIZMO_COLORS {
+        let dir = axis.unit_vector();
+        let end = origin + dir * arrow_len;
+
+        // Arrowhead: small perpendicular lines at the tip
+        let head_len = arrow_len * 0.15;
+        let perp1 = match axis {
+            Axis::X => Vector3::unit_y(),
+            Axis::Y => Vector3::unit_z(),
+            Axis::Z => Vector3::unit_x(),
+        };
+        let head_base = origin + dir * (arrow_len - head_len);
+        let head1 = head_base + perp1 * head_len * 0.5;
+        let head2 = head_base - perp1 * head_len * 0.5;
+
+        let segments: Vec<(Point3, Point3)> = vec![
+            (origin, end),
+            (end, head1),
+            (end, head2),
+        ];
+
+        // Dim non-active axes during drag
+        let alpha = if let Some(da) = dragging_axis {
+            if *axis == da { 1.0 } else { 0.2 }
+        } else {
+            1.0
+        };
+
+        let wire_state = WireFrameState {
+            matrix: Matrix4::identity(),
+            color: Vector4::new(color[0], color[1], color[2], alpha),
+        };
+        let instance: WireFrameInstance = s.creator.create_instance(&segments, &wire_state);
+        s.scene.add_object(&instance);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sketch helpers
+// ---------------------------------------------------------------------------
+
+fn plane_str(p: crate::sketch::SketchPlane) -> &'static str {
+    match p {
+        crate::sketch::SketchPlane::XY => "xy",
+        crate::sketch::SketchPlane::XZ => "xz",
+        crate::sketch::SketchPlane::YZ => "yz",
+    }
+}
+
+fn parse_uuid_field(params: &serde_json::Value, field: &str) -> Option<uuid::Uuid> {
+    params[field].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
+}
+
+fn add_solid_to_state(s: &mut SharedState, solid: Solid) -> String {
+    let id = Uuid::new_v4();
+    let idx = s.objects.len();
+    let style = ObjectStyle::from_index(idx);
+    let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+    let (center, radius) = pick_mesh.bounding_sphere();
+    s.scene.add_object(&polygon);
+    s.scene.add_object(&wireframe);
+    let id_str = id.to_string();
+    s.id_to_index.insert(id_str.clone(), idx);
+    s.bounding_spheres.push((id_str.clone(), center, radius));
+    s.objects.push(SceneObject { id, solid, polygon, wireframe, style, pick_mesh });
+    id_str
+}
+
+// ---------------------------------------------------------------------------
+// SceneController — wasm_bindgen API
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub struct SceneController {
+    event_loop: Option<EventLoop<()>>,
+    state: Rc<RefCell<SharedState>>,
+    window: Arc<Window>,
+}
+
+#[wasm_bindgen]
+impl SceneController {
+    #[allow(deprecated)]
+    #[wasm_bindgen(constructor)]
+    pub async fn new(canvas_id: String) -> std::result::Result<SceneController, JsValue> {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        let _ = console_log::init_with_level(log::Level::Info);
+        log!("WASM: SceneController::new({})", canvas_id);
+
+        let event_loop = EventLoop::new().unwrap();
+
+        let canvas = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(&canvas_id))
+            .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+            .expect("canvas not found");
+
+        #[allow(deprecated)]
+        let window = {
+            let attrs = Window::default_attributes().with_canvas(Some(canvas.clone()));
+            Arc::new(event_loop.create_window(attrs).expect("failed to create window"))
+        };
+
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .expect("surface creation failed");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("no adapter");
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                ..Default::default()
+            })
+            .await
+            .expect("no device");
+
+        let w = window.inner_size().width.max(1);
+        let h = window.inner_size().height.max(1);
+        let caps = surface.get_capabilities(&adapter);
+        let format = caps.formats[0];
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: w,
+            height: h,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let device_handler = DeviceHandler::new(adapter, device, queue);
+        let scene_desc = SceneDescriptor {
+            studio: StudioConfig {
+                background: wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 },
+                camera: {
+                    let matrix = Matrix4::look_at_rh(
+                        Point3::new(1.5, 1.5, 1.5),
+                        Point3::origin(),
+                        Vector3::unit_y(),
+                    );
+                    Camera {
+                        matrix: matrix.invert().unwrap(),
+                        method: ProjectionMethod::perspective(Rad(PI / 4.0)),
+                        near_clip: 0.01,
+                        far_clip: 100.0,
+                    }
+                },
+                lights: vec![Light {
+                    position: Point3::new(1.0, 1.0, 1.0),
+                    color: Vector3::new(1.0, 1.0, 1.0),
+                    light_type: LightType::Point,
+                }],
+            },
+            backend_buffer: BackendBufferConfig {
+                sample_count: 1,
+                ..Default::default()
+            },
+            render_texture: RenderTextureConfig {
+                canvas_size: (w, h),
+                format,
+            },
+        };
+        let scene = Scene::new(device_handler, &scene_desc);
+        let creator = scene.instance_creator();
+
+        log!("WASM: truck Scene ready. Drag=rotate, Scroll=zoom, Right-click=light.");
+
+        let mut shared = SharedState {
+            scene,
+            creator,
+            surface,
+            objects: Vec::new(),
+            id_to_index: HashMap::new(),
+            selected: None,
+            rotate_flag: false,
+            prev_cursor: Vector2::zero(),
+            touches: HashMap::new(),
+            prev_pinch_dist: None,
+            interaction: InteractionMode::Idle,
+            bounding_spheres: Vec::new(),
+            on_select: None,
+            on_drag_complete: None,
+            active_sketch: None,
+        };
+
+        // Start with a default cube
+        let default_id = add_solid_to_state(&mut shared, make_cube(1.0));
+        shared.selected = Some(default_id);
+
+        let state = Rc::new(RefCell::new(shared));
+
+        Ok(SceneController {
+            event_loop: Some(event_loop),
+            state,
+            window,
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn run(&mut self) {
+        let el = self.event_loop.take().expect("run() already called");
+        let state = Rc::clone(&self.state);
+        let window = Arc::clone(&self.window);
+        log!("WASM: Starting render loop.");
+
+        {
+            use winit::platform::web::EventLoopExtWebSys;
+            #[allow(deprecated)]
+            el.spawn(move |ev: Event<()>, target: &winit::event_loop::ActiveEventLoop| {
+                match ev {
+                    Event::NewEvents(_) => {
+                        window.request_redraw();
+                    }
+                    Event::WindowEvent { event, .. } => match event {
+                        WindowEvent::CloseRequested => target.exit(),
+
+                        WindowEvent::RedrawRequested => {
+                            let s = state.borrow();
+                            let output = match s.surface.get_current_texture() {
+                                Ok(t) => t,
+                                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                                    let config = s.scene.descriptor().render_texture
+                                        .compatible_surface_config();
+                                    s.surface.configure(s.scene.device(), &config);
+                                    return;
+                                }
+                                Err(e) => { error!("Surface: {:?}", e); return; }
+                            };
+                            let view = output.texture
+                                .create_view(&wgpu::TextureViewDescriptor::default());
+                            s.scene.render(&view);
+                            output.present();
+                        }
+
+                        WindowEvent::Resized(size) => {
+                            if size.width > 0 && size.height > 0 {
+                                let mut s = state.borrow_mut();
+                                let mut desc = s.scene.descriptor_mut();
+                                desc.render_texture.canvas_size = (size.width, size.height);
+                                let config = desc.render_texture.compatible_surface_config();
+                                drop(desc);
+                                s.surface.configure(s.scene.device(), &config);
+                            }
+                        }
+
+                        // --- Mouse: drag to rotate (suppressed during gizmo drag) ---
+                        WindowEvent::MouseInput { state: btn_state, button, .. } => {
+                            let mut s = state.borrow_mut();
+                            let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
+                            match button {
+                                MouseButton::Left => {
+                                    if !is_dragging {
+                                        s.rotate_flag = btn_state == ElementState::Pressed;
+                                    }
+                                }
+                                MouseButton::Right if btn_state == ElementState::Pressed => {
+                                    let studio = s.scene.studio_config_mut();
+                                    let cam_pos = studio.camera.position();
+                                    if let Some(light) = studio.lights.first_mut() {
+                                        match light.light_type {
+                                            LightType::Point => { light.position = cam_pos; }
+                                            LightType::Uniform => {
+                                                let strength = cam_pos.to_vec().magnitude();
+                                                light.position = cam_pos / strength;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        WindowEvent::CursorMoved { position, .. } => {
+                            let mut s = state.borrow_mut();
+                            let pos = Vector2::new(position.x, position.y);
+                            let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
+                            if s.rotate_flag && !is_dragging {
+                                let dir2d = pos - s.prev_cursor;
+                                if !dir2d.so_small() {
+                                    let matrix = &mut s.scene.studio_config_mut().camera.matrix;
+                                    let mut axis = dir2d[1] * matrix[0].truncate();
+                                    axis += dir2d[0] * matrix[1].truncate();
+                                    axis /= axis.magnitude();
+                                    let angle = dir2d.magnitude() * 0.01;
+                                    let mat = Matrix4::from_axis_angle(axis, Rad(angle));
+                                    *matrix = mat.invert().unwrap() * *matrix;
+                                }
+                            }
+                            s.prev_cursor = pos;
+                        }
+
+                        // --- Mouse wheel / trackpad: zoom ---
+                        WindowEvent::MouseWheel { delta, .. } => {
+                            let y = match delta {
+                                MouseScrollDelta::LineDelta(_, y) => y as f64,
+                                MouseScrollDelta::PixelDelta(pos) => pos.y * 0.01,
+                            };
+                            let mut s = state.borrow_mut();
+                            let camera = &mut s.scene.studio_config_mut().camera;
+                            match &mut camera.method {
+                                ProjectionMethod::Parallel { screen_size } => {
+                                    *screen_size *= 0.9f64.powf(y);
+                                }
+                                ProjectionMethod::Perspective { .. } => {
+                                    let trans = camera.eye_direction() * y * 0.2;
+                                    camera.matrix =
+                                        Matrix4::from_translation(trans) * camera.matrix;
+                                }
+                            }
+                        }
+
+                        // --- Touch: iOS / mobile ---
+                        WindowEvent::Touch(touch) => {
+                            let mut s = state.borrow_mut();
+                            let pos = Vector2::new(touch.location.x, touch.location.y);
+                            match touch.phase {
+                                TouchPhase::Started => {
+                                    s.touches.insert(touch.id, pos);
+                                    s.prev_pinch_dist = None;
+                                }
+                                TouchPhase::Moved => {
+                                    if s.touches.len() == 1 {
+                                        if let Some(&prev) = s.touches.get(&touch.id) {
+                                            let dir2d = pos - prev;
+                                            if !dir2d.so_small() {
+                                                let matrix = &mut s.scene.studio_config_mut().camera.matrix;
+                                                let mut axis = dir2d[1] * matrix[0].truncate();
+                                                axis += dir2d[0] * matrix[1].truncate();
+                                                axis /= axis.magnitude();
+                                                let angle = dir2d.magnitude() * 0.01;
+                                                let mat = Matrix4::from_axis_angle(axis, Rad(angle));
+                                                *matrix = mat.invert().unwrap() * *matrix;
+                                            }
+                                        }
+                                    }
+                                    if s.touches.len() == 2 {
+                                        s.touches.insert(touch.id, pos);
+                                        let pts: Vec<_> = s.touches.values().collect();
+                                        let dist = (*pts[0] - *pts[1]).magnitude();
+                                        if let Some(prev_dist) = s.prev_pinch_dist {
+                                            let delta = (dist - prev_dist) * 0.01;
+                                            let camera = &mut s.scene.studio_config_mut().camera;
+                                            match &mut camera.method {
+                                                ProjectionMethod::Parallel { screen_size } => {
+                                                    *screen_size *= 0.9f64.powf(delta);
+                                                }
+                                                ProjectionMethod::Perspective { .. } => {
+                                                    let trans = camera.eye_direction() * delta * 0.5;
+                                                    camera.matrix =
+                                                        Matrix4::from_translation(trans) * camera.matrix;
+                                                }
+                                            }
+                                        }
+                                        s.prev_pinch_dist = Some(dist);
+                                    } else {
+                                        s.touches.insert(touch.id, pos);
+                                    }
+                                }
+                                TouchPhase::Ended | TouchPhase::Cancelled => {
+                                    s.touches.remove(&touch.id);
+                                    s.prev_pinch_dist = None;
+                                }
+                            }
+                        }
+
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            });
+        }
+    }
+
+    // =====================================================================
+    // Primitives — each adds a new object to the scene
+    // =====================================================================
+
+    #[wasm_bindgen]
+    pub fn add_cube(&self, size: f64) -> String {
+        log!("WASM: add_cube({})", size);
+        let solid = make_cube(size);
+        let mut s = self.state.borrow_mut();
+        add_solid_to_state(&mut s, solid)
+    }
+
+    #[wasm_bindgen]
+    pub fn add_sphere(&self, radius: f64) -> String {
+        log!("WASM: add_sphere({})", radius);
+        let solid = make_sphere(radius);
+        let mut s = self.state.borrow_mut();
+        add_solid_to_state(&mut s, solid)
+    }
+
+    #[wasm_bindgen]
+    pub fn add_cylinder(&self, radius: f64, height: f64) -> String {
+        log!("WASM: add_cylinder({}, {})", radius, height);
+        let solid = make_cylinder(radius, height);
+        let mut s = self.state.borrow_mut();
+        add_solid_to_state(&mut s, solid)
+    }
+
+    #[wasm_bindgen]
+    pub fn add_torus(&self, major_r: f64, minor_r: f64) -> String {
+        log!("WASM: add_torus({}, {})", major_r, minor_r);
+        let solid = make_torus(major_r, minor_r);
+        let mut s = self.state.borrow_mut();
+        add_solid_to_state(&mut s, solid)
+    }
+
+    // =====================================================================
+    // Transforms
+    // =====================================================================
+
+    #[wasm_bindgen]
+    pub fn translate_object(&self, id: &str, dx: f64, dy: f64, dz: f64) -> bool {
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        let obj_id = s.objects[idx].id;
+        let style = s.objects[idx].style.clone();
+        let solid = builder::translated(&s.objects[idx].solid, Vector3::new(dx, dy, dz));
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+        let (center, radius) = pick_mesh.bounding_sphere();
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        // Update bounding sphere for this object (rendered-space coords from pick_mesh)
+        if let Some(bs) = s.bounding_spheres.iter_mut().find(|(bid, _, _)| bid == id) {
+            bs.1 = center;
+            bs.2 = radius;
+        }
+        rebuild_scene(&mut s);
+        true
+    }
+
+    #[wasm_bindgen]
+    pub fn rotate_object(&self, id: &str, axis_x: f64, axis_y: f64, axis_z: f64, angle_deg: f64) -> bool {
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        let axis = Vector3::new(axis_x, axis_y, axis_z);
+        if axis.so_small() { return false; }
+        let obj_id = s.objects[idx].id;
+        let style = s.objects[idx].style.clone();
+        let solid = builder::rotated(
+            &s.objects[idx].solid,
+            Point3::origin(),
+            axis.normalize(),
+            Rad(angle_deg.to_radians()),
+        );
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        true
+    }
+
+    // =====================================================================
+    // Boolean operations
+    // =====================================================================
+
+    /// Union two objects, replacing them with the result. Returns new index.
+    /// Tries truck_shapeops::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B).
+    /// Note: booleans work reliably with cubes + cylinders (tsweep geometry).
+    /// Spheres/tori (rsweep/NURBS) may fail — truck-shapeops limitation.
+    #[wasm_bindgen]
+    pub fn boolean_union(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_union({}, {})", id_a, id_b);
+        let mut s = self.state.borrow_mut();
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
+
+        let solid_a = s.objects[idx_a].solid.clone();
+        let solid_b = s.objects[idx_b].solid.clone();
+
+        // Try direct or() first, catching panics from truck_shapeops
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            truck_shapeops::or(&solid_a, &solid_b, 0.05)
+        })).ok().flatten();
+
+        // Fallback: De Morgan A ∪ B = ¬(¬A ∧ ¬B)
+        let result = result.or_else(|| {
+            log!("WASM: or() failed, trying De Morgan fallback");
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut not_a = solid_a.clone();
+                not_a.not();
+                let mut not_b = solid_b.clone();
+                not_b.not();
+                truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
+            })).ok().flatten()
+        });
+
+        match result {
+            Some(solid) => {
+                let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
+                s.objects.remove(hi);
+                s.objects.remove(lo);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
+                rebuild_bounding_spheres(&mut s);
+                rebuild_scene(&mut s);
+                new_id
+            }
+            None => {
+                error!("Boolean union failed — objects may not overlap or geometry is unsupported");
+                String::new()
+            }
+        }
+    }
+
+    /// Subtract object B from A, replacing both with the result. Returns new UUID (empty on failure).
+    #[wasm_bindgen]
+    pub fn boolean_subtract(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_subtract({}, {})", id_a, id_b);
+        let mut s = self.state.borrow_mut();
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
+
+        let solid_a = s.objects[idx_a].solid.clone();
+        let solid_b = s.objects[idx_b].solid.clone();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut not_b = solid_b;
+            not_b.not();
+            truck_shapeops::and(&solid_a, &not_b, 0.05)
+        })).ok().flatten();
+
+        match result {
+            Some(solid) => {
+                let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
+                s.objects.remove(hi);
+                s.objects.remove(lo);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
+                rebuild_bounding_spheres(&mut s);
+                rebuild_scene(&mut s);
+                new_id
+            }
+            None => {
+                error!("Boolean subtract failed — objects may not overlap or geometry is unsupported");
+                String::new()
+            }
+        }
+    }
+
+    /// Intersect two objects. Returns new UUID (empty on failure).
+    #[wasm_bindgen]
+    pub fn boolean_intersect(&self, id_a: &str, id_b: &str) -> String {
+        log!("WASM: boolean_intersect({}, {})", id_a, id_b);
+        let mut s = self.state.borrow_mut();
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+        if idx_a == idx_b { return String::new(); }
+
+        let solid_a = s.objects[idx_a].solid.clone();
+        let solid_b = s.objects[idx_b].solid.clone();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            truck_shapeops::and(&solid_a, &solid_b, 0.05)
+        })).ok().flatten();
+
+        match result {
+            Some(solid) => {
+                let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
+                s.objects.remove(hi);
+                s.objects.remove(lo);
+                rebuild_id_index(&mut s);
+                let new_id = add_solid_to_state(&mut s, solid);
+                rebuild_bounding_spheres(&mut s);
+                rebuild_scene(&mut s);
+                new_id
+            }
+            None => {
+                error!("Boolean intersect failed — objects may not overlap or geometry is unsupported");
+                String::new()
+            }
+        }
+    }
+
+    // =====================================================================
+    // Scene management
+    // =====================================================================
+
+    #[wasm_bindgen]
+    pub fn delete_object(&self, id: &str) -> bool {
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        s.objects.remove(idx);
+        rebuild_id_index(&mut s);
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        true
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_scene(&self) {
+        let mut s = self.state.borrow_mut();
+        s.objects.clear();
+        s.id_to_index.clear();
+        s.bounding_spheres.clear();
+        s.interaction = InteractionMode::Idle;
+        s.scene.clear_objects();
+    }
+
+    #[wasm_bindgen]
+    pub fn object_count(&self) -> usize {
+        self.state.borrow().objects.len()
+    }
+
+    /// Returns all object UUIDs in scene order.
+    #[wasm_bindgen]
+    pub fn object_ids(&self) -> Vec<String> {
+        self.state.borrow().objects.iter().map(|o| o.id.to_string()).collect()
+    }
+
+    #[wasm_bindgen]
+    pub fn select_object(&self, id: &str) {
+        let s = self.state.borrow();
+        let valid = s.id_to_index.contains_key(id);
+        drop(s);
+        self.state.borrow_mut().selected = if valid {
+            Some(id.to_string())
+        } else {
+            None
+        };
+    }
+
+    // =====================================================================
+    // Save / Load (JSON serialization of truck Solids)
+    // =====================================================================
+
+    /// Export entire scene as JSON string with UUIDs.
+    #[wasm_bindgen]
+    pub fn export_scene(&self) -> String {
+        let s = self.state.borrow();
+        let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| ExportEntry {
+            id: obj.id.to_string(),
+            solid: obj.solid.clone(),
+            style: Some(obj.style.clone()),
+        }).collect();
+        serde_json::to_string_pretty(&entries).unwrap_or_else(|e| {
+            error!("Export failed: {}", e);
+            "[]".to_string()
+        })
+    }
+
+    /// Import scene from JSON string. Replaces current scene.
+    #[wasm_bindgen]
+    pub fn import_scene(&self, json: &str) -> bool {
+        let entries: Vec<ExportEntry> = match serde_json::from_str(json) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Import failed: {}", e);
+                return false;
+            }
+        };
+        let mut s = self.state.borrow_mut();
+        s.objects.clear();
+        s.id_to_index.clear();
+        s.bounding_spheres.clear();
+        s.interaction = InteractionMode::Idle;
+        s.scene.clear_objects();
+        for entry in entries {
+            let id = Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::new_v4());
+            let idx = s.objects.len();
+            let style = entry.style.unwrap_or_else(|| ObjectStyle::from_index(idx));
+            let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &entry.solid, &style);
+            let (center, radius) = pick_mesh.bounding_sphere();
+            s.scene.add_object(&polygon);
+            s.scene.add_object(&wireframe);
+            let id_str = id.to_string();
+            s.id_to_index.insert(id_str.clone(), idx);
+            s.bounding_spheres.push((id_str, center, radius));
+            s.objects.push(SceneObject { id, solid: entry.solid, polygon, wireframe, style, pick_mesh });
+        }
+        log!("WASM: Imported {} objects", s.objects.len());
+        true
+    }
+
+    // =====================================================================
+    // Gizmo: picking, drag, callbacks
+    // =====================================================================
+
+    /// Pick and select the object at the given NDC coordinates.
+    /// Returns the selected object UUID, or null if nothing was hit.
+    #[wasm_bindgen]
+    pub fn select_object_at(&self, ndc_x: f64, ndc_y: f64) -> JsValue {
+        // Must drop the mutable borrow BEFORE calling JS callbacks,
+        // because callbacks may re-enter WASM (e.g. get_object_style).
+        let (picked_id, callback) = {
+            let mut s = self.state.borrow_mut();
+            let picked = pick_object(&s, ndc_x, ndc_y);
+            match &picked {
+                Some(id) => {
+                    log!("WASM: selected object {}", &id[..8.min(id.len())]);
+                    s.selected = Some(id.clone());
+                    s.interaction = InteractionMode::Selected { object_id: id.clone() };
+                }
+                None => {
+                    s.selected = None;
+                    s.interaction = InteractionMode::Idle;
+                }
+            }
+            rebuild_scene(&mut s);
+            let cb = s.on_select.clone();
+            (picked, cb)
+        }; // mutable borrow dropped here
+
+        // Now safe to call JS callback (state is no longer borrowed)
+        match &picked_id {
+            Some(id) => {
+                if let Some(ref f) = callback {
+                    let _ = f.call1(&JsValue::NULL, &JsValue::from_str(id));
+                }
+                JsValue::from_str(id)
+            }
+            None => {
+                if let Some(ref f) = callback {
+                    let _ = f.call1(&JsValue::NULL, &JsValue::NULL);
+                }
+                JsValue::NULL
+            }
+        }
+    }
+
+    /// Get the currently selected object UUID (or null).
+    #[wasm_bindgen]
+    pub fn get_selected(&self) -> JsValue {
+        let s = self.state.borrow();
+        match &s.interaction {
+            InteractionMode::Selected { object_id } | InteractionMode::Dragging { object_id, .. } => {
+                JsValue::from_str(object_id)
+            }
+            InteractionMode::Idle => JsValue::NULL,
+        }
+    }
+
+    /// Get the current interaction mode as a string: "idle", "selected", or "dragging".
+    #[wasm_bindgen]
+    pub fn get_interaction_mode(&self) -> String {
+        let s = self.state.borrow();
+        match &s.interaction {
+            InteractionMode::Idle => "idle".to_string(),
+            InteractionMode::Selected { .. } => "selected".to_string(),
+            InteractionMode::Dragging { .. } => "dragging".to_string(),
+        }
+    }
+
+    /// Try to begin a gizmo drag at the given NDC coordinates.
+    /// Returns the axis name ("x", "y", "z") if a gizmo arrow was hit, or null.
+    /// Must be in Selected mode. Transitions to Dragging on success.
+    #[wasm_bindgen]
+    pub fn begin_gizmo_drag(&self, ndc_x: f64, ndc_y: f64) -> JsValue {
+        let mut s = self.state.borrow_mut();
+        let object_id = match &s.interaction {
+            InteractionMode::Selected { object_id } => object_id.clone(),
+            _ => return JsValue::NULL,
+        };
+
+        // Find the selected object's bounding sphere center (gizmo origin)
+        let gizmo_origin = s.bounding_spheres.iter()
+            .find(|(id, _, _)| *id == object_id)
+            .map(|(_, center, _)| *center);
+        let gizmo_origin = match gizmo_origin {
+            Some(o) => o,
+            None => return JsValue::NULL,
+        };
+
+        // Check which axis arrow is closest to the click in screen space
+        let camera = &s.scene.studio_config().camera;
+        let click_ray = camera.ray(Point2::new(ndc_x, ndc_y));
+
+        // Gizmo arrow length (world space) — proportional to camera distance
+        let cam_dist = (camera.position() - gizmo_origin).magnitude();
+        let arrow_len = cam_dist * 0.25;
+
+        let mut best_axis: Option<Axis> = None;
+        let mut best_dist = f64::MAX;
+
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let dir = axis.unit_vector();
+            let arrow_end = gizmo_origin + dir * arrow_len;
+
+            // Distance from click ray to the line segment (gizmo_origin → arrow_end)
+            let dist = ray_to_segment_distance(
+                click_ray.origin(), click_ray.direction(),
+                gizmo_origin, arrow_end,
+            );
+
+            // Threshold: fraction of arrow length (generous for usability)
+            let threshold = arrow_len * 0.15;
+            if dist < threshold && dist < best_dist {
+                best_dist = dist;
+                best_axis = Some(axis);
+            }
+        }
+
+        match best_axis {
+            Some(axis) => {
+                let axis_name = match axis {
+                    Axis::X => "x",
+                    Axis::Y => "y",
+                    Axis::Z => "z",
+                };
+                log!("WASM: begin drag axis={}", axis_name);
+                s.interaction = InteractionMode::Dragging {
+                    object_id,
+                    axis,
+                    cumulative_delta: [0.0, 0.0, 0.0],
+                };
+                JsValue::from_str(axis_name)
+            }
+            None => JsValue::NULL,
+        }
+    }
+
+    /// Update the gizmo drag with a new NDC position.
+    /// Computes the world-space delta along the constrained axis and applies it as live preview.
+    #[wasm_bindgen]
+    pub fn update_gizmo_drag(&self, ndc_x: f64, ndc_y: f64, prev_ndc_x: f64, prev_ndc_y: f64) {
+        // We need to extract drag info, do the translation, then update state
+        let drag_info = {
+            let s = self.state.borrow();
+            match &s.interaction {
+                InteractionMode::Dragging { object_id, axis, cumulative_delta } => {
+                    Some((object_id.clone(), *axis, *cumulative_delta))
+                }
+                _ => None,
+            }
+        };
+
+        let (object_id, axis, mut cumulative_delta) = match drag_info {
+            Some(info) => info,
+            None => return,
+        };
+
+        // Compute world-space delta along the constrained axis
+        let delta = {
+            let s = self.state.borrow();
+            let camera = &s.scene.studio_config().camera;
+            let axis_dir = axis.unit_vector();
+
+            // Find gizmo origin
+            let gizmo_origin = s.bounding_spheres.iter()
+                .find(|(id, _, _)| *id == object_id)
+                .map(|(_, center, _)| *center)
+                .unwrap_or(Point3::origin());
+
+            // Project axis direction to screen space
+            compute_axis_drag_delta(camera, gizmo_origin, axis_dir, ndc_x, ndc_y, prev_ndc_x, prev_ndc_y)
+        };
+
+        if delta.abs() < 1e-10 {
+            return;
+        }
+
+        // Apply the incremental translation (live preview)
+        let axis_dir = axis.unit_vector();
+        let dx = axis_dir.x * delta;
+        let dy = axis_dir.y * delta;
+        let dz = axis_dir.z * delta;
+
+        // Use translate_object for the live preview
+        // (We need to drop state borrow before calling translate_object)
+        self.translate_object(&object_id, dx, dy, dz);
+
+        // Update cumulative delta
+        cumulative_delta[0] += dx;
+        cumulative_delta[1] += dy;
+        cumulative_delta[2] += dz;
+
+        let mut s = self.state.borrow_mut();
+        s.interaction = InteractionMode::Dragging {
+            object_id,
+            axis,
+            cumulative_delta,
+        };
+    }
+
+    /// End the gizmo drag. Returns a JsValue object { objectId, dx, dy, dz } with the total delta.
+    #[wasm_bindgen]
+    pub fn end_gizmo_drag(&self) -> JsValue {
+        let mut s = self.state.borrow_mut();
+        match std::mem::replace(&mut s.interaction, InteractionMode::Idle) {
+            InteractionMode::Dragging { object_id, cumulative_delta, .. } => {
+                log!("WASM: end drag delta=[{:.3}, {:.3}, {:.3}]",
+                    cumulative_delta[0], cumulative_delta[1], cumulative_delta[2]);
+                s.interaction = InteractionMode::Selected { object_id: object_id.clone() };
+
+                // Call JS callback with the total delta
+                if let Some(ref f) = s.on_drag_complete {
+                    let _ = f.call4(
+                        &JsValue::NULL,
+                        &JsValue::from_str(&object_id),
+                        &JsValue::from_f64(cumulative_delta[0]),
+                        &JsValue::from_f64(cumulative_delta[1]),
+                        &JsValue::from_f64(cumulative_delta[2]),
+                    );
+                }
+
+                // Return the delta info
+                let result = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&result, &"objectId".into(), &JsValue::from_str(&object_id));
+                let _ = js_sys::Reflect::set(&result, &"dx".into(), &JsValue::from_f64(cumulative_delta[0]));
+                let _ = js_sys::Reflect::set(&result, &"dy".into(), &JsValue::from_f64(cumulative_delta[1]));
+                let _ = js_sys::Reflect::set(&result, &"dz".into(), &JsValue::from_f64(cumulative_delta[2]));
+                result.into()
+            }
+            other => {
+                s.interaction = other;
+                JsValue::NULL
+            }
+        }
+    }
+
+    /// Cancel the gizmo drag. Reverses the cumulative translation.
+    #[wasm_bindgen]
+    pub fn cancel_gizmo_drag(&self) -> bool {
+        let drag_info = {
+            let s = self.state.borrow();
+            match &s.interaction {
+                InteractionMode::Dragging { object_id, cumulative_delta, .. } => {
+                    Some((object_id.clone(), *cumulative_delta))
+                }
+                _ => None,
+            }
+        };
+
+        match drag_info {
+            Some((object_id, delta)) => {
+                // Reverse the translation
+                self.translate_object(&object_id, -delta[0], -delta[1], -delta[2]);
+                let mut s = self.state.borrow_mut();
+                s.interaction = InteractionMode::Selected { object_id };
+                log!("WASM: drag cancelled");
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Register a JS callback for when an object is selected (or deselected).
+    /// Callback signature: (objectId: string | null) => void
+    #[wasm_bindgen]
+    pub fn set_on_select(&self, f: js_sys::Function) {
+        self.state.borrow_mut().on_select = Some(f);
+    }
+
+    /// Register a JS callback for when a gizmo drag completes.
+    /// Callback signature: (objectId: string, dx: number, dy: number, dz: number) => void
+    #[wasm_bindgen]
+    pub fn set_on_drag_complete(&self, f: js_sys::Function) {
+        self.state.borrow_mut().on_drag_complete = Some(f);
+    }
+
+    // =====================================================================
+    // Parametric sketching
+    // =====================================================================
+
+    /// Begin a new sketch on the given plane ("xy", "xz", "yz").
+    /// Returns the sketch UUID.
+    #[wasm_bindgen]
+    pub fn begin_sketch(&self, plane: &str) -> String {
+        use crate::sketch::{Sketch, SketchPlane};
+        let plane = match plane {
+            "xz" => SketchPlane::XZ,
+            "yz" => SketchPlane::YZ,
+            _ => SketchPlane::XY,
+        };
+        let sketch = Sketch::new(plane);
+        let id = sketch.id.to_string();
+        log!("WASM: begin_sketch plane={} id={}", plane_str(sketch.plane), &id[..8]);
+        self.state.borrow_mut().active_sketch = Some(sketch);
+        id
+    }
+
+    /// Add a point to the active sketch. Returns point UUID (empty if no sketch).
+    #[wasm_bindgen]
+    pub fn sketch_add_point(&self, x: f64, y: f64) -> String {
+        let mut s = self.state.borrow_mut();
+        match s.active_sketch.as_mut() {
+            Some(sketch) => {
+                let id = sketch.add_point(x, y);
+                id.to_string()
+            }
+            None => {
+                error!("WASM: sketch_add_point called with no active sketch");
+                String::new()
+            }
+        }
+    }
+
+    /// Add an edge between two points. Returns edge UUID (empty if error).
+    #[wasm_bindgen]
+    pub fn sketch_add_edge(&self, p0_id: &str, p1_id: &str) -> String {
+        let mut s = self.state.borrow_mut();
+        let sketch = match s.active_sketch.as_mut() {
+            Some(sk) => sk,
+            None => { error!("WASM: sketch_add_edge with no active sketch"); return String::new(); }
+        };
+        let p0 = match uuid::Uuid::parse_str(p0_id) {
+            Ok(u) => u, Err(_) => { error!("WASM: invalid p0_id"); return String::new(); }
+        };
+        let p1 = match uuid::Uuid::parse_str(p1_id) {
+            Ok(u) => u, Err(_) => { error!("WASM: invalid p1_id"); return String::new(); }
+        };
+        sketch.add_edge(p0, p1).to_string()
+    }
+
+    /// Add a constraint to the active sketch.
+    /// constraint_type: "fixed", "horizontal", "vertical", "distance",
+    ///   "horizontal_distance", "vertical_distance", "coincident",
+    ///   "parallel", "perpendicular", "equal_length", "midpoint"
+    /// params: JSON object with constraint-specific parameters.
+    /// Returns constraint UUID (empty if error).
+    #[wasm_bindgen]
+    pub fn sketch_add_constraint(&self, constraint_type: &str, params: &str) -> String {
+        use crate::sketch::SketchConstraintKind;
+
+        let mut s = self.state.borrow_mut();
+        let sketch = match s.active_sketch.as_mut() {
+            Some(sk) => sk,
+            None => { error!("WASM: sketch_add_constraint with no active sketch"); return String::new(); }
+        };
+
+        let params: serde_json::Value = match serde_json::from_str(params) {
+            Ok(v) => v,
+            Err(e) => { error!("WASM: invalid constraint params: {}", e); return String::new(); }
+        };
+
+        let kind = match constraint_type {
+            "fixed" => {
+                let point_id = parse_uuid_field(&params, "point_id");
+                let x = params["x"].as_f64().unwrap_or(0.0);
+                let y = params["y"].as_f64().unwrap_or(0.0);
+                match point_id {
+                    Some(id) => SketchConstraintKind::Fixed { point_id: id, x, y },
+                    None => { error!("WASM: fixed constraint missing point_id"); return String::new(); }
+                }
+            }
+            "horizontal" => {
+                match parse_uuid_field(&params, "edge_id") {
+                    Some(id) => SketchConstraintKind::Horizontal { edge_id: id },
+                    None => { error!("WASM: horizontal constraint missing edge_id"); return String::new(); }
+                }
+            }
+            "vertical" => {
+                match parse_uuid_field(&params, "edge_id") {
+                    Some(id) => SketchConstraintKind::Vertical { edge_id: id },
+                    None => { error!("WASM: vertical constraint missing edge_id"); return String::new(); }
+                }
+            }
+            "distance" => {
+                let p0 = parse_uuid_field(&params, "p0_id");
+                let p1 = parse_uuid_field(&params, "p1_id");
+                let value = params["value"].as_f64().unwrap_or(1.0);
+                match (p0, p1) {
+                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::Distance { p0_id, p1_id, value },
+                    _ => { error!("WASM: distance constraint missing p0_id/p1_id"); return String::new(); }
+                }
+            }
+            "horizontal_distance" => {
+                let p0 = parse_uuid_field(&params, "p0_id");
+                let p1 = parse_uuid_field(&params, "p1_id");
+                let value = params["value"].as_f64().unwrap_or(1.0);
+                match (p0, p1) {
+                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::HorizontalDistance { p0_id, p1_id, value },
+                    _ => { error!("WASM: horizontal_distance missing p0_id/p1_id"); return String::new(); }
+                }
+            }
+            "vertical_distance" => {
+                let p0 = parse_uuid_field(&params, "p0_id");
+                let p1 = parse_uuid_field(&params, "p1_id");
+                let value = params["value"].as_f64().unwrap_or(1.0);
+                match (p0, p1) {
+                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::VerticalDistance { p0_id, p1_id, value },
+                    _ => { error!("WASM: vertical_distance missing p0_id/p1_id"); return String::new(); }
+                }
+            }
+            "coincident" => {
+                let p0 = parse_uuid_field(&params, "p0_id");
+                let p1 = parse_uuid_field(&params, "p1_id");
+                match (p0, p1) {
+                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::Coincident { p0_id, p1_id },
+                    _ => { error!("WASM: coincident missing p0_id/p1_id"); return String::new(); }
+                }
+            }
+            "parallel" => {
+                let e0 = parse_uuid_field(&params, "edge0_id");
+                let e1 = parse_uuid_field(&params, "edge1_id");
+                match (e0, e1) {
+                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::Parallel { edge0_id, edge1_id },
+                    _ => { error!("WASM: parallel missing edge0_id/edge1_id"); return String::new(); }
+                }
+            }
+            "perpendicular" => {
+                let e0 = parse_uuid_field(&params, "edge0_id");
+                let e1 = parse_uuid_field(&params, "edge1_id");
+                match (e0, e1) {
+                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::Perpendicular { edge0_id, edge1_id },
+                    _ => { error!("WASM: perpendicular missing edge0_id/edge1_id"); return String::new(); }
+                }
+            }
+            "equal_length" => {
+                let e0 = parse_uuid_field(&params, "edge0_id");
+                let e1 = parse_uuid_field(&params, "edge1_id");
+                match (e0, e1) {
+                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::EqualLength { edge0_id, edge1_id },
+                    _ => { error!("WASM: equal_length missing edge0_id/edge1_id"); return String::new(); }
+                }
+            }
+            "midpoint" => {
+                let edge = parse_uuid_field(&params, "edge_id");
+                let point = parse_uuid_field(&params, "point_id");
+                match (edge, point) {
+                    (Some(edge_id), Some(point_id)) => SketchConstraintKind::Midpoint { edge_id, point_id },
+                    _ => { error!("WASM: midpoint missing edge_id/point_id"); return String::new(); }
+                }
+            }
+            _ => {
+                error!("WASM: unknown constraint type: {}", constraint_type);
+                return String::new();
+            }
+        };
+
+        sketch.add_constraint(kind).to_string()
+    }
+
+    /// Solve the active sketch. Returns JSON with solved positions:
+    /// `[{"id": "uuid", "x": 1.0, "y": 2.0}, ...]`
+    /// Returns empty string on error.
+    #[wasm_bindgen]
+    pub fn sketch_solve(&self) -> String {
+        let s = self.state.borrow();
+        let sketch = match &s.active_sketch {
+            Some(sk) => sk,
+            None => { error!("WASM: sketch_solve with no active sketch"); return String::new(); }
+        };
+        match crate::sketch::solve_sketch(sketch) {
+            Ok(solved) => {
+                let result: Vec<serde_json::Value> = solved.positions.iter()
+                    .map(|(id, x, y)| serde_json::json!({ "id": id.to_string(), "x": x, "y": y }))
+                    .collect();
+                serde_json::to_string(&result).unwrap_or_default()
+            }
+            Err(e) => {
+                error!("WASM: sketch_solve failed: {}", e);
+                String::new()
+            }
+        }
+    }
+
+    /// Extrude the active sketch to a solid. Returns new object UUID.
+    /// Adds the solid to the scene and clears the active sketch.
+    #[wasm_bindgen]
+    pub fn sketch_extrude(&self, height: f64) -> String {
+        let sketch = {
+            let mut s = self.state.borrow_mut();
+            match s.active_sketch.take() {
+                Some(sk) => sk,
+                None => { error!("WASM: sketch_extrude with no active sketch"); return String::new(); }
+            }
+        };
+
+        match crate::sketch::sketch_to_solid(&sketch, height) {
+            Ok(solid) => {
+                log!("WASM: sketch extruded, height={}", height);
+                let mut s = self.state.borrow_mut();
+                let id = add_solid_to_state(&mut s, solid);
+                rebuild_scene(&mut s);
+                id
+            }
+            Err(e) => {
+                error!("WASM: sketch_extrude failed: {}", e);
+                // Put sketch back so user can fix it
+                self.state.borrow_mut().active_sketch = Some(sketch);
+                String::new()
+            }
+        }
+    }
+
+    /// Cancel the active sketch.
+    #[wasm_bindgen]
+    pub fn sketch_cancel(&self) {
+        let mut s = self.state.borrow_mut();
+        if s.active_sketch.take().is_some() {
+            log!("WASM: sketch cancelled");
+        }
+    }
+
+    /// Export active sketch as JSON (for Automerge serialization).
+    #[wasm_bindgen]
+    pub fn sketch_export(&self) -> String {
+        let s = self.state.borrow();
+        match &s.active_sketch {
+            Some(sketch) => serde_json::to_string(sketch).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
+    /// Import a sketch from JSON, replacing the active sketch.
+    #[wasm_bindgen]
+    pub fn sketch_import(&self, json: &str) -> bool {
+        match serde_json::from_str::<crate::sketch::Sketch>(json) {
+            Ok(sketch) => {
+                log!("WASM: sketch imported, {} points, {} edges, {} constraints",
+                    sketch.points.len(), sketch.edges.len(), sketch.constraints.len());
+                self.state.borrow_mut().active_sketch = Some(sketch);
+                true
+            }
+            Err(e) => {
+                error!("WASM: sketch_import failed: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Check if there is an active sketch.
+    #[wasm_bindgen]
+    pub fn has_active_sketch(&self) -> bool {
+        self.state.borrow().active_sketch.is_some()
+    }
+
+    // =====================================================================
+    // Object style (color + material)
+    // =====================================================================
+
+    /// Get object style as JSON: {"albedo":[r,g,b,a],"roughness":f,"reflectance":f,"ambient_ratio":f}
+    #[wasm_bindgen]
+    pub fn get_object_style(&self, id: &str) -> String {
+        let s = self.state.borrow();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return String::new() };
+        serde_json::to_string(&s.objects[idx].style).unwrap_or_default()
+    }
+
+    /// Set object style from JSON. Rebuilds the visual instance.
+    #[wasm_bindgen]
+    pub fn set_object_style(&self, id: &str, style_json: &str) -> bool {
+        let new_style: ObjectStyle = match serde_json::from_str(style_json) {
+            Ok(s) => s,
+            Err(e) => { error!("set_object_style: {}", e); return false; }
+        };
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        let obj_id = s.objects[idx].id;
+        let solid = s.objects[idx].solid.clone();
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &new_style);
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style: new_style, pick_mesh };
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        true
+    }
+
+    /// Convenience: set just the albedo color without touching other material properties.
+    #[wasm_bindgen]
+    pub fn set_object_color(&self, id: &str, r: f64, g: f64, b: f64, a: f64) -> bool {
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        let obj_id = s.objects[idx].id;
+        let solid = s.objects[idx].solid.clone();
+        let mut style = s.objects[idx].style.clone();
+        style.albedo = [r, g, b, a];
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        true
+    }
+
+    // =====================================================================
+    // Misc
+    // =====================================================================
+
+    #[wasm_bindgen]
+    pub fn set_clear_color(&self, r: f64, g: f64, b: f64, a: f64) {
+        let mut s = self.state.borrow_mut();
+        s.scene.studio_config_mut().background = wgpu::Color { r, g, b, a };
+    }
+
+    /// Debug: return pick mesh stats for each object as JSON.
+    #[wasm_bindgen]
+    pub fn pick_mesh_stats(&self) -> String {
+        let s = self.state.borrow();
+        let stats: Vec<serde_json::Value> = s.objects.iter().map(|obj| {
+            serde_json::json!({
+                "id": obj.id.to_string()[..8],
+                "positions": obj.pick_mesh.positions.len(),
+                "triangles": obj.pick_mesh.triangles.len(),
+            })
+        }).collect();
+        serde_json::to_string(&stats).unwrap_or_default()
+    }
+}

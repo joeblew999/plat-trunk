@@ -1,6 +1,6 @@
 [
   {
-    "id": "2917fc79-3556-4187-810b-e1aabf9f3000",
+    "id": "c3227690-41fb-4e20-b2d6-b843543611b5",
     "solid": {
       "boundaries": [
         {
@@ -544,10 +544,21 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.2,
+        0.6,
+        1.0,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   },
   {
-    "id": "93e74f51-1591-45ea-a1b1-abadb0111ddf",
+    "id": "3a7e8554-3ead-4050-a200-e8ba58bc42ef",
     "solid": {
       "boundaries": [
         {
@@ -15319,10 +15330,21 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        1.0,
+        0.4,
+        0.3,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   },
   {
-    "id": "f7ca8b8f-20a9-44c9-810a-ad741a550aa5",
+    "id": "1c4cc31e-ff43-456b-839b-ae0c1e19ff63",
     "solid": {
       "boundaries": [
         {
@@ -15962,10 +15984,21 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        0.3,
+        0.9,
+        0.4,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   },
   {
-    "id": "98c28b42-dc8b-49e5-b4e8-9597cc954d6b",
+    "id": "7f6294a1-c5f9-450a-851c-c7facae564b7",
     "solid": {
       "boundaries": [
         {
@@ -33545,6 +33578,17 @@
           ]
         }
       ]
+    },
+    "style": {
+      "albedo": [
+        1.0,
+        0.8,
+        0.2,
+        1.0
+      ],
+      "roughness": 0.3,
+      "reflectance": 0.5,
+      "ambient_ratio": 0.05
     }
   }
 ]
