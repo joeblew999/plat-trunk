@@ -1,11 +1,6 @@
 version: '3'
 
-# ============================================================================
-# Truck - Rust CAD Kernel
-# https://github.com/ricosjp/truck
-#
-# Quick start - just run: task truck:<tab> to see all options
-# ============================================================================
+# Truck - Rust CAD Kernel  https://github.com/ricosjp/truck
 
 vars:
   ROOT_DIR: '{{.ROOT_DIR | default "."}}'
@@ -15,7 +10,6 @@ vars:
   TRUCK_UPSTREAM: 'github.com/ricosjp/truck'
   TRUCK_FORK: 'github.com/joeblew999/truck'
   TRUCK_REPO: '{{.TRUCK_FORK}}'
-  # For binary releases (when cargo not available)
   TRUCK_RELEASE_REPO: 'joeblew999/plat-trunk'
   TRUCK_VERSION: 'v0.1.0'
   BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
@@ -26,31 +20,19 @@ tasks:
     cmds:
       - task: debug:self
 
-  # ===========================================================================
-  # Debug
-  # ===========================================================================
+  # --- Debug ---
+
   "debug:self":
-    desc: Print all vars for debugging
+    desc: Print vars
     cmds:
-      - echo "=== Truck Vars ==="
-      - echo "ROOT_DIR={{.ROOT_DIR}}"
-      - echo "BIN_DIR={{.BIN_DIR}}"
-      - echo "SRC_DIR={{.SRC_DIR}}"
-      - echo "TRUCK_SRC_DIR={{.TRUCK_SRC_DIR}}"
-      - echo "TRUCK_UPSTREAM={{.TRUCK_UPSTREAM}}"
-      - echo "TRUCK_FORK={{.TRUCK_FORK}}"
-      - echo "TRUCK_REPO={{.TRUCK_REPO}}"
-      - echo "TRUCK_RELEASE_REPO={{.TRUCK_RELEASE_REPO}}"
-      - echo "TRUCK_VERSION={{.TRUCK_VERSION}}"
-      - echo "---"
-      - cd {{.TRUCK_SRC_DIR}} && echo "HEAD=$(git rev-parse --short HEAD)" && git remote -v | head -4
+      - echo "ROOT={{.ROOT_DIR}} SRC={{.TRUCK_SRC_DIR}} FORK={{.TRUCK_FORK}}"
+      - cd {{.TRUCK_SRC_DIR}} && echo "HEAD=$(git rev-parse --short HEAD)"
     silent: true
 
-  # ===========================================================================
-  # Dependencies
-  # ===========================================================================
+  # --- Dependencies ---
+
   "deps:clone":
-    desc: Clone truck from fork with upstream remote
+    desc: Clone truck fork
     status:
       - test -d {{.TRUCK_SRC_DIR}}
     cmds:
@@ -60,7 +42,7 @@ tasks:
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
   "deps:install":
-    desc: Install truck binaries (builds if cargo available, downloads otherwise)
+    desc: Install truck binaries
     deps: ["deps:clone"]
     cmds:
       - xplat binary install simple-shape-viewer {{.TRUCK_VERSION}} {{.TRUCK_RELEASE_REPO}} --dir {{.BIN_DIR}} --source-cargo {{.TRUCK_SRC_DIR}} --example
@@ -78,12 +60,10 @@ tasks:
       - rm -rf {{.TRUCK_SRC_DIR}}
       - rm -rf {{.BIN_DIR}}
 
-  # ===========================================================================
-  # Fork Workflow (sync upstream, upgrade, PRs)
-  # ===========================================================================
+  # --- Fork Workflow ---
 
   "fork:sync":
-    desc: Sync fork with upstream (fetch upstream, merge to master, push to fork)
+    desc: Sync fork with upstream
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && git fetch upstream
@@ -92,405 +72,294 @@ tasks:
       - cd {{.TRUCK_SRC_DIR}} && git push origin master
 
   "fork:status":
-    desc: Show fork vs upstream status (commits ahead/behind)
+    desc: Show fork vs upstream status
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && git fetch origin && git fetch upstream
       - |
-        cd {{.TRUCK_SRC_DIR}} && echo "=== Fork Status ==="
-        echo "Local:    $(git rev-parse --short HEAD)"
-        echo "Fork:     $(git rev-parse --short origin/master)"
-        echo "Upstream: $(git rev-parse --short upstream/master)"
-        echo "---"
+        cd {{.TRUCK_SRC_DIR}}
         AHEAD=$(git rev-list --count upstream/master..origin/master)
         BEHIND=$(git rev-list --count origin/master..upstream/master)
-        echo "Fork is $AHEAD commits ahead, $BEHIND commits behind upstream"
+        echo "Fork: $AHEAD ahead, $BEHIND behind upstream"
     silent: true
 
-  "fork:branch":
-    desc: "Create a feature branch for PR work (usage: task truck:fork:branch -- my-feature)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && git checkout master && git pull origin master
-      - cd {{.TRUCK_SRC_DIR}} && git checkout -b {{.CLI_ARGS}}
-
-  "fork:pr":
-    desc: "Push branch and open PR against upstream (usage: task truck:fork:pr -- 'PR title')"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && git push -u origin HEAD
-      - cd {{.TRUCK_SRC_DIR}} && gh pr create --repo {{.TRUCK_UPSTREAM}} --title "{{.CLI_ARGS}}" --fill
-
   "upgrade":
-    desc: Pull latest truck into .src/ (fetches + resets to fork master)
+    desc: Pull latest truck
     deps: ["deps:clone"]
     cmds:
-      - cd {{.TRUCK_SRC_DIR}} && git fetch origin
-      - cd {{.TRUCK_SRC_DIR}} && git checkout master
-      - cd {{.TRUCK_SRC_DIR}} && git pull origin master
-      - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
+      - cd {{.TRUCK_SRC_DIR}} && git fetch origin && git checkout master && git pull origin master && git submodule update --init
       - echo "Truck updated to $(cd {{.TRUCK_SRC_DIR}} && git rev-parse --short HEAD)"
 
-  # ===========================================================================
-  # Build & Test (for CI)
-  # ===========================================================================
+  # --- Build ---
 
   build:
-    desc: Build truck library (check compilation)
+    desc: Build truck library
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo build --release
 
-  test:
-    desc: Run truck upstream tests
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo test
-
-  "test:api":
-    desc: Run Hono API tests with vitest
-    cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
-
-  "test:crate":
-    desc: Run truck-webgpu-gui crate tests (sketch, golden resources)
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
-
-  "test:sketch":
-    desc: Run sketch E2E tests (requires gui:serve running)
-    deps: ["test:install"]
-    cmds:
-      - cd {{.ROOT_DIR}}/tests && bun x playwright test e2e/sketch.spec.ts --project=e2e
-
   check:
-    desc: Run cargo check (fast compile check)
+    desc: Cargo check (fast)
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo check
 
-  ci:
-    desc: Run full CI pipeline (check + test + WASM build)
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo check
-      - cd {{.TRUCK_SRC_DIR}} && cargo test
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
+  # --- WASM ---
 
-  # ===========================================================================
-  # Visual Examples (opens a window)
-  # ===========================================================================
-
-  # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
-  "run:shape-viewer":
-    desc: "View JSON shapes - drag & drop .json files (opens Finder)"
-    deps: ["deps:install"]
-    cmds:
-      - open {{.TRUCK_SRC_DIR}}/resources/shape/
-      - '{{.BIN_DIR}}/simple-shape-viewer'
-
-  # Controls: drag=rotate, scroll=zoom, right-click=move light, P=projection, L=light, Space=wireframe
-  "run:obj-viewer":
-    desc: "View OBJ meshes - drag & drop .obj files (opens Finder)"
-    deps: ["deps:clone"]
-    cmds:
-      - open {{.TRUCK_SRC_DIR}}/resources/obj/
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example simple-obj-viewer
-
-  # Controls: drag=rotate, right-click=move light, P=projection, L=light
-  "run:rotate":
-    desc: "Rotating 3D objects demo - drag & drop .obj files (opens Finder)"
-    deps: ["deps:clone"]
-    cmds:
-      - open {{.TRUCK_SRC_DIR}}/resources/obj/
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example rotate-objects
-
-  # No controls - static display
-  "run:materials":
-    desc: "Material properties grid (reflectance vs roughness)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example material-samples
-
-  # Controls: P=projection, L=light
-  "run:textured":
-    desc: "Textured cube example"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example textured-cube
-
-  # No controls - animation runs automatically
-  "run:bsp":
-    desc: "NURBS tessellation benchmark animation"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example bsp-animation
-
-  # ===========================================================================
-  # WASM & Cloudflare Worker
-  # ===========================================================================
   "wasm:build":
-    desc: Compile truck-js to WASM for Cloudflare Workers
+    desc: Compile truck-js WASM (for Worker)
     deps: ["deps:clone", "deps:wasm-pack"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}}/truck-js && wasm-pack build --target bundler --out-dir {{.ROOT_DIR}}/systems/truck/worker/pkg
 
-  "wasm:build-browser-renderer":
-    desc: Compile truck-webgpu-gui to WASM for browser WebGPU rendering
+  "wasm:build-browser":
+    desc: Compile truck-webgpu-gui WASM (for browser)
     deps: ["deps:clone", "deps:wasm-pack"]
     cmds:
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
 
-  "worker:install-deps":
-    desc: Install Cloudflare Worker JavaScript dependencies
+  # --- GUI (browser + Worker) ---
+
+  "gui:schema":
+    desc: Generate cad-schema.json from Rust structs
     cmds:
-      - cd systems/truck/worker && bun install hono wrangler
-
-  "worker:build":
-    desc: Build the Cloudflare Worker
-    deps: ["wasm:build", "worker:install-deps"]
-    cmds:
-      - cd systems/truck/worker && bun x wrangler deploy --dry-run --outdir=dist
-
-  "worker:deploy":
-    desc: Deploy the Cloudflare Worker
-    deps: ["worker:build"]
-    cmds:
-      - cd systems/truck/worker && bun x wrangler deploy
-
-  # ===========================================================================
-  # Frontend (Web GUI)
-  # ===========================================================================
-
-  "frontend:install-deps":
-    desc: Install frontend JavaScript dependencies using Bun
-    cmds:
-      - cd web/truck-gui && bun install
-
-  "frontend:copy-wasm":
-    desc: Copy the truck-js WASM package to the frontend public directory
-    deps: ["wasm:build"]
-    cmds:
-      - rm -rf web/truck-gui/public/pkg
-      - cp -R systems/truck/worker/pkg web/truck-gui/public/pkg
-
-  "frontend:build":
-    desc: Build the frontend application for production
-    deps: ["frontend:install-deps", "frontend:copy-wasm"]
-    cmds:
-      - cd web/truck-gui && bun run build
-
-  "frontend:dev":
-    desc: Start the frontend development server
-    deps: ["frontend:install-deps", "frontend:copy-wasm"]
-    cmds:
-      - cd web/truck-gui && bun run dev
-
-  # ===========================================================================
-  # GUI (Pure JS WebGPU Frontend)
-  # ===========================================================================
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo run --bin generate-schema 2>/dev/null > {{.ROOT_DIR}}/web/cad-schema.json
 
   "gui:build":
-    desc: Build browser WebGPU WASM
-    deps: ["wasm:build-browser-renderer"]
+    desc: Build browser WASM + generate schema
+    deps: ["wasm:build-browser"]
     cmds:
-      - echo "Browser WebGPU WASM is ready in web/gui/pkg-browser-renderer"
+      - task: gui:schema
 
   "gui:serve":
-    desc: Serve GUI locally via Wrangler dev (Worker + static assets)
-    deps: ["gui:build", "worker:install-deps"]
+    desc: Local dev server (localhost:8787)
+    deps: ["gui:build"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x wrangler dev
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
   "gui:deploy":
-    desc: Deploy GUI + API Worker to Cloudflare
-    deps: ["gui:build", "worker:install-deps"]
+    desc: Deploy to Cloudflare Workers
+    deps: ["gui:build"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x wrangler deploy
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler deploy
 
-  # ===========================================================================
-  # Testing (Playwright E2E + Doc Screenshots)
-  # ===========================================================================
+  # --- Tests & Docs ---
+  #
+  # Two MCP systems power the dev+test workflow:
+  #
+  #   1. CAD MCP   — lives at http://localhost:8787/mcp (part of dev server)
+  #      Provides: cad_add_cube, cad_translate, cad_boolean_subtract, ...
+  #      Config:   .claude/settings.json → truck-cad
+  #      Start:    task truck:gui:serve
+  #
+  #   2. Playwright MCP — browser automation (already running via Claude Code)
+  #      Provides: browser_navigate, browser_snapshot, browser_click, ...
+  #      Used for: visual verification during development
+  #
+  # Workflow:
+  #   Terminal 1: task truck:gui:serve       → build + start server (CAD MCP alive)
+  #   Terminal 2: task truck:test:api        → L2 Worker contract (no server needed)
+  #   Terminal 2: task truck:test:e2e        → L3 cadCommand integration
+  #   Terminal 2: task truck:test:ui         → L4 UI wiring
+  #
+  # MCP-driven development (Claude uses both MCPs):
+  #   Claude: cad_add_cube({size: 1})        → drive via CAD MCP
+  #   Claude: browser_snapshot               → verify via Playwright MCP
+  #   Then: task truck:test:e2e              → capture as automated test
+  #
+  # Test layers (schema contract pyramid):
+  #   L1: WASM kernel   — sketch, gizmo (test:sketch)
+  #   L2: Worker/MCP    — schema contract, route validation (test:api)
+  #   L3: cadCommand    — integration via same contract as MCP (test:e2e)
+  #   L4: UI wiring     — toolbar→cadCommand, data-testid (test:ui)
+  #
+  # Env flags:
+  #   SLOW=1         pauses between steps + video recording
+  #   SCREENSHOTS=1  save PNGs → docs/hugo/static/screenshots/
+  #   EXAMPLES=1     save scene JSON → web/gui/examples/
+  #   BASE_URL=...   override localhost:8787
 
   "test:install":
-    desc: Install Playwright test dependencies
+    desc: Install Playwright + Chrome
     cmds:
       - cd {{.ROOT_DIR}}/tests && bun install
       - cd {{.ROOT_DIR}}/tests && bun x playwright install chromium
     status:
       - test -d {{.ROOT_DIR}}/tests/node_modules
 
+  "test:status":
+    desc: Check if dev server + CAD MCP are running
+    cmds:
+      - |
+        echo "=== Dev Server ==="
+        if curl -sf http://localhost:8787/api/health > /dev/null 2>&1; then
+          echo "  ✓ running (http://localhost:8787)"
+        else
+          echo "  ✗ not running → task truck:gui:serve"
+          exit 1
+        fi
+        echo "=== CAD MCP ==="
+        if curl -sf http://localhost:8787/api/cad/schema > /dev/null 2>&1; then
+          CMDS=$(curl -s http://localhost:8787/api/cad/schema | python3 -c "import sys,json; print(len(json.load(sys.stdin)['commands']))" 2>/dev/null || echo "?")
+          echo "  ✓ schema: $CMDS commands (http://localhost:8787/mcp)"
+        else
+          echo "  ✗ not available"
+          exit 1
+        fi
+        echo "=== Playwright MCP ==="
+        echo "  ✓ provided by Claude Code (always available)"
+    silent: true
+
+  # --- Test commands ---
+
+  test:
+    desc: Rust truck tests
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && cargo test
+
+  "test:crate":
+    desc: Rust truck-webgpu-gui crate tests
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+
+  "test:api":
+    desc: "L2: Worker API + MCP contract tests (vitest, no server needed)"
+    cmds:
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
+
   "test:e2e":
-    desc: Run E2E tests (fast mode, minimal delays)
+    desc: "L3: cadCommand integration tests (requires: gui:serve running)"
     deps: ["test:install"]
     cmds:
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=e2e
 
+  "test:ui":
+    desc: "L4: UI wiring tests — toolbar, outliner, canvas (requires: gui:serve running)"
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=ui
+
   "test:e2e:slow":
-    desc: Run E2E tests with slow pauses and video recording
+    desc: E2E tests (slow + video)
     deps: ["test:install"]
     cmds:
       - cd {{.ROOT_DIR}}/tests && SLOW=1 bun x playwright test --project=e2e
 
-  "test:screenshots":
-    desc: Generate doc screenshots (saves to web/gui/docs/screenshots/)
+  "test:sketch":
+    desc: "L1: Sketch WASM kernel tests (requires: gui:serve running)"
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=screenshots
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test e2e/sketch.spec.ts --project=e2e
 
-  "test:lessons":
-    desc: Record lesson videos (saves to web/gui/docs/lessons/)
+  "test:sync":
+    desc: "Cross-tab Automerge sync tests (runs alone, requires gui:serve running)"
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=lessons
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=sync
+
+  "test:videos":
+    desc: Record doc videos (webm)
+    deps: ["test:install"]
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=docs
 
   "test:all":
-    desc: Run all tests + generate screenshots + record lessons
+    desc: "All tests (requires gui:serve running in another terminal)"
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/tests && bun x playwright test
+      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
+      - cd {{.ROOT_DIR}}/tests && SCREENSHOTS=1 EXAMPLES=1 bun x playwright test --project=e2e
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=ui
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=sync
+      - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=docs
 
-  "docs:generate":
-    desc: Generate all doc assets (screenshots + lesson videos)
-    deps: ["test:install"]
+  ci:
+    desc: Full CI (check + test + WASM)
+    deps: ["deps:clone"]
     cmds:
-      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=screenshots
-      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=lessons
-
-  "docs:upload":
-    desc: Upload doc assets (screenshots + videos) to R2
-    dir: "{{.ROOT_DIR}}/systems/truck/worker"
-    cmds:
-      - |
-        for f in ../../../web/gui/docs/screenshots/*.png; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
-        done
-      - |
-        for f in ../../../web/gui/docs/lessons/*.webm; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/lessons/$(basename $f)" --file="$f" --ct="video/webm" --remote
-        done
+      - cd {{.TRUCK_SRC_DIR}} && cargo check
+      - cd {{.TRUCK_SRC_DIR}} && cargo test
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
 
   "docs:publish":
-    desc: Generate doc assets, upload to R2 (no redeploy needed)
+    desc: Generate screenshots + videos against BASE_URL + upload to R2
+    deps: ["test:install"]
     cmds:
-      - task: docs:generate
-      - task: docs:upload
+      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} SCREENSHOTS=1 bun x playwright test --project=e2e
+      - cd {{.ROOT_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=docs
+      - |
+        cd {{.ROOT_DIR}}/systems/truck/worker
+        for f in ../../../docs/hugo/static/screenshots/*.png; do
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
+        done
+        for f in ../../../docs/hugo/static/videos/*.webm; do
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/videos/$(basename $f)" --file="$f" --ct="video/webm" --remote
+        done
+
+  # --- Deploy ---
 
   "deploy:full":
-    desc: Full deploy pipeline (build WASM + deploy Worker + regenerate docs + upload to R2)
+    desc: Deploy Worker + publish docs to R2
     cmds:
       - task: gui:deploy
       - task: docs:publish
 
-  # Controls: Space=toggle render mode
-  "run:collision":
-    desc: "Sphere collision demo"
+  # --- Visual Examples (opens window) ---
+
+  "run:shape-viewer":
+    desc: View JSON shapes (drag & drop)
+    deps: ["deps:install"]
+    cmds:
+      - open {{.TRUCK_SRC_DIR}}/resources/shape/
+      - '{{.BIN_DIR}}/simple-shape-viewer'
+
+  "run:obj-viewer":
+    desc: View OBJ meshes (drag & drop)
     deps: ["deps:clone"]
     cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example collision-sphere
+      - open {{.TRUCK_SRC_DIR}}/resources/obj/
+      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example simple-obj-viewer
 
-  # Controls: drag & drop .wgsl files to load shaders
-  "run:shader":
-    desc: "WGSL shader playground - drag & drop .wgsl files"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example wgsl-sandbox
-
-  # ===========================================================================
-  # Modeling Examples (outputs JSON to stdout, no window)
-  #
-  # Pipe to file, then view with run:shape-viewer:
-  #   task truck:make:cube > my-cube.json
-  #   task truck:run:shape-viewer  (drag my-cube.json in)
-  # ===========================================================================
+  # --- Generate JSON (stdout) ---
 
   "make:cube":
-    desc: "Generate cube JSON"
+    desc: Generate cube JSON
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cube
 
   "make:sphere":
-    desc: "Generate sphere JSON"
+    desc: Generate sphere JSON
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example sphere
 
   "make:cylinder":
-    desc: "Generate cylinder JSON"
+    desc: Generate cylinder JSON
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cylinder
 
-  "make:cone":
-    desc: "Generate cone JSON"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cone
-
   "make:torus":
-    desc: "Generate torus JSON"
+    desc: Generate torus JSON
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example torus
 
   "make:bottle":
-    desc: "Generate bottle JSON (OCCT tutorial)"
+    desc: Generate bottle JSON
     deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example bottle
 
-  "make:punched-cube":
-    desc: "Generate punched cube JSON (cube with holes)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example punched-cube
-
-  "make:cube-in-cube":
-    desc: "Generate cube-in-cube JSON (nested solids)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example cube-in-cube
-
-  "make:torus-punched":
-    desc: "Generate torus-punched-cube JSON (boolean ops)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example torus-punched-cube
-
-  "make:tsudumi":
-    desc: "Generate tsudumi JSON (Japanese drum)"
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.TRUCK_SRC_DIR}} && cargo run --release --example tsudumi
-
-  # ===========================================================================
-  # Resources - Sample files included with truck
-  # ===========================================================================
-
-  "resources:verify":
-    desc: Verify all resource JSON shapes load and round-trip correctly
-    deps: ["deps:clone"]
-    cmds:
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test --test resources_golden
+  # --- Resources ---
 
   "resources:list":
     desc: List sample files
     deps: ["deps:clone"]
     cmds:
-      - echo "=== JSON Shapes (for run:shape-viewer) ==="
-      - ls {{.TRUCK_SRC_DIR}}/resources/shape/
-      - echo ""
-      - echo "=== OBJ Meshes (for run:obj-viewer) ==="
-      - ls {{.TRUCK_SRC_DIR}}/resources/obj/
-      - echo ""
-      - echo "=== STEP CAD Files ==="
-      - ls {{.TRUCK_SRC_DIR}}/resources/step/
-
-  "resources:path":
-    desc: Print resources folder path
-    cmds:
-      - echo "{{.TRUCK_SRC_DIR}}/resources"
+      - ls {{.TRUCK_SRC_DIR}}/resources/shape/ {{.TRUCK_SRC_DIR}}/resources/obj/

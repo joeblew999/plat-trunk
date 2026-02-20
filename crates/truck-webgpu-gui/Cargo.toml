@@ -30,11 +30,18 @@ truck-shapeops = { version = "0.4.0", path = "../../.src/truck/truck-shapeops", 
 serde_json = "1.0"
 serde = { version = "1", features = ["derive"] }
 
+# JSON Schema generation from Rust types (single source of truth for all actors)
+schemars = { version = "0.8", features = ["derive"] }
+
 # Stable object identity (UUID v4 for WASM)
 uuid = { version = "1", features = ["v4", "js", "serde"] }
 
 # 2D constraint solver for parametric sketching
 kcl-ezpz = { path = "../../.src/ezpz/kcl-ezpz" }
+
+[[bin]]
+name = "generate-schema"
+path = "src/bin/generate_schema.rs"
 
 [features]
 default = []

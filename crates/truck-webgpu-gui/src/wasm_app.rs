@@ -10,6 +10,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::commands::*;
+
 use wasm_bindgen::prelude::*;
 use winit::event::*;
 use winit::event_loop::EventLoop;
@@ -104,6 +106,7 @@ impl PickMesh {
 
 struct SceneObject {
     id: Uuid,
+    name: String,
     solid: Solid,
     polygon: PolygonInstance,
     wireframe: WireFrameInstance,
@@ -114,6 +117,8 @@ struct SceneObject {
 #[derive(Serialize, Deserialize)]
 struct ExportEntry {
     id: String,
+    #[serde(default)]
+    name: String,
     solid: Solid,
     #[serde(default)]
     style: Option<ObjectStyle>,
@@ -176,6 +181,8 @@ struct SharedState {
     on_drag_complete: Option<js_sys::Function>,
     // Parametric sketch
     active_sketch: Option<crate::sketch::Sketch>,
+    // Object naming
+    name_counters: HashMap<String, usize>,
 }
 
 /// Rebuild the id→index lookup after any mutation that changes Vec ordering.
@@ -593,9 +600,16 @@ fn parse_uuid_field(params: &serde_json::Value, field: &str) -> Option<uuid::Uui
     params[field].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
 }
 
-fn add_solid_to_state(s: &mut SharedState, solid: Solid) -> String {
+fn next_name(s: &mut SharedState, kind: &str) -> String {
+    let counter = s.name_counters.entry(kind.to_string()).or_insert(0);
+    *counter += 1;
+    format!("{} {}", kind, counter)
+}
+
+fn add_solid_to_state(s: &mut SharedState, solid: Solid, kind: &str) -> String {
     let id = Uuid::new_v4();
     let idx = s.objects.len();
+    let name = next_name(s, kind);
     let style = ObjectStyle::from_index(idx);
     let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
     let (center, radius) = pick_mesh.bounding_sphere();
@@ -604,7 +618,7 @@ fn add_solid_to_state(s: &mut SharedState, solid: Solid) -> String {
     let id_str = id.to_string();
     s.id_to_index.insert(id_str.clone(), idx);
     s.bounding_spheres.push((id_str.clone(), center, radius));
-    s.objects.push(SceneObject { id, solid, polygon, wireframe, style, pick_mesh });
+    s.objects.push(SceneObject { id, name, solid, polygon, wireframe, style, pick_mesh });
     id_str
 }
 
@@ -736,10 +750,11 @@ impl SceneController {
             on_select: None,
             on_drag_complete: None,
             active_sketch: None,
+            name_counters: HashMap::new(),
         };
 
         // Start with a default cube
-        let default_id = add_solid_to_state(&mut shared, make_cube(1.0));
+        let default_id = add_solid_to_state(&mut shared, make_cube(1.0), "Box");
         shared.selected = Some(default_id);
 
         let state = Rc::new(RefCell::new(shared));
@@ -935,7 +950,7 @@ impl SceneController {
         log!("WASM: add_cube({})", size);
         let solid = make_cube(size);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid)
+        add_solid_to_state(&mut s, solid, "Box")
     }
 
     #[wasm_bindgen]
@@ -943,7 +958,7 @@ impl SceneController {
         log!("WASM: add_sphere({})", radius);
         let solid = make_sphere(radius);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid)
+        add_solid_to_state(&mut s, solid, "Sphere")
     }
 
     #[wasm_bindgen]
@@ -951,7 +966,7 @@ impl SceneController {
         log!("WASM: add_cylinder({}, {})", radius, height);
         let solid = make_cylinder(radius, height);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid)
+        add_solid_to_state(&mut s, solid, "Cylinder")
     }
 
     #[wasm_bindgen]
@@ -959,7 +974,7 @@ impl SceneController {
         log!("WASM: add_torus({}, {})", major_r, minor_r);
         let solid = make_torus(major_r, minor_r);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid)
+        add_solid_to_state(&mut s, solid, "Torus")
     }
 
     // =====================================================================
@@ -971,11 +986,12 @@ impl SceneController {
         let mut s = self.state.borrow_mut();
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
         let style = s.objects[idx].style.clone();
         let solid = builder::translated(&s.objects[idx].solid, Vector3::new(dx, dy, dz));
         let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
         let (center, radius) = pick_mesh.bounding_sphere();
-        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
         // Update bounding sphere for this object (rendered-space coords from pick_mesh)
         if let Some(bs) = s.bounding_spheres.iter_mut().find(|(bid, _, _)| bid == id) {
             bs.1 = center;
@@ -992,6 +1008,7 @@ impl SceneController {
         let axis = Vector3::new(axis_x, axis_y, axis_z);
         if axis.so_small() { return false; }
         let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
         let style = s.objects[idx].style.clone();
         let solid = builder::rotated(
             &s.objects[idx].solid,
@@ -1000,10 +1017,55 @@ impl SceneController {
             Rad(angle_deg.to_radians()),
         );
         let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
+    }
+
+    #[wasm_bindgen]
+    pub fn scale_object(&self, id: &str, sx: f64, sy: f64, sz: f64) -> bool {
+        let mut s = self.state.borrow_mut();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        if sx.abs() < 1e-10 || sy.abs() < 1e-10 || sz.abs() < 1e-10 { return false; }
+        let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
+        let style = s.objects[idx].style.clone();
+        let solid = builder::scaled(
+            &s.objects[idx].solid,
+            Point3::origin(),
+            Vector3::new(sx, sy, sz),
+        );
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        true
+    }
+
+    #[wasm_bindgen]
+    pub fn duplicate_object(&self, id: &str) -> String {
+        let (solid, style, src_name) = {
+            let s = self.state.borrow();
+            let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return String::new() };
+            (s.objects[idx].solid.clone(), s.objects[idx].style.clone(), s.objects[idx].name.clone())
+        };
+        // Offset the duplicate so it's visible
+        let dup_solid = builder::translated(&solid, Vector3::new(0.5, 0.0, 0.0));
+        // Derive kind from source name (e.g. "Box 1" → "Box")
+        let kind = src_name.rsplitn(2, ' ').last().unwrap_or("Object");
+        let mut s = self.state.borrow_mut();
+        let new_id = add_solid_to_state(&mut s, dup_solid, kind);
+        // Apply same style as original
+        let idx = s.id_to_index[&new_id];
+        let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
+        let dup_solid = s.objects[idx].solid.clone();
+        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &dup_solid, &style);
+        s.objects[idx] = SceneObject { id: obj_id, name, solid: dup_solid, polygon, wireframe, style, pick_mesh };
+        rebuild_bounding_spheres(&mut s);
+        rebuild_scene(&mut s);
+        new_id
     }
 
     // =====================================================================
@@ -1025,21 +1087,28 @@ impl SceneController {
         let solid_a = s.objects[idx_a].solid.clone();
         let solid_b = s.objects[idx_b].solid.clone();
 
-        // Try direct or() first, catching panics from truck_shapeops
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            truck_shapeops::or(&solid_a, &solid_b, 0.05)
-        })).ok().flatten();
+        let try_union = |a: &Solid, b: &Solid| -> Option<Solid> {
+            // Try direct or() first
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                truck_shapeops::or(a, b, 0.05)
+            })).ok().flatten();
+            // Fallback: De Morgan A ∪ B = ¬(¬A ∧ ¬B)
+            result.or_else(|| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut not_a = a.clone();
+                    not_a.not();
+                    let mut not_b = b.clone();
+                    not_b.not();
+                    truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
+                })).ok().flatten()
+            })
+        };
 
-        // Fallback: De Morgan A ∪ B = ¬(¬A ∧ ¬B)
-        let result = result.or_else(|| {
-            log!("WASM: or() failed, trying De Morgan fallback");
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut not_a = solid_a.clone();
-                not_a.not();
-                let mut not_b = solid_b.clone();
-                not_b.not();
-                truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
-            })).ok().flatten()
+        // Try original, then retry with perturbation to avoid coplanar face issues
+        let result = try_union(&solid_a, &solid_b).or_else(|| {
+            log!("WASM: union failed, retrying with perturbation to avoid coplanar faces");
+            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            try_union(&solid_a, &perturbed)
         });
 
         match result {
@@ -1048,7 +1117,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid);
+                let new_id = add_solid_to_state(&mut s, solid, "Union");
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1072,11 +1141,20 @@ impl SceneController {
         let solid_a = s.objects[idx_a].solid.clone();
         let solid_b = s.objects[idx_b].solid.clone();
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut not_b = solid_b;
-            not_b.not();
-            truck_shapeops::and(&solid_a, &not_b, 0.05)
-        })).ok().flatten();
+        let try_subtract = |a: &Solid, b: &Solid| -> Option<Solid> {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut not_b = b.clone();
+                not_b.not();
+                truck_shapeops::and(a, &not_b, 0.05)
+            })).ok().flatten()
+        };
+
+        // Try original, then retry with perturbation to avoid coplanar face issues
+        let result = try_subtract(&solid_a, &solid_b).or_else(|| {
+            log!("WASM: subtract failed, retrying with perturbation to avoid coplanar faces");
+            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            try_subtract(&solid_a, &perturbed)
+        });
 
         match result {
             Some(solid) => {
@@ -1084,7 +1162,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid);
+                let new_id = add_solid_to_state(&mut s, solid, "Subtracted");
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1108,9 +1186,18 @@ impl SceneController {
         let solid_a = s.objects[idx_a].solid.clone();
         let solid_b = s.objects[idx_b].solid.clone();
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            truck_shapeops::and(&solid_a, &solid_b, 0.05)
-        })).ok().flatten();
+        let try_intersect = |a: &Solid, b: &Solid| -> Option<Solid> {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                truck_shapeops::and(a, b, 0.05)
+            })).ok().flatten()
+        };
+
+        // Try original, then retry with perturbation to avoid coplanar face issues
+        let result = try_intersect(&solid_a, &solid_b).or_else(|| {
+            log!("WASM: intersect failed, retrying with perturbation to avoid coplanar faces");
+            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            try_intersect(&solid_a, &perturbed)
+        });
 
         match result {
             Some(solid) => {
@@ -1118,7 +1205,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid);
+                let new_id = add_solid_to_state(&mut s, solid, "Intersected");
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1166,16 +1253,21 @@ impl SceneController {
         self.state.borrow().objects.iter().map(|o| o.id.to_string()).collect()
     }
 
+    /// DEPRECATED: Use execute("select", {"id": ...}) instead.
     #[wasm_bindgen]
     pub fn select_object(&self, id: &str) {
-        let s = self.state.borrow();
-        let valid = s.id_to_index.contains_key(id);
-        drop(s);
-        self.state.borrow_mut().selected = if valid {
-            Some(id.to_string())
+        let mut s = self.state.borrow_mut();
+        if id.is_empty() {
+            s.selected = None;
+            s.interaction = InteractionMode::Idle;
+        } else if s.id_to_index.contains_key(id) {
+            s.selected = Some(id.to_string());
+            s.interaction = InteractionMode::Selected { object_id: id.to_string() };
         } else {
-            None
-        };
+            s.selected = None;
+            s.interaction = InteractionMode::Idle;
+        }
+        rebuild_scene(&mut s);
     }
 
     // =====================================================================
@@ -1188,6 +1280,7 @@ impl SceneController {
         let s = self.state.borrow();
         let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| ExportEntry {
             id: obj.id.to_string(),
+            name: obj.name.clone(),
             solid: obj.solid.clone(),
             style: Some(obj.style.clone()),
         }).collect();
@@ -1224,7 +1317,8 @@ impl SceneController {
             let id_str = id.to_string();
             s.id_to_index.insert(id_str.clone(), idx);
             s.bounding_spheres.push((id_str, center, radius));
-            s.objects.push(SceneObject { id, solid: entry.solid, polygon, wireframe, style, pick_mesh });
+            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+            s.objects.push(SceneObject { id, name, solid: entry.solid, polygon, wireframe, style, pick_mesh });
         }
         log!("WASM: Imported {} objects", s.objects.len());
         true
@@ -1234,6 +1328,7 @@ impl SceneController {
     // Gizmo: picking, drag, callbacks
     // =====================================================================
 
+    /// DEPRECATED: Use execute("pick_at", ...) + execute("select", ...) instead.
     /// Pick and select the object at the given NDC coordinates.
     /// Returns the selected object UUID, or null if nothing was hit.
     #[wasm_bindgen]
@@ -1492,6 +1587,7 @@ impl SceneController {
         }
     }
 
+    /// DEPRECATED: No longer needed. Selection now goes through execute("select", ...).
     /// Register a JS callback for when an object is selected (or deselected).
     /// Callback signature: (objectId: string | null) => void
     #[wasm_bindgen]
@@ -1719,7 +1815,7 @@ impl SceneController {
             Ok(solid) => {
                 log!("WASM: sketch extruded, height={}", height);
                 let mut s = self.state.borrow_mut();
-                let id = add_solid_to_state(&mut s, solid);
+                let id = add_solid_to_state(&mut s, solid, "Extruded");
                 rebuild_scene(&mut s);
                 id
             }
@@ -1796,9 +1892,10 @@ impl SceneController {
         let mut s = self.state.borrow_mut();
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
         let solid = s.objects[idx].solid.clone();
         let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &new_style);
-        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style: new_style, pick_mesh };
+        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style: new_style, pick_mesh };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -1810,11 +1907,12 @@ impl SceneController {
         let mut s = self.state.borrow_mut();
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let obj_id = s.objects[idx].id;
+        let name = s.objects[idx].name.clone();
         let solid = s.objects[idx].solid.clone();
         let mut style = s.objects[idx].style.clone();
         style.albedo = [r, g, b, a];
         let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, solid, polygon, wireframe, style, pick_mesh };
+        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -1842,5 +1940,279 @@ impl SceneController {
             })
         }).collect();
         serde_json::to_string(&stats).unwrap_or_default()
+    }
+
+    // =====================================================================
+    // Unified command dispatch — replaces JS executeWasm() switch
+    // =====================================================================
+
+    /// Execute a command by type name + JSON params, return JSON result.
+    /// This is the single entry point for all command dispatch from JS.
+    /// Each command deserializes into a typed param struct (source of truth for schema).
+    #[wasm_bindgen]
+    pub fn execute(&self, cmd_type: &str, params_json: &str) -> String {
+        let p: serde_json::Value = serde_json::from_str(params_json).unwrap_or(serde_json::json!({}));
+
+        let result: serde_json::Value = match cmd_type {
+            // ── Primitives ──────────────────────────────────────────
+            "add_cube" => {
+                let params: AddCubeParams = serde_json::from_value(p).unwrap_or(AddCubeParams { size: 1.0 });
+                let id = self.add_cube(params.size);
+                serde_json::json!({ "objectId": id })
+            }
+            "add_sphere" => {
+                let params: AddSphereParams = serde_json::from_value(p).unwrap_or(AddSphereParams { radius: 1.0 });
+                let id = self.add_sphere(params.radius);
+                serde_json::json!({ "objectId": id })
+            }
+            "add_cylinder" => {
+                let params: AddCylinderParams = serde_json::from_value(p).unwrap_or(AddCylinderParams { radius: 0.5, height: 1.0 });
+                let id = self.add_cylinder(params.radius, params.height);
+                serde_json::json!({ "objectId": id })
+            }
+            "add_torus" => {
+                let params: AddTorusParams = serde_json::from_value(p).unwrap_or(AddTorusParams { major_radius: 1.0, minor_radius: 0.3 });
+                let id = self.add_torus(params.major_radius, params.minor_radius);
+                serde_json::json!({ "objectId": id })
+            }
+
+            // ── Transforms ──────────────────────────────────────────
+            "translate" => {
+                match serde_json::from_value::<TranslateParams>(p) {
+                    Ok(params) => {
+                        let ok = self.translate_object(&params.object_id, params.dx, params.dy, params.dz);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "rotate" => {
+                match serde_json::from_value::<RotateParams>(p) {
+                    Ok(params) => {
+                        let ok = self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "scale" => {
+                match serde_json::from_value::<ScaleParams>(p) {
+                    Ok(params) => {
+                        let ok = self.scale_object(&params.object_id, params.sx, params.sy, params.sz);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "duplicate" => {
+                match serde_json::from_value::<ObjectIdParam>(p) {
+                    Ok(params) => {
+                        let id = self.duplicate_object(&params.object_id);
+                        if id.is_empty() { serde_json::json!({ "error": "Duplicate failed" }) }
+                        else { serde_json::json!({ "objectId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Booleans ────────────────────────────────────────────
+            "boolean_union" => {
+                match serde_json::from_value::<BooleanParams>(p) {
+                    Ok(params) => {
+                        let id = self.boolean_union(&params.id_a, &params.id_b);
+                        if id.is_empty() { serde_json::json!({ "error": "Union failed" }) }
+                        else { serde_json::json!({ "objectId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "boolean_subtract" => {
+                match serde_json::from_value::<BooleanParams>(p) {
+                    Ok(params) => {
+                        let id = self.boolean_subtract(&params.id_a, &params.id_b);
+                        if id.is_empty() { serde_json::json!({ "error": "Subtract failed" }) }
+                        else { serde_json::json!({ "objectId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "boolean_intersect" => {
+                match serde_json::from_value::<BooleanParams>(p) {
+                    Ok(params) => {
+                        let id = self.boolean_intersect(&params.id_a, &params.id_b);
+                        if id.is_empty() { serde_json::json!({ "error": "Intersect failed" }) }
+                        else { serde_json::json!({ "objectId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Scene ───────────────────────────────────────────────
+            "delete" => {
+                match serde_json::from_value::<ObjectIdParam>(p) {
+                    Ok(params) => {
+                        self.delete_object(&params.object_id);
+                        serde_json::json!({ "success": true })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "clear" => {
+                self.clear_scene();
+                serde_json::json!({ "success": true })
+            }
+            "export_scene" => {
+                serde_json::json!({ "scene": self.export_scene() })
+            }
+            "import_scene" => {
+                match serde_json::from_value::<ImportSceneParams>(p) {
+                    Ok(params) => {
+                        let ok = self.import_scene(&params.json);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Selection ───────────────────────────────────────────
+            "select_at" => {
+                let params: PickAtParams = serde_json::from_value(p).unwrap_or(PickAtParams { ndc_x: 0.0, ndc_y: 0.0 });
+                let _js = self.select_object_at(params.ndc_x, params.ndc_y);
+                let s = self.state.borrow();
+                match &s.selected {
+                    Some(id) => serde_json::json!({ "selectedId": id }),
+                    None => serde_json::json!({ "selectedId": null }),
+                }
+            }
+            "pick_at" => {
+                // Read-only ray-cast: returns pickedId WITHOUT changing selection state
+                let params: PickAtParams = serde_json::from_value(p).unwrap_or(PickAtParams { ndc_x: 0.0, ndc_y: 0.0 });
+                let s = self.state.borrow();
+                let picked = pick_object(&s, params.ndc_x, params.ndc_y);
+                serde_json::json!({ "pickedId": picked })
+            }
+            "select" => {
+                // Set selection by ID (or clear if empty/missing)
+                let params: SelectParams = serde_json::from_value(p).unwrap_or(SelectParams { id: String::new() });
+                let mut s = self.state.borrow_mut();
+                if params.id.is_empty() || !s.id_to_index.contains_key(&params.id) {
+                    s.selected = None;
+                    s.interaction = InteractionMode::Idle;
+                } else {
+                    s.selected = Some(params.id.clone());
+                    s.interaction = InteractionMode::Selected { object_id: params.id };
+                }
+                rebuild_scene(&mut s);
+                let selected_id = s.selected.clone();
+                match selected_id {
+                    Some(id) => serde_json::json!({ "selectedId": id }),
+                    None => serde_json::json!({ "selectedId": null }),
+                }
+            }
+            "deselect" => {
+                let mut s = self.state.borrow_mut();
+                s.selected = None;
+                s.interaction = InteractionMode::Idle;
+                rebuild_scene(&mut s);
+                serde_json::json!({ "selectedId": null })
+            }
+
+            // ── Style ───────────────────────────────────────────────
+            "get_object_style" => {
+                match serde_json::from_value::<ObjectIdParam>(p) {
+                    Ok(params) => {
+                        let json = self.get_object_style(&params.object_id);
+                        if json.is_empty() { serde_json::json!({ "error": "Not found" }) }
+                        else {
+                            match serde_json::from_str::<serde_json::Value>(&json) {
+                                Ok(v) => serde_json::json!({ "style": v }),
+                                Err(_) => serde_json::json!({ "error": "Parse error" }),
+                            }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "set_style" => {
+                match serde_json::from_value::<SetStyleParams>(p) {
+                    Ok(params) => {
+                        let style_str = serde_json::to_string(&params.style).unwrap_or_default();
+                        let ok = self.set_object_style(&params.object_id, &style_str);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "set_color" => {
+                match serde_json::from_value::<SetColorParams>(p) {
+                    Ok(params) => {
+                        let ok = self.set_object_color(&params.object_id, params.r, params.g, params.b, params.a);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Sketch ──────────────────────────────────────────────
+            "sketch_extrude" => {
+                match serde_json::from_value::<SketchExtrudeParams>(p) {
+                    Ok(params) => {
+                        if params.sketch_json.is_empty() || params.height <= 0.0 {
+                            serde_json::json!({ "error": "Missing sketchJson or height" })
+                        } else {
+                            self.sketch_import(&params.sketch_json);
+                            let id = self.sketch_extrude(params.height);
+                            if id.is_empty() { serde_json::json!({ "error": "Extrude failed" }) }
+                            else { serde_json::json!({ "objectId": id }) }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Queries ─────────────────────────────────────────────
+            "get_state" => {
+                let s = self.state.borrow();
+                let ids: Vec<String> = s.objects.iter().map(|o| o.id.to_string()).collect();
+                let names: HashMap<String, String> = s.objects.iter().map(|o| (o.id.to_string(), o.name.clone())).collect();
+                serde_json::json!({
+                    "ready": true,
+                    "objectCount": ids.len(),
+                    "objectIds": ids,
+                    "objectNames": names,
+                    "selectedId": s.selected,
+                    "interactionMode": match &s.interaction {
+                        InteractionMode::Idle => "idle",
+                        InteractionMode::Selected { .. } => "selected",
+                        InteractionMode::Dragging { .. } => "dragging",
+                    },
+                })
+            }
+            "rename" => {
+                match serde_json::from_value::<RenameParams>(p) {
+                    Ok(params) => {
+                        let mut s = self.state.borrow_mut();
+                        let idx = match s.id_to_index.get(&params.object_id) {
+                            Some(&i) => i,
+                            None => return serde_json::json!({"error":"not found"}).to_string(),
+                        };
+                        s.objects[idx].name = params.name;
+                        serde_json::json!({ "success": true })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "pick_mesh_stats" => {
+                let stats = self.pick_mesh_stats();
+                match serde_json::from_str::<serde_json::Value>(&stats) {
+                    Ok(v) => serde_json::json!({ "stats": v }),
+                    Err(_) => serde_json::json!({ "stats": [] }),
+                }
+            }
+
+            _ => serde_json::json!({ "error": format!("Unknown command: {}", cmd_type) }),
+        };
+
+        serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
     }
 }

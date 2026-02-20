@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Dev server must be running before tests start.
+// Start it with: task truck:test:serve:start
+// Or run the full pipeline: task truck:test:all
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8787';
 const IS_SLOW = !!process.env.SLOW;
 
@@ -8,7 +11,7 @@ export default defineConfig({
   outputDir: './test-results',
   timeout: IS_SLOW ? 120_000 : 60_000,
   expect: { timeout: IS_SLOW ? 30_000 : 15_000 },
-  fullyParallel: false, // CAD tests are sequential (scene state)
+  fullyParallel: true, // each test gets a fresh page — safe to parallelize
   retries: 0,
   reporter: [['html', { open: 'never' }], ['list']],
 
@@ -26,47 +29,34 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testIgnore: [/doc-screenshots\.spec\.ts/, /doc-lessons\.spec\.ts/, /cross-tab-sync\.spec\.ts/, /example-scenes\.spec\.ts/],
+      testMatch: ['cad.spec.ts', 'sketch.spec.ts'],
+      testIgnore: [/cross-tab-sync\.spec\.ts/, /doc-videos\.spec\.ts/, /cad-ui\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },
     {
-      // Cross-tab SSE sync — must run alone (other tests broadcast signals
-      // to the same Worker, interfering with expected signal values).
+      // UI interaction tests — toolbar clicks, outliner, canvas, data-testid selectors
+      name: 'ui',
+      testMatch: /cad-ui\.spec\.ts/,
+      retries: 1,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Cross-tab sync — must run alone (broadcasts interfere)
       name: 'sync',
       testMatch: /cross-tab-sync\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
-      // Dedicated project for generating doc screenshots
-      name: 'screenshots',
-      testMatch: /doc-screenshots\.spec\.ts/,
+      // Doc video recording — always records, runs serial (one browser at a time)
+      name: 'docs',
+      testMatch: /doc-videos\.spec\.ts/,
+      timeout: 120_000,
+      fullyParallel: false,
       use: {
         ...devices['Desktop Chrome'],
-        headless: false,
-        channel: 'chrome',
-        viewport: { width: 1280, height: 800 },
+        video: 'on',
+        actionTimeout: 20_000,
       },
-    },
-    {
-      // Dedicated project for recording lesson videos
-      name: 'lessons',
-      testMatch: /doc-lessons\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        headless: false,
-        channel: 'chrome',
-        viewport: { width: 1280, height: 800 },
-        video: {
-          mode: 'on',
-          size: { width: 1280, height: 800 },
-        },
-      },
-    },
-    {
-      // Generate example scene JSON files (run on demand, not during default e2e)
-      name: 'examples',
-      testMatch: /example-scenes\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });

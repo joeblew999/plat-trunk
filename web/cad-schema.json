@@ -1,0 +1,561 @@
+{
+  "commands": {
+    "add_cube": {
+      "description": "Add a cube primitive",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "size": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "title": "AddCubeParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "add_cylinder": {
+      "description": "Add a cylinder primitive",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "height": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "radius": {
+            "default": 0.5,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "title": "AddCylinderParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "add_sphere": {
+      "description": "Add a sphere primitive",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "radius": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "title": "AddSphereParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "add_torus": {
+      "description": "Add a torus primitive",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "majorRadius": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "minorRadius": {
+            "default": 0.3,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "title": "AddTorusParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "boolean_intersect": {
+      "description": "Intersect two objects (A & B)",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "idA": {
+            "type": "string"
+          },
+          "idB": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idA",
+          "idB"
+        ],
+        "title": "BooleanParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "boolean_subtract": {
+      "description": "Subtract B from A",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "idA": {
+            "type": "string"
+          },
+          "idB": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idA",
+          "idB"
+        ],
+        "title": "BooleanParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "boolean_union": {
+      "description": "Union two objects (A + B)",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "idA": {
+            "type": "string"
+          },
+          "idB": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idA",
+          "idB"
+        ],
+        "title": "BooleanParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "clear": {
+      "description": "Clear all objects from the scene",
+      "ephemeral": false,
+      "params": {
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "delete": {
+      "description": "Delete an object by ID",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "ObjectIdParam",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "deselect": {
+      "description": "Clear selection",
+      "ephemeral": true,
+      "params": {
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "selectedId"
+    },
+    "duplicate": {
+      "description": "Duplicate an object",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "ObjectIdParam",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "export_scene": {
+      "description": "Export scene as JSON string",
+      "ephemeral": false,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "scene"
+    },
+    "get_object_style": {
+      "description": "Get object material style",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "ObjectIdParam",
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "style"
+    },
+    "get_state": {
+      "description": "Get full scene state",
+      "ephemeral": true,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "state"
+    },
+    "import_scene": {
+      "description": "Import scene from JSON string",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "json": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "json"
+        ],
+        "title": "ImportSceneParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "pick_at": {
+      "description": "Ray-cast pick at NDC coords (read-only)",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "ndcX": {
+            "format": "double",
+            "type": "number"
+          },
+          "ndcY": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ndcX",
+          "ndcY"
+        ],
+        "title": "PickAtParams",
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "pickedId"
+    },
+    "pick_mesh_stats": {
+      "description": "Get pick mesh statistics",
+      "ephemeral": true,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "stats"
+    },
+    "rename": {
+      "description": "Rename an object",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "objectId"
+        ],
+        "title": "RenameParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "rotate": {
+      "description": "Rotate an object around an axis",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "angleDeg": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "axisX": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "axisY": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "axisZ": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "RotateParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "scale": {
+      "description": "Scale an object by sx/sy/sz",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          },
+          "sx": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "sy": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "sz": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "ScaleParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "select": {
+      "description": "Select an object by ID",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "SelectParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "selectedId"
+    },
+    "select_at": {
+      "description": "Pick + select at NDC coords",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "ndcX": {
+            "format": "double",
+            "type": "number"
+          },
+          "ndcY": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ndcX",
+          "ndcY"
+        ],
+        "title": "PickAtParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "selectedId"
+    },
+    "set_color": {
+      "description": "Set object color (RGBA)",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "a": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          },
+          "b": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "g": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "objectId": {
+            "type": "string"
+          },
+          "r": {
+            "default": 1.0,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "SetColorParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "set_style": {
+      "description": "Set object material style",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          },
+          "style": true
+        },
+        "required": [
+          "objectId",
+          "style"
+        ],
+        "title": "SetStyleParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "sketch_extrude": {
+      "description": "Extrude a 2D sketch to 3D",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "height": {
+            "format": "double",
+            "type": "number"
+          },
+          "sketchJson": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "height",
+          "sketchJson"
+        ],
+        "title": "SketchExtrudeParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
+    "translate": {
+      "description": "Move an object by dx/dy/dz",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "dx": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "dy": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "dz": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "TranslateParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    }
+  },
+  "module": "cad",
+  "version": "0.3.0"
+}

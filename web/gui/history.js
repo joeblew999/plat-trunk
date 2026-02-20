@@ -1,3 +1,5 @@
+import { executeWasm, reconcile } from './state.js';
+
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
 // Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
 // cadCommand() always executes WASM directly; this records ops after the fact.
@@ -11,7 +13,7 @@
 // Undo = set enabled=false on last own op (or entire group). Redo = re-enable.
 // Scene is rebuilt by replaying all enabled ops from the last checkpoint.
 
-import { Repo, isValidAutomergeUrl, IndexedDBStorageAdapter, BroadcastChannelNetworkAdapter } from './automerge-bundle.js';
+import { Repo, isValidAutomergeUrl, IndexedDBStorageAdapter, BroadcastChannelNetworkAdapter } from './vendor/automerge-bundle.js';
 
 const SNAPSHOT_INTERVAL = 10; // checkpoint every N ops for faster replay
 
@@ -21,9 +23,7 @@ class CadDocumentManager {
         this.handle = null;
         this.actorId = this._getOrCreateActorId();
         this._replayInProgress = false;
-        // Track how many ops we've already seen locally (for detecting remote adds)
         this._localOpCount = 0;
-        this._syncAdapter = null;
     }
 
     _getOrCreateActorId() {
@@ -48,11 +48,6 @@ class CadDocumentManager {
             network: adapters,
             storage: new IndexedDBStorageAdapter('cad-docs'),
         });
-
-        // Wire WorkerSyncAdapter as persistence sidecar
-        if (window.WorkerSyncAdapter) {
-            this._syncAdapter = new window.WorkerSyncAdapter();
-        }
 
         // Check URL for ?doc= parameter
         const params = new URLSearchParams(window.location.search);
@@ -140,7 +135,7 @@ class CadDocumentManager {
         });
 
         this._localOpCount = this._getDocOpCount();
-        if (window.updateObjectList) window.updateObjectList();
+        reconcile({});
         this._renderTimeline();
     }
 
@@ -238,7 +233,7 @@ class CadDocumentManager {
             return;
         }
 
-        const prevSelectedId = window.selectedObjectId || null;
+        const prevSelectedId = window._ds?.root?.selectedId ?? null;
 
         // Find nearest valid snapshot checkpoint
         let startIndex = 0;
@@ -264,26 +259,24 @@ class CadDocumentManager {
         for (let i = startIndex; i < doc.operations.length; i++) {
             if (doc.operations[i].enabled) {
                 const op = doc.operations[i];
-                window.executeWasm(ctrl, op.type, op.params);
+                executeWasm(ctrl, op.type, op.params);
             }
         }
 
-        // Restore selection
+        // Restore selection via Datastar signals
         const ids = ctrl.object_ids();
+        const ds = window._ds;
+        let newSel = null;
         if (prevSelectedId && ids.includes(prevSelectedId)) {
-            window.selectedObjectId = prevSelectedId;
+            newSel = prevSelectedId;
         } else if (ids.length > 0) {
-            window.selectedObjectId = ids[ids.length - 1];
-        } else {
-            window.selectedObjectId = null;
+            newSel = ids[ids.length - 1];
         }
+        if (ds?.root) ds.root.selectedId = newSel;
 
-        if (window.updateObjectList) window.updateObjectList();
+        // Reconcile pushes WASM state → Datastar signals → DOM (includes loadStyle + object list)
+        reconcile({ selectedId: newSel });
         this._renderTimeline();
-        // Update Datastar reactive signals after replay
-        if (window.buildUIState && window.updateSignals) {
-            window.updateSignals(window.buildUIState());
-        }
         this._replayInProgress = false;
     }
 
@@ -337,6 +330,8 @@ class CadDocumentManager {
             add_torus: 'btn-info',
             translate: 'btn-ghost',
             rotate: 'btn-ghost',
+            scale: 'btn-ghost',
+            duplicate: 'btn-info',
             boolean_union: 'btn-success',
             boolean_subtract: 'btn-warning',
             boolean_intersect: 'btn-error',
@@ -353,6 +348,8 @@ class CadDocumentManager {
             add_torus: 'Torus',
             translate: 'Move',
             rotate: 'Rot',
+            scale: 'Scale',
+            duplicate: 'Dup',
             boolean_union: 'Union',
             boolean_subtract: 'Sub',
             boolean_intersect: 'Inter',

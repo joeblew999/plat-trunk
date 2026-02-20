@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPTransport } from '@hono/mcp';
+import cadSchema from '../../../../web/cad-schema.json';
 
 type Bindings = {
   MY_VAR: string;
@@ -12,27 +15,17 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 const api = new Hono<{ Bindings: Bindings }>();
 api.use('*', cors());
+api.use('*', async (_c, next) => { gcModels(); return next(); });
 
 api.get('/health', (c) => c.json({ status: 'ok', service: 'truck-cad' }));
 
 // =========================================================================
-// CAD Remote Control API — SSE push + command queue
+// Schema-driven helpers — derive Zod + MCP from cad-schema.json
 // =========================================================================
-// Flow:
-//   1. Browser connects to GET /api/cad/events (persistent SSE)
-//   2. External caller POSTs /api/cad/exec → command queued + pushed via SSE
-//   3. Browser executes on SceneController → POSTs /api/cad/result/:id
-//   4. External caller GETs /api/cad/result/:id
 
-const CadCommandType = z.enum([
-  'add_cube', 'add_sphere', 'add_cylinder', 'add_torus',
-  'translate', 'rotate',
-  'boolean_union', 'boolean_subtract', 'boolean_intersect',
-  'delete', 'clear', 'export_scene', 'import_scene',
-  'select_at', 'deselect',
-  'get_object_style', 'set_style', 'set_color',
-  'get_state', 'pick_mesh_stats',
-]);
+const CadCommandType = z.enum(
+  Object.keys(cadSchema.commands) as [string, ...string[]]
+);
 
 const CadExecRequest = z.object({
   type: CadCommandType,
@@ -51,226 +44,274 @@ interface QueuedCommand {
   completedAt?: number;
 }
 
-const commandQueue = new Map<string, QueuedCommand>();
-let sceneState: Record<string, unknown> = {};
-let sceneStateAt = 0;
-// Version-based signal broadcast: each SSE connection tracks the last version
-// it sent, so ALL connections see every update (not just the first to poll).
-let latestSignals: Record<string, unknown> | null = null;
-let signalVersion = 0;
+// =========================================================================
+// Per-model state — each model gets isolated command queue + scene state
+// =========================================================================
 
-let sseClientCount = 0;
+interface ModelSession {
+  commandQueue: Map<string, QueuedCommand>;
+  sceneState: Record<string, unknown>;
+  sceneStateAt: number;
+  latestSignals: Record<string, unknown> | null;
+  signalVersion: number;
+  sseClientCount: number;
+  lastActivity: number;
+}
 
-function gcQueue() {
+const models = new Map<string, ModelSession>();
+let lastActiveModelId = 'default';
+
+function getModel(modelId: string): ModelSession {
+  if (!models.has(modelId)) {
+    models.set(modelId, {
+      commandQueue: new Map(),
+      sceneState: {},
+      sceneStateAt: 0,
+      latestSignals: null,
+      signalVersion: 0,
+      sseClientCount: 0,
+      lastActivity: Date.now(),
+    });
+  }
+  const m = models.get(modelId)!;
+  m.lastActivity = Date.now();
+  lastActiveModelId = modelId;
+  return m;
+}
+
+function gcQueue(model: ModelSession) {
   const cutoff = Date.now() - 60_000;
-  for (const [id, cmd] of commandQueue) {
-    if (cmd.createdAt < cutoff) commandQueue.delete(id);
+  for (const [id, cmd] of model.commandQueue) {
+    if (cmd.createdAt < cutoff) model.commandQueue.delete(id);
   }
 }
 
-// SSE endpoint — browser connects here for command push.
-// Uses polling-within-SSE pattern (CF Workers can't broadcast across requests).
-api.get('/cad/events', (c) => {
-  return streamSSE(c, async (stream) => {
-    let isOpen = true;
-    stream.onAbort(() => { isOpen = false; });
-    sseClientCount++;
+// GC: evict inactive models with no SSE clients (runs lazily on each request)
+let lastGC = 0;
+function gcModels() {
+  const now = Date.now();
+  if (now - lastGC < 60_000) return; // at most once per minute
+  lastGC = now;
+  const cutoff = now - 5 * 60_000;
+  for (const [id, m] of models) {
+    if (m.sseClientCount === 0 && m.lastActivity < cutoff) models.delete(id);
+  }
+}
 
-    // Per-connection tracking
-    const sentCommands = new Set<string>();
-    let lastSentSignalVersion = signalVersion;
+// =========================================================================
+// Route handlers
+// =========================================================================
 
-    // Initial Datastar signals
-    await stream.writeSSE({
-      event: 'datastar-patch-signals',
-      data: `signals ${JSON.stringify({ cadConnected: true, cadObjects: 0 })}`,
-    });
+function sseHandler(modelId: string) {
+  const model = getModel(modelId);
+  return (c: any) => {
+    return streamSSE(c, async (stream: any) => {
+      let isOpen = true;
+      stream.onAbort(() => { isOpen = false; });
+      model.sseClientCount++;
 
-    // Poll command queue every 100ms for new pending/running commands
-    let heartbeatCounter = 0;
-    while (isOpen) {
-      await stream.sleep(100);
-      if (!isOpen) break;
+      const sentCommands = new Set<string>();
+      let lastSentSignalVersion = model.signalVersion;
 
-      // Check for new commands to deliver
-      for (const [id, cmd] of commandQueue) {
-        if (sentCommands.has(id)) continue;
-        if (cmd.status === 'pending' || cmd.status === 'running') {
-          sentCommands.add(id);
-          cmd.status = 'running';
+      await stream.writeSSE({
+        event: 'datastar-patch-signals',
+        data: `signals ${JSON.stringify({ cadConnected: true, cadObjects: 0 })}`,
+      });
+
+      let heartbeatCounter = 0;
+      while (isOpen) {
+        await stream.sleep(100);
+        if (!isOpen) break;
+
+        for (const [id, cmd] of model.commandQueue) {
+          if (sentCommands.has(id)) continue;
+          if (cmd.status === 'pending' || cmd.status === 'running') {
+            sentCommands.add(id);
+            cmd.status = 'running';
+            try {
+              await stream.writeSSE({
+                event: 'cad-command',
+                data: JSON.stringify({ id: cmd.id, command: cmd.command }),
+              });
+            } catch { isOpen = false; break; }
+          }
+        }
+
+        if (model.latestSignals && lastSentSignalVersion < model.signalVersion) {
+          lastSentSignalVersion = model.signalVersion;
           try {
             await stream.writeSSE({
-              event: 'cad-command',
-              data: JSON.stringify({ id: cmd.id, command: cmd.command }),
+              event: 'datastar-patch-signals',
+              data: `signals ${JSON.stringify(model.latestSignals)}`,
             });
           } catch { isOpen = false; break; }
         }
-      }
 
-      // Broadcast Datastar signals when version advances.
-      // Each connection tracks its own lastSentSignalVersion so ALL clients
-      // see every update (not just the first to poll).
-      if (latestSignals && lastSentSignalVersion < signalVersion) {
-        lastSentSignalVersion = signalVersion;
-        try {
-          await stream.writeSSE({
-            event: 'datastar-patch-signals',
-            data: `signals ${JSON.stringify(latestSignals)}`,
-          });
-        } catch { isOpen = false; break; }
+        heartbeatCounter++;
+        if (heartbeatCounter >= 250) {
+          heartbeatCounter = 0;
+          try { await stream.write(': keepalive\n\n'); } catch { break; }
+        }
       }
+      model.sseClientCount--;
+    }) as any;
+  };
+}
 
-      // Heartbeat every ~25s (250 * 100ms)
-      heartbeatCounter++;
-      if (heartbeatCounter >= 250) {
-        heartbeatCounter = 0;
-        try { await stream.write(': keepalive\n\n'); } catch { break; }
-      }
+function execHandler(modelId: string) {
+  const model = getModel(modelId);
+  return async (c: any) => {
+    try {
+      const json = await c.req.json();
+      const command = CadExecRequest.parse(json);
+      gcQueue(model);
+      const id = crypto.randomUUID();
+      const cmd: QueuedCommand = { id, command, status: 'pending', createdAt: Date.now() };
+      model.commandQueue.set(id, cmd);
+      return c.json({ id, status: model.sseClientCount > 0 ? 'queued' : 'no_clients', sseClients: model.sseClientCount });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return c.json({ error: 'Invalid command', details: error.issues }, 400);
+      return c.json({ error: 'Internal server error' }, 500);
     }
-    sseClientCount--;
-  }) as any;
-});
+  };
+}
 
-// Queue command — SSE clients will pick it up on next poll cycle (~100ms)
-api.post('/cad/exec', async (c) => {
-  try {
-    const json = await c.req.json();
-    const command = CadExecRequest.parse(json);
-    gcQueue();
-    const id = crypto.randomUUID();
-    const cmd: QueuedCommand = { id, command, status: 'pending', createdAt: Date.now() };
-    commandQueue.set(id, cmd);
-    return c.json({ id, status: sseClientCount > 0 ? 'queued' : 'no_clients', sseClients: sseClientCount });
-  } catch (error) {
-    if (error instanceof z.ZodError) return c.json({ error: 'Invalid command', details: error.issues }, 400);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
+function execWaitHandler(modelId: string) {
+  const model = getModel(modelId);
+  return async (c: any) => {
+    try {
+      const json = await c.req.json();
+      const command = CadExecRequest.parse(json);
+      gcQueue(model);
+      const id = crypto.randomUUID();
+      const cmd: QueuedCommand = { id, command, status: 'pending', createdAt: Date.now() };
+      model.commandQueue.set(id, cmd);
 
-// Exec + wait — queue command, poll for result (convenience for scripts/CLI)
-api.post('/cad/exec-wait', async (c) => {
-  try {
-    const json = await c.req.json();
-    const command = CadExecRequest.parse(json);
-    gcQueue();
-    const id = crypto.randomUUID();
-    const cmd: QueuedCommand = { id, command, status: 'pending', createdAt: Date.now() };
-    commandQueue.set(id, cmd);
-
-    // Poll for result — max 10s
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 100));
-      if (cmd.status === 'done' || cmd.status === 'error') {
-        return c.json({ id, status: cmd.status, result: cmd.result, error: cmd.error });
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 100));
+        if (cmd.status === 'done' || cmd.status === 'error') {
+          return c.json({ id, status: cmd.status, result: cmd.result, error: cmd.error });
+        }
       }
+      return c.json({ id, status: 'timeout', error: 'Browser did not respond within 10s' }, 504);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) return c.json({ error: 'Invalid command', details: error.issues }, 400);
+      return c.json({ error: 'Internal server error' }, 500);
     }
-    return c.json({ id, status: 'timeout', error: 'Browser did not respond within 10s' }, 504);
-  } catch (error) {
-    if (error instanceof z.ZodError) return c.json({ error: 'Invalid command', details: error.issues }, 400);
-    return c.json({ error: 'Internal server error' }, 500);
-  }
-});
+  };
+}
 
-// Fallback polling
-api.get('/cad/pending', (c) => {
-  const pending: QueuedCommand[] = [];
-  for (const cmd of commandQueue.values()) {
-    if (cmd.status === 'pending') { cmd.status = 'running'; pending.push(cmd); }
-  }
-  return c.json({ commands: pending });
-});
-
-// Post result
-api.post('/cad/result/:id', async (c) => {
-  const cmd = commandQueue.get(c.req.param('id'));
-  if (!cmd) return c.json({ error: 'Not found' }, 404);
-  try {
-    const body = await c.req.json();
-    cmd.status = body.error ? 'error' : 'done';
-    cmd.result = body.result;
-    cmd.error = body.error;
-    cmd.completedAt = Date.now();
-    return c.json({ status: 'ok' });
-  } catch { return c.json({ error: 'Invalid body' }, 400); }
-});
-
-// Get result
-api.get('/cad/result/:id', (c) => {
-  const cmd = commandQueue.get(c.req.param('id'));
-  if (!cmd) return c.json({ error: 'Not found' }, 404);
-  return c.json({ id: cmd.id, status: cmd.status, result: cmd.result, error: cmd.error });
-});
-
-// State
-api.post('/cad/state', async (c) => {
-  try {
-    const body = await c.req.json() as Record<string, unknown>;
-    const shouldBroadcast = !!body.broadcast;
-    delete body.broadcast;
-    sceneState = body;
-    sceneStateAt = Date.now();
-    // Only broadcast via SSE when explicitly requested (cadCommand actions).
-    // Periodic reportState() from api-bridge omits the flag to avoid
-    // overwriting signals from the tab that actually changed the scene.
-    if (shouldBroadcast) {
-      latestSignals = {
-        cadConnected: true,
-        cadObjects: body.objectCount ?? 0,
-        ...body,
-      };
-      signalVersion++;
+function pendingHandler(modelId: string) {
+  const model = getModel(modelId);
+  return (c: any) => {
+    const pending: QueuedCommand[] = [];
+    for (const cmd of model.commandQueue.values()) {
+      if (cmd.status === 'pending') { cmd.status = 'running'; pending.push(cmd); }
     }
-    return c.json({ status: 'ok' });
-  } catch { return c.json({ error: 'Invalid' }, 400); }
-});
-api.get('/cad/state', (c) => {
-  if (!sceneStateAt) return c.json({ error: 'No browser connected' }, 503);
-  return c.json({ state: sceneState, updatedAt: sceneStateAt, sseClients: sseClientCount });
-});
+    return c.json({ commands: pending });
+  };
+}
 
-// Debug
-api.get('/cad/queue', (c) => {
-  const cmds: QueuedCommand[] = [];
-  for (const cmd of commandQueue.values()) cmds.push(cmd);
-  return c.json({ commands: cmds.sort((a, b) => b.createdAt - a.createdAt), sseClients: sseClientCount });
-});
+function postResultHandler(modelId: string) {
+  const model = getModel(modelId);
+  return async (c: any) => {
+    const cmd = model.commandQueue.get(c.req.param('id'));
+    if (!cmd) return c.json({ error: 'Not found' }, 404);
+    try {
+      const body = await c.req.json();
+      cmd.status = body.error ? 'error' : 'done';
+      cmd.result = body.result;
+      cmd.error = body.error;
+      cmd.completedAt = Date.now();
+      return c.json({ status: 'ok' });
+    } catch { return c.json({ error: 'Invalid body' }, 400); }
+  };
+}
 
-// Schema
-api.get('/cad/schema', (c) => c.json({
-  commands: CadCommandType.options,
-  params: {
-    add_cube: { size: 'number (default 1.0)' }, add_sphere: { radius: 'number (default 1.0)' },
-    add_cylinder: { radius: 'number (default 0.5)', height: 'number (default 1.0)' },
-    add_torus: { majorRadius: 'number (default 1.0)', minorRadius: 'number (default 0.3)' },
-    translate: { objectId: 'UUID', dx: 'number', dy: 'number', dz: 'number' },
-    rotate: { objectId: 'UUID', axisX: 'number', axisY: 'number', axisZ: 'number', angleDeg: 'number' },
-    boolean_union: { idA: 'UUID', idB: 'UUID' }, boolean_subtract: { idA: 'UUID', idB: 'UUID' },
-    boolean_intersect: { idA: 'UUID', idB: 'UUID' }, delete: { objectId: 'UUID' }, clear: {},
-    select_at: { ndcX: '[-1,1]', ndcY: '[-1,1]' }, deselect: {},
-    get_object_style: { objectId: 'UUID' }, set_style: { objectId: 'UUID', style: 'ObjectStyle' },
-    set_color: { objectId: 'UUID', r: '[0,1]', g: '[0,1]', b: '[0,1]', a: '[0,1]' },
-    export_scene: {}, import_scene: { json: 'string' }, get_state: {}, pick_mesh_stats: {},
-  },
-}));
+function getResultHandler(modelId: string) {
+  const model = getModel(modelId);
+  return (c: any) => {
+    const cmd = model.commandQueue.get(c.req.param('id'));
+    if (!cmd) return c.json({ error: 'Not found' }, 404);
+    return c.json({ id: cmd.id, status: cmd.status, result: cmd.result, error: cmd.error });
+  };
+}
 
+function postStateHandler(modelId: string) {
+  const model = getModel(modelId);
+  return async (c: any) => {
+    try {
+      const body = await c.req.json() as Record<string, unknown>;
+      const shouldBroadcast = !!body.broadcast;
+      delete body.broadcast;
+      model.sceneState = body;
+      model.sceneStateAt = Date.now();
+      if (shouldBroadcast) {
+        model.latestSignals = {
+          cadConnected: true,
+          cadObjects: body.objectCount ?? 0,
+          ...body,
+        };
+        model.signalVersion++;
+      }
+      return c.json({ status: 'ok' });
+    } catch { return c.json({ error: 'Invalid' }, 400); }
+  };
+}
+
+function getStateHandler(modelId: string) {
+  const model = getModel(modelId);
+  return (c: any) => {
+    if (!model.sceneStateAt) return c.json({ error: 'No browser connected' }, 503);
+    return c.json({ state: model.sceneState, updatedAt: model.sceneStateAt, sseClients: model.sseClientCount });
+  };
+}
+
+function queueHandler(modelId: string) {
+  const model = getModel(modelId);
+  return (c: any) => {
+    const cmds: QueuedCommand[] = [];
+    for (const cmd of model.commandQueue.values()) cmds.push(cmd);
+    return c.json({ commands: cmds.sort((a, b) => b.createdAt - a.createdAt), sseClients: model.sseClientCount });
+  };
+}
+
+// =========================================================================
+// All routes are model-scoped — /cad/:modelId/...
+// Schema is model-independent.
+// =========================================================================
+
+api.get('/cad/schema', (c) => c.json(cadSchema));
+
+api.get('/cad/:modelId/events', (c) => sseHandler(c.req.param('modelId'))(c));
+api.post('/cad/:modelId/exec', (c) => execHandler(c.req.param('modelId'))(c));
+api.post('/cad/:modelId/exec-wait', (c) => execWaitHandler(c.req.param('modelId'))(c));
+api.get('/cad/:modelId/pending', (c) => pendingHandler(c.req.param('modelId'))(c));
+api.post('/cad/:modelId/state', (c) => postStateHandler(c.req.param('modelId'))(c));
+api.get('/cad/:modelId/state', (c) => getStateHandler(c.req.param('modelId'))(c));
+api.get('/cad/:modelId/queue', (c) => queueHandler(c.req.param('modelId'))(c));
+api.post('/cad/:modelId/result/:id', (c) => postResultHandler(c.req.param('modelId'))(c));
+api.get('/cad/:modelId/result/:id', (c) => getResultHandler(c.req.param('modelId'))(c));
+
+// =========================================================================
 // OpenAPI + Scalar
+// =========================================================================
+
 api.get('/openapi.json', (c) => {
   const base = new URL(c.req.url).origin;
   return c.json({
     openapi: '3.1.0',
-    info: { title: 'Truck CAD API', version: '1.0.0', description: '3D CAD control via SSE + WASM.\n\n1. Open app in browser\n2. POST /api/cad/exec\n3. GET /api/cad/result/:id\n4. GET /api/cad/state' },
+    info: { title: 'Truck CAD API', version: '1.0.0', description: '3D CAD control via SSE + WASM.\n\nAll routes are model-scoped:\n1. POST /api/cad/:modelId/exec\n2. GET /api/cad/:modelId/result/:id\n3. GET /api/cad/:modelId/state\n4. GET /api/cad/:modelId/events (SSE)' },
     servers: [{ url: base }],
     tags: [{ name: 'Commands' }, { name: 'State' }, { name: 'SSE' }],
     paths: {
-      '/api/cad/exec': { post: { tags: ['Commands'], summary: 'Queue CAD command (async)', description: 'Queues command for SSE delivery to browser. Returns immediately with command ID. Poll /api/cad/result/{id} for result.', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/CadCommand' }, examples: {
-        addCube: { value: { type: 'add_cube', params: { size: 2 } } }, translate: { value: { type: 'translate', params: { objectId: '...', dx: 1, dy: 0, dz: 0 } } },
-        setColor: { value: { type: 'set_color', params: { objectId: '...', r: 1, g: 0.2, b: 0.1, a: 1 } } }, getState: { value: { type: 'get_state' } },
-      } } } }, responses: { '200': { description: 'Queued' } } } },
-      '/api/cad/exec-wait': { post: { tags: ['Commands'], summary: 'Execute CAD command (sync)', description: 'Queues command and waits up to 10s for browser to execute it. Returns the result directly. Requires a browser with the app open.', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/CadCommand' } } } }, responses: { '200': { description: 'Result' }, '504': { description: 'Timeout (no browser connected)' } } } },
-      '/api/cad/result/{id}': { get: { tags: ['State'], summary: 'Command result', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Result' } } } },
-      '/api/cad/state': { get: { tags: ['State'], summary: 'Scene state', responses: { '200': { description: 'State' }, '503': { description: 'No browser' } } } },
-      '/api/cad/events': { get: { tags: ['SSE'], summary: 'SSE stream', responses: { '200': { description: 'Stream' } } } },
+      '/api/cad/{modelId}/exec': { post: { tags: ['Commands'], summary: 'Queue CAD command (async)', parameters: [{ name: 'modelId', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/CadCommand' } } } }, responses: { '200': { description: 'Queued' } } } },
+      '/api/cad/{modelId}/exec-wait': { post: { tags: ['Commands'], summary: 'Execute CAD command (sync, waits for result)', parameters: [{ name: 'modelId', in: 'path', required: true, schema: { type: 'string' } }], requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/CadCommand' } } } }, responses: { '200': { description: 'Result' }, '504': { description: 'Timeout' } } } },
+      '/api/cad/{modelId}/result/{id}': { get: { tags: ['State'], summary: 'Command result', parameters: [{ name: 'modelId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Result' } } } },
+      '/api/cad/{modelId}/state': { get: { tags: ['State'], summary: 'Scene state', parameters: [{ name: 'modelId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'State' }, '503': { description: 'No browser' } } } },
+      '/api/cad/schema': { get: { tags: ['State'], summary: 'Command schema (generated from Rust)', responses: { '200': { description: 'cad-schema.json' } } } },
+      '/api/cad/{modelId}/events': { get: { tags: ['SSE'], summary: 'SSE stream', parameters: [{ name: 'modelId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Stream' } } } },
       '/api/health': { get: { tags: ['State'], summary: 'Health', responses: { '200': { description: 'OK' } } } },
     },
     components: { schemas: { CadCommand: { type: 'object', required: ['type'], properties: { type: { type: 'string', enum: CadCommandType.options }, params: { type: 'object', additionalProperties: true } } } } },
@@ -283,7 +324,7 @@ app.get('/api-docs', (c) => c.html(`<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script></body></html>`));
 
 // =========================================================================
-// Legacy + Automerge
+// Legacy + Automerge (R2 docs)
 // =========================================================================
 api.post('/docs', async (c) => { try { const b = await c.req.json(); const id = b.docId || crypto.randomUUID(); await c.env.CAD_DOCS_BUCKET.put(`docs/${id}`, b.data ? Uint8Array.from(atob(b.data), ch => ch.charCodeAt(0)) : new Uint8Array(0), { customMetadata: { name: b.name || 'Untitled', createdAt: new Date().toISOString(), version: '1' } }); return c.json({ status: 'ok', docId: id }); } catch { return c.json({ error: 'Failed' }, 500); } });
 api.get('/docs/:docId', async (c) => { const o = await c.env.CAD_DOCS_BUCKET.get(`docs/${c.req.param('docId')}`); if (!o) return c.json({ error: 'Not found' }, 404); return c.json({ docId: c.req.param('docId'), data: btoa(String.fromCharCode(...new Uint8Array(await o.arrayBuffer()))), metadata: o.customMetadata }); });
@@ -294,7 +335,114 @@ api.delete('/docs/:docId', async (c) => { await c.env.CAD_DOCS_BUCKET.delete(`do
 
 app.route('/api', api);
 
+// =========================================================================
+// MCP Server — auto-generated from cad-schema.json
+// =========================================================================
+
+async function execWait(modelId: string, type: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const model = getModel(modelId);
+  gcQueue(model);
+  const id = crypto.randomUUID();
+  const command = { type: type as CadExecInput['type'], params };
+  const cmd: QueuedCommand = { id, command, status: 'pending', createdAt: Date.now() };
+  model.commandQueue.set(id, cmd);
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 100));
+    if (cmd.status === 'done' || cmd.status === 'error') {
+      return { id, status: cmd.status, ...(cmd.result as Record<string, unknown> || {}), error: cmd.error };
+    }
+  }
+  return { id, status: 'timeout', error: 'Browser did not respond within 10s. Is the CAD app open?' };
+}
+
+function mcpResult(data: Record<string, unknown>) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+}
+
+/** Convert JSON Schema properties to Zod shape for MCP tool input */
+function zodFromJsonSchema(props: Record<string, any>, required: string[] = []) {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [name, prop] of Object.entries(props)) {
+    let field: z.ZodTypeAny;
+    if (prop.type === 'string') field = z.string();
+    else if (prop.type === 'number') field = z.number();
+    else field = z.any();
+
+    if (prop.default !== undefined) field = (field as any).default(prop.default);
+    if (!required.includes(name)) field = field.optional();
+    shape[name] = field;
+  }
+  return shape;
+}
+
+const mcpServer = new McpServer({
+  name: 'truck-cad',
+  version: '1.0.0',
+});
+
+// Auto-register MCP tools from schema
+const commands = cadSchema.commands as Record<string, {
+  description: string;
+  params: { properties?: Record<string, any>; required?: string[] };
+  returns: string;
+  ephemeral: boolean;
+  readonly: boolean;
+}>;
+
+for (const [name, def] of Object.entries(commands)) {
+  if (def.ephemeral || def.readonly) continue;
+
+  const props = def.params?.properties || {};
+  const required = def.params?.required || [];
+  const inputSchema = zodFromJsonSchema(props, required);
+  // Add optional modelId to every tool
+  inputSchema.modelId = z.string().optional();
+
+  mcpServer.registerTool(`cad_${name}`, {
+    description: `[cad] ${def.description}`,
+    inputSchema,
+  }, async (params) => {
+    const { modelId, ...rest } = params as Record<string, unknown>;
+    const mid = (modelId as string) || lastActiveModelId || 'default';
+    return mcpResult(await execWait(mid, name, rest));
+  });
+}
+
+// Special: get_scene_state reads from cached state
+mcpServer.registerTool('cad_get_scene_state', {
+  description: '[cad] Get the current scene state: object count, object UUIDs, selected object.',
+  inputSchema: { modelId: z.string().optional() },
+}, async (params) => {
+  const mid = (params as any).modelId || lastActiveModelId || 'default';
+  const model = getModel(mid);
+  if (!model.sceneStateAt) return mcpResult({ error: 'No browser connected. Open the CAD app first.' });
+  return mcpResult(model.sceneState);
+});
+
+// Mount MCP endpoint
+let mcpTransport: StreamableHTTPTransport | null = null;
+
+app.all('/mcp', async (c) => {
+  if (!mcpTransport || !mcpServer.isConnected()) {
+    mcpTransport = new StreamableHTTPTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableJsonResponse: true,
+    });
+    await mcpServer.connect(mcpTransport);
+  }
+  return mcpTransport.handleRequest(c);
+});
+
+// =========================================================================
+// SPA catch-all: serve index.html for /model/* paths
+// =========================================================================
+
 const MIME: Record<string,string> = { '.webm': 'video/webm', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.mp4': 'video/mp4' };
 app.get('/docs/*', async (c, next) => { const k = c.req.path.slice(1); const e = k.slice(k.lastIndexOf('.')); if (!MIME[e]) return next(); const o = await c.env.DOCS_BUCKET.get(k); if (!o) return c.notFound(); return new Response(o.body, { headers: { 'content-type': MIME[e], 'cache-control': 'public, max-age=86400' } }); });
+
+// SPA routing for /model/* is handled by wrangler.toml: not_found_handling = "single-page-application"
+// This serves index.html for any path that doesn't match a static file.
 
 export default app;

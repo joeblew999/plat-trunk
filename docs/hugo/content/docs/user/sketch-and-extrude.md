@@ -13,6 +13,10 @@ The fastest way to create a parametric solid:
 
 A new 3D box appears in the scene, created from the constrained 2D sketch.
 
+![Rectangle extruded from a constrained sketch](/screenshots/11-sketch-rectangle-extrude.png)
+
+![Triangle extruded on the XZ plane](/screenshots/12-sketch-triangle-extrude.png)
+
 ## Full Sketch Workflow
 
 ### 1. Begin Sketch

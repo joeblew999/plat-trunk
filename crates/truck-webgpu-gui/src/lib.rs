@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 pub mod sketch;
+pub mod commands;
 
 use std::f64::consts::PI;
 use truck_meshalgo::prelude::*;

@@ -4,351 +4,345 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>CAD</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,10 90,30 90,70 50,90 10,70 10,30' fill='%23444' stroke='%23fff' stroke-width='3'/><line x1='50' y1='10' x2='50' y2='90' stroke='%23fff' stroke-width='2'/><line x1='10' y1='30' x2='90' y2='30' stroke='%23fff' stroke-width='2'/><line x1='10' y1='70' x2='50' y2='50' stroke='%23fff' stroke-width='1.5' opacity='.5'/></svg>">
     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="style.css" />
-    <script type="module" src="datastar.js"></script>
-    <script type="module">
-        // Bridge: expose Datastar signal API to non-module scripts (main.js, cad-commands.js)
-        import { root, mergePatch, beginBatch, endBatch } from './datastar.js';
-        window._ds = { root, mergePatch, beginBatch, endBatch };
-    </script>
-    <!-- Automerge vendored locally: automerge-bundle.js + automerge_wasm_bg.wasm
-         Versions: @automerge/automerge@3.2.4, @automerge/automerge-repo@2.5.2
-         To update: see comment at top of automerge-bundle.js -->
-</head>
-<body data-signals="{
-    objectCount: 0, sceneEmpty: true, selectedId: null,
-    boolSelA: null, boolSelB: null, boolLabel: 'Click A, shift+click B', boolReady: false,
-    canUndo: false, canRedo: false,
-    feedback: '', feedbackError: false
-}">
-    <!-- DaisyUI Drawer — docs panel on right -->
-    <div class="drawer drawer-end">
-        <input id="docs-drawer" type="checkbox" class="drawer-toggle" />
-
-        <div class="drawer-content">
-
-            <!-- ===== TOOL PANEL (sidebar on desktop, bottom sheet on mobile) ===== -->
-            <div id="ui-panel">
-                <div class="card bg-base-300 shadow-lg">
-                    <div class="card-body p-4 gap-2">
-
-                        <!-- Desktop header with collapse toggle -->
-                        <div class="panel-header hidden lg:flex items-center justify-between">
-                            <h2 class="card-title text-lg">CAD</h2>
-                            <button id="panel-toggle" class="btn btn-ghost btn-xs" title="Toggle panel"
-                                    onclick="document.getElementById('ui-panel').classList.toggle('panel-collapsed')">&#9664;</button>
-                        </div>
-
-                        <!-- Mobile sheet handle -->
-                        <div class="lg:hidden flex justify-center py-1">
-                            <div class="w-10 h-1 rounded-full bg-base-content/30"></div>
-                        </div>
-
-                        <!-- Section: Add Primitive -->
-                        <div data-section="create" class="tool-section">
-                            <div class="divider my-0 text-xs">Add Primitive</div>
-                            <fieldset class="fieldset">
-                                <label class="label text-xs">Size</label>
-                                <input type="number" id="sizeParam" value="1" min="0.1" step="0.1" class="input input-sm w-full" />
-                            </fieldset>
-                            <div class="flex flex-wrap gap-1 mt-1">
-                                <button id="addCube" class="btn btn-primary btn-xs">Cube</button>
-                                <button id="addSphere" class="btn btn-secondary btn-xs">Sphere</button>
-                                <button id="addCylinder" class="btn btn-accent btn-xs">Cylinder</button>
-                                <button id="addTorus" class="btn btn-info btn-xs">Torus</button>
-                            </div>
-                        </div>
-
-                        <!-- Section: Transform -->
-                        <div data-section="transform" class="tool-section">
-                            <div class="divider my-0 text-xs">Transform</div>
-                            <div class="flex gap-1">
-                                <input type="number" id="txVal" value="0.5" step="0.1" class="input input-xs w-16" placeholder="dx"/>
-                                <input type="number" id="tyVal" value="0" step="0.1" class="input input-xs w-16" placeholder="dy"/>
-                                <input type="number" id="tzVal" value="0" step="0.1" class="input input-xs w-16" placeholder="dz"/>
-                            </div>
-                            <button id="translateBtn" class="btn btn-outline btn-xs mt-1">Move Selected</button>
-                        </div>
-
-                        <!-- Section: Boolean -->
-                        <div data-section="boolean" class="tool-section">
-                            <div class="divider my-0 text-xs">Boolean (A op B)</div>
-                            <p id="boolLabel" class="text-xs opacity-40"
-                               data-text="$boolLabel"
-                               data-class="{'opacity-40': !$boolReady, 'text-success': $boolReady}">Click A, shift+click B</p>
-                            <div class="flex gap-1 mt-1">
-                                <button id="boolUnion" class="btn btn-success btn-xs" title="Merge A and B together">Union</button>
-                                <button id="boolSubtract" class="btn btn-warning btn-xs" title="Cut B from A">Subtract</button>
-                                <button id="boolIntersect" class="btn btn-error btn-xs" title="Keep only overlap">Intersect</button>
-                            </div>
-                            <p class="text-xs opacity-40 mt-1">Tip: objects must overlap</p>
-                        </div>
-
-                        <!-- Section: Sketch (parametric) -->
-                        <div data-section="sketch" class="tool-section">
-                            <div class="divider my-0 text-xs">Sketch &amp; Extrude</div>
-                            <div class="flex gap-1 items-center">
-                                <select id="sketchPlane" class="select select-xs w-20">
-                                    <option value="xy">XY</option>
-                                    <option value="xz">XZ</option>
-                                    <option value="yz">YZ</option>
-                                </select>
-                                <button id="sketchBeginBtn" class="btn btn-primary btn-xs">Begin Sketch</button>
-                            </div>
-                            <!-- Quick rectangle shortcut -->
-                            <div class="flex gap-1 items-center mt-1">
-                                <input type="number" id="sketchRectW" value="2" step="0.1" min="0.1" class="input input-xs w-14" placeholder="W"/>
-                                <span class="text-xs opacity-40">x</span>
-                                <input type="number" id="sketchRectH" value="1" step="0.1" min="0.1" class="input input-xs w-14" placeholder="H"/>
-                                <button id="sketchQuickRectBtn" class="btn btn-outline btn-xs">Rect</button>
-                            </div>
-                            <!-- Active sketch controls (hidden until sketch begins) -->
-                            <div id="sketch-active-controls" style="display:none">
-                                <div id="sketchInfo" class="text-xs opacity-60 mt-1">No active sketch</div>
-                                <!-- Add point -->
-                                <div class="flex gap-1 items-center mt-1">
-                                    <input type="number" id="sketchPtX" value="0" step="0.1" class="input input-xs w-14" placeholder="x"/>
-                                    <input type="number" id="sketchPtY" value="0" step="0.1" class="input input-xs w-14" placeholder="y"/>
-                                    <button id="sketchAddPointBtn" class="btn btn-outline btn-xs">+Pt</button>
-                                </div>
-                                <!-- Add edge -->
-                                <div class="flex gap-1 items-center mt-1">
-                                    <select id="sketchEdgeP0" class="select select-xs w-20 sketch-point-select"><option value="">--</option></select>
-                                    <span class="text-xs opacity-40">to</span>
-                                    <select id="sketchEdgeP1" class="select select-xs w-20 sketch-point-select"><option value="">--</option></select>
-                                    <button id="sketchAddEdgeBtn" class="btn btn-outline btn-xs">+Edge</button>
-                                </div>
-                                <!-- Add constraint -->
-                                <div class="mt-1">
-                                    <select id="sketchConstraintType" class="select select-xs w-full">
-                                        <option value="">Add constraint...</option>
-                                        <option value="fixed">Fixed</option>
-                                        <option value="horizontal">Horizontal</option>
-                                        <option value="vertical">Vertical</option>
-                                        <option value="distance">Distance</option>
-                                        <option value="horizontal_distance">H-Distance</option>
-                                        <option value="vertical_distance">V-Distance</option>
-                                        <option value="coincident">Coincident</option>
-                                        <option value="parallel">Parallel</option>
-                                        <option value="perpendicular">Perpendicular</option>
-                                        <option value="equal_length">Equal Length</option>
-                                        <option value="midpoint">Midpoint</option>
-                                    </select>
-                                    <div id="sketchConPointsRow" class="flex gap-1 mt-1" style="display:none">
-                                        <select id="sketchConP0" class="select select-xs w-20 sketch-point-select"><option value="">P0</option></select>
-                                        <select id="sketchConP1" class="select select-xs w-20 sketch-point-select"><option value="">P1</option></select>
-                                    </div>
-                                    <div id="sketchConEdgesRow" class="flex gap-1 mt-1" style="display:none">
-                                        <select id="sketchConEdge0" class="select select-xs w-20 sketch-edge-select"><option value="">E0</option></select>
-                                        <select id="sketchConEdge1" class="select select-xs w-20 sketch-edge-select"><option value="">E1</option></select>
-                                    </div>
-                                    <div id="sketchConValueRow" class="flex gap-1 mt-1" style="display:none">
-                                        <input type="number" id="sketchConValue" value="1" step="0.1" class="input input-xs w-16" placeholder="val"/>
-                                    </div>
-                                    <div id="sketchConValue2Row" class="flex gap-1 mt-1" style="display:none">
-                                        <input type="number" id="sketchConValue2" value="0" step="0.1" class="input input-xs w-16" placeholder="y"/>
-                                    </div>
-                                    <button id="sketchAddConstraintBtn" class="btn btn-outline btn-xs mt-1">Add Constraint</button>
-                                </div>
-                                <!-- Solve / Extrude / Cancel -->
-                                <div class="flex gap-1 mt-1">
-                                    <button id="sketchSolveBtn" class="btn btn-outline btn-xs">Solve</button>
-                                    <input type="number" id="sketchExtrudeHeight" value="1" step="0.1" min="0.01" class="input input-xs w-14" placeholder="H"/>
-                                    <button id="sketchExtrudeBtn" class="btn btn-success btn-xs">Extrude</button>
-                                </div>
-                                <button id="sketchCancelBtn" class="btn btn-outline btn-error btn-xs mt-1">Cancel Sketch</button>
-                            </div>
-                        </div>
-
-                        <!-- Section: Scene -->
-                        <div data-section="scene" class="tool-section">
-                            <div class="divider my-0 text-xs">Scene</div>
-                            <div id="objectList" class="text-xs opacity-70 mb-1">Objects: loading...</div>
-                            <div id="feedbackMsg" class="text-xs mb-1" style="min-height:1.25rem"
-                                 data-show="$feedback"
-                                 data-text="$feedback"
-                                 data-class="{'text-error': $feedbackError, 'text-success': !$feedbackError}"></div>
-                            <div id="timelineStrip" class="flex gap-1 overflow-x-auto pb-1 mb-1"></div>
-                            <div class="flex gap-1 mb-1">
-                                <button id="undoBtn" class="btn btn-outline btn-xs" disabled
-                                        data-attr-disabled="!$canUndo">Undo</button>
-                                <button id="redoBtn" class="btn btn-outline btn-xs" disabled
-                                        data-attr-disabled="!$canRedo">Redo</button>
-                            </div>
-                            <div class="flex gap-1">
-                                <button id="deleteBtn" class="btn btn-outline btn-error btn-xs">Delete Sel.</button>
-                                <button id="clearBtn" class="btn btn-outline btn-xs">Clear All</button>
-                            </div>
-                            <!-- Inline style controls (mobile only — desktop uses right panel) -->
-                            <div id="mobile-style-section" class="lg:hidden mt-2" style="display:none">
-                                <div class="divider my-0 text-xs">Style</div>
-                                <div class="text-xs opacity-60 mb-1" id="mobile-props-id">Object: ---</div>
-                                <fieldset class="fieldset">
-                                    <label class="label text-xs">Color</label>
-                                    <input type="color" id="mobilePropColor" value="#3399ff" class="w-full h-8 cursor-pointer rounded" />
-                                </fieldset>
-                                <fieldset class="fieldset mt-1">
-                                    <label class="label text-xs">Opacity <span id="mobilePropOpacityVal" class="opacity-60">1.0</span></label>
-                                    <input type="range" id="mobilePropOpacity" min="0" max="1" step="0.05" value="1" class="range range-xs" />
-                                </fieldset>
-                                <fieldset class="fieldset mt-1">
-                                    <label class="label text-xs">Roughness <span id="mobilePropRoughnessVal" class="opacity-60">0.3</span></label>
-                                    <input type="range" id="mobilePropRoughness" min="0" max="1" step="0.05" value="0.3" class="range range-xs" />
-                                </fieldset>
-                                <fieldset class="fieldset mt-1">
-                                    <label class="label text-xs">Reflectance <span id="mobilePropReflectanceVal" class="opacity-60">0.5</span></label>
-                                    <input type="range" id="mobilePropReflectance" min="0" max="1" step="0.05" value="0.5" class="range range-xs" />
-                                </fieldset>
-                            </div>
-                        </div>
-
-                        <!-- Section: File -->
-                        <div data-section="file" class="tool-section">
-                            <div class="divider my-0 text-xs">File</div>
-                            <div id="docInfo" class="text-xs opacity-60 mb-1 truncate cursor-pointer" title="Click to copy doc URL">Untitled</div>
-                            <div class="flex gap-1 mb-1">
-                                <button id="newDocBtn" class="btn btn-outline btn-xs">New Doc</button>
-                                <button id="shareBtn" class="btn btn-outline btn-xs">Share</button>
-                            </div>
-                            <div class="flex gap-1 mb-1">
-                                <button id="saveBtn" class="btn btn-outline btn-xs">Save JSON</button>
-                                <button id="loadBtn" class="btn btn-outline btn-xs">Load JSON</button>
-                                <input type="file" id="fileInput" accept=".json" class="hidden" />
-                            </div>
-                            <select id="exampleSelect" class="select select-xs w-full">
-                                <option value="">Load example...</option>
-                            </select>
-                            <div class="divider my-0 text-xs mt-2">Developer</div>
-                            <div class="flex flex-wrap gap-1">
-                                <a href="/api-docs" target="_blank" class="btn btn-outline btn-xs">API Ref</a>
-                                <a href="https://cad-docs.pages.dev/" target="_blank" class="btn btn-outline btn-xs">Docs</a>
-                                <a href="https://github.com/joeblew999/plat-trunk" target="_blank" class="btn btn-outline btn-xs">GitHub</a>
-                            </div>
-                        </div>
-
-                        <!-- Controls hint (desktop only) -->
-                        <div class="hidden lg:block">
-                            <div class="divider my-0 text-xs">Controls</div>
-                            <ul class="text-xs opacity-50 space-y-0">
-                                <li>Click object &mdash; Select</li>
-                                <li>Drag arrow &mdash; Move along axis</li>
-                                <li>Escape &mdash; Cancel drag</li>
-                                <li>Delete &mdash; Delete selected</li>
-                                <li>Drag &mdash; Rotate camera</li>
-                                <li>Scroll &mdash; Zoom</li>
-                                <li>Ctrl+Z / Ctrl+Shift+Z &mdash; Undo/Redo</li>
-                            </ul>
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===== BOTTOM DOCK (mobile/tablet only) ===== -->
-            <div id="mobile-dock" class="dock dock-sm bg-base-300 hidden max-lg:flex">
-                <button data-tab="create" class="dock-active" onclick="cadUI.setTab('create')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                    <span class="dock-label">Create</span>
-                </button>
-                <button data-tab="transform" onclick="cadUI.setTab('transform')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l4-4 4 4M9 5v14"/></svg>
-                    <span class="dock-label">Move</span>
-                </button>
-                <button data-tab="boolean" onclick="cadUI.setTab('boolean')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/></svg>
-                    <span class="dock-label">Bool</span>
-                </button>
-                <button data-tab="sketch" onclick="cadUI.setTab('sketch')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20L20 4M4 4l16 16"/></svg>
-                    <span class="dock-label">Sketch</span>
-                </button>
-                <button data-tab="scene" onclick="cadUI.setTab('scene')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-                    <span class="dock-label">Scene</span>
-                </button>
-                <button data-tab="file" onclick="cadUI.setTab('file')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    <span class="dock-label">File</span>
-                </button>
-            </div>
-
-            <!-- ===== PROPERTIES PANEL (desktop right side) ===== -->
-            <div id="props-panel" class="props-hidden">
-                <div class="card bg-base-300 shadow-lg">
-                    <div class="card-body p-4 gap-2">
-                        <div class="flex items-center justify-between">
-                            <h2 class="card-title text-lg">Properties</h2>
-                            <button id="props-close" class="btn btn-ghost btn-xs" title="Close"
-                                    onclick="document.getElementById('props-panel').classList.add('props-hidden')">X</button>
-                        </div>
-                        <div id="props-empty" class="text-xs opacity-50 py-4 text-center">
-                            No object selected
-                        </div>
-                        <div id="props-content" style="display:none">
-                            <div class="text-xs opacity-60 mb-2" id="props-object-id">Object: ---</div>
-                            <fieldset class="fieldset">
-                                <label class="label text-xs">Color</label>
-                                <input type="color" id="propColor" value="#3399ff" class="w-full h-8 cursor-pointer rounded" />
-                            </fieldset>
-                            <fieldset class="fieldset mt-1">
-                                <label class="label text-xs">Opacity <span id="propOpacityVal" class="opacity-60">1.0</span></label>
-                                <input type="range" id="propOpacity" min="0" max="1" step="0.05" value="1" class="range range-xs" />
-                            </fieldset>
-                            <fieldset class="fieldset mt-1">
-                                <label class="label text-xs">Roughness <span id="propRoughnessVal" class="opacity-60">0.3</span></label>
-                                <input type="range" id="propRoughness" min="0" max="1" step="0.05" value="0.3" class="range range-xs" />
-                            </fieldset>
-                            <fieldset class="fieldset mt-1">
-                                <label class="label text-xs">Reflectance <span id="propReflectanceVal" class="opacity-60">0.5</span></label>
-                                <input type="range" id="propReflectance" min="0" max="1" step="0.05" value="0.5" class="range range-xs" />
-                            </fieldset>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Docs toggle button (top-right) -->
-            <div id="docs-toggle">
-                <label for="docs-drawer" class="btn btn-circle btn-ghost btn-sm text-lg" title="Open documentation">?</label>
-            </div>
-
-            <canvas id="cad-canvas"></canvas>
-        </div>
-
-        <!-- Drawer sidebar — documentation (loaded from docs/guide.html) -->
-        <div class="drawer-side">
-            <label for="docs-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-            <div class="bg-base-200 min-h-full p-6 docs-content">
-                <div class="flex justify-between items-center mb-4">
-                    <label for="docs-drawer" class="btn btn-sm btn-ghost btn-circle ml-auto">X</label>
-                </div>
-                <div id="docs-body" class="prose prose-sm">
-                    <p class="opacity-50">Loading guide...</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Load docs content from separate file -->
+    <!-- Mode + URL routing -->
     <script>
         (function() {
-            // Load guide on first drawer open (lazy)
-            let loaded = false;
-            const cb = document.getElementById('docs-drawer');
-            if (cb) cb.addEventListener('change', function() {
-                if (!loaded && cb.checked) {
-                    loaded = true;
-                    fetch('docs/guide.html')
-                        .then(r => r.ok ? r.text() : Promise.reject('Failed to load guide'))
-                        .then(html => { document.getElementById('docs-body').innerHTML = html; })
-                        .catch(() => { document.getElementById('docs-body').innerHTML = '<p class="text-error">Could not load guide.</p>'; });
-                }
-            });
+            var params = new URLSearchParams(location.search);
+            window.__cadLocalMode = params.has('local');
+            if (params.has('clear')) {
+                indexedDB.deleteDatabase('cad-docs');
+                localStorage.removeItem('cad-last-doc-url');
+                localStorage.removeItem('cad-actor-id');
+                localStorage.removeItem('cad-last-model-id');
+                location.href = '/?local';
+            }
+            // Extract modelId from URL: /model/:id
+            var match = location.pathname.match(/^\/model\/([^/]+)/);
+            if (match && match[1] !== 'new') {
+                window.__modelId = match[1];
+                localStorage.setItem('cad-last-model-id', match[1]);
+            } else if (match && match[1] === 'new') {
+                // Generate short random model ID
+                var id = Math.random().toString(36).slice(2, 10);
+                window.__modelId = id;
+                localStorage.setItem('cad-last-model-id', id);
+                history.replaceState(null, '', '/model/' + id + location.search);
+            } else {
+                // Default: use 'default' as modelId (legacy / root path)
+                window.__modelId = 'default';
+            }
         })();
     </script>
+    <script type="module" src="vendor/datastar.js"></script>
+    <script type="module">
+        import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js';
+        window._ds = { root, mergePatch, beginBatch, endBatch };
+    </script>
+</head>
+<body data-signals="{
+    objectCount: 0, sceneEmpty: true, selectedId: '',
+    boolSelA: '', boolSelB: '', boolLabel: 'Click first object', boolReady: false,
+    canUndo: false, canRedo: false,
+    feedback: '', feedbackError: false,
+    sizeParam: 1, txVal: 0.5, tyVal: 0, tzVal: 0, rotAxis: 'y', rotAngle: 45, scaleVal: 2,
+    propColor: '#3399ff', propOpacity: 1.0, propRoughness: 0.30, propReflectance: 0.50,
+    sketchActive: false, sketchInfo: 'No active sketch',
+    sketchPlane: 'xy', sketchPtX: 0, sketchPtY: 0,
+    sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
+    sketchConType: '', sketchConVal: 1, sketchConVal2: 0
+}">
 
+    <!-- ═══════════════════ HEADER BAR ═══════════════════ -->
+    <header class="app-header">
+        <div class="flex items-center gap-2">
+            <span class="logo">CAD</span>
+            <span id="docInfo" class="text-xs opacity-50 truncate max-w-40 cursor-pointer" title="Click to copy doc URL">Untitled</span>
+        </div>
+        <div class="flex items-center gap-1">
+            <button data-testid="undo" class="btn btn-ghost btn-xs" title="Undo (Ctrl+Z)"
+                    data-attr:disabled="!$canUndo" data-on:click="window.cadDocManager?.undo()">
+                <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h10a5 5 0 015 5v0a5 5 0 01-5 5H3"/><path d="M7 6l-4 4 4 4"/></svg>
+            </button>
+            <button data-testid="redo" class="btn btn-ghost btn-xs" title="Redo (Ctrl+Shift+Z)"
+                    data-attr:disabled="!$canRedo" data-on:click="window.cadDocManager?.redo()">
+                <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H11a5 5 0 00-5 5v0a5 5 0 005 5h10"/><path d="M17 6l4 4-4 4"/></svg>
+            </button>
+            <span class="tb-sep"></span>
+            <span id="mode-indicator" class="text-xs opacity-40"></span>
+            <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
+        </div>
+    </header>
+
+    <!-- ═══════════════════ TOOLBAR RIBBON ═══════════════════ -->
+    <nav class="app-toolbar" data-testid="toolbar">
+        <!-- Create -->
+        <button data-testid="add-cube" class="btn btn-sm btn-primary" data-on:click="window.addShape('add_cube', {size: $sizeParam})" title="Add Cube">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+            Cube
+        </button>
+        <button data-testid="add-sphere" class="btn btn-sm btn-secondary" data-on:click="window.addShape('add_sphere', {radius: $sizeParam})" title="Add Sphere">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><ellipse cx="12" cy="12" rx="10" ry="4"/></svg>
+            Sphere
+        </button>
+        <button data-testid="add-cylinder" class="btn btn-sm btn-accent" data-on:click="window.addShape('add_cylinder', {radius: $sizeParam*0.5, height: $sizeParam})" title="Add Cylinder">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/></svg>
+            Cyl
+        </button>
+        <button data-testid="add-torus" class="btn btn-sm btn-info" data-on:click="window.addShape('add_torus', {majorRadius: $sizeParam, minorRadius: $sizeParam*0.3})" title="Add Torus">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="4" ry="1.5"/></svg>
+            Torus
+        </button>
+
+        <span class="tb-sep"></span>
+
+        <!-- Boolean -->
+        <button data-testid="boolean-union" class="btn btn-sm btn-success" title="Union A+B"
+                data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('boolean_union', {idA: $boolSelA, idB: $boolSelB})">Union</button>
+        <button data-testid="boolean-subtract" class="btn btn-sm btn-warning" title="Subtract B from A"
+                data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('boolean_subtract', {idA: $boolSelA, idB: $boolSelB})">Sub</button>
+        <button data-testid="boolean-intersect" class="btn btn-sm btn-error" title="Intersect A&B"
+                data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('boolean_intersect', {idA: $boolSelA, idB: $boolSelB})">Inter</button>
+
+        <span class="tb-sep"></span>
+
+        <!-- Size param -->
+        <div class="flex items-center gap-1 text-xs">
+            <label class="opacity-50">Size</label>
+            <input type="number" data-bind="sizeParam" value="1" min="0.1" step="0.1" class="input input-xs w-14" />
+        </div>
+
+        <span class="tb-sep"></span>
+
+        <!-- Scene ops -->
+        <button data-testid="duplicate" class="btn btn-sm btn-ghost" title="Duplicate selected"
+                data-on:click="window.cadCommand('duplicate', {objectId: $selectedId})">Dup</button>
+        <button data-testid="delete" class="btn btn-sm btn-ghost text-error" title="Delete selected"
+                data-on:click="window.cadCommand('delete', {objectId: $selectedId})">Del</button>
+        <button data-testid="clear" class="btn btn-sm btn-ghost" title="Clear all"
+                data-on:click="window.cadCommand('clear')">Clear</button>
+    </nav>
+
+    <!-- ═══════════════════ LEFT PANEL: OUTLINER ═══════════════════ -->
+    <aside class="app-outliner" data-testid="outliner">
+        <h3 data-section="scene">Scene</h3>
+        <div id="objectList" data-testid="object-list" class="text-xs">loading...</div>
+
+        <!-- Boolean selection info -->
+        <div class="text-xs" data-text="$boolLabel"
+             data-class="{'opacity-40': !$boolReady, 'text-success font-semibold': $boolReady}"></div>
+
+        <!-- Transform section -->
+        <h3 data-section="transform">Transform</h3>
+        <div class="flex flex-col gap-1 text-xs">
+            <div class="flex gap-1 items-center">
+                <span class="w-8 opacity-50">Move</span>
+                <input type="number" data-bind="txVal" step="0.1" class="input input-xs flex-1" placeholder="dx"/>
+                <input type="number" data-bind="tyVal" step="0.1" class="input input-xs flex-1" placeholder="dy"/>
+                <input type="number" data-bind="tzVal" step="0.1" class="input input-xs flex-1" placeholder="dz"/>
+            </div>
+            <button data-testid="translate" class="btn btn-xs btn-outline w-full"
+                    data-on:click="window.cadCommand('translate', {objectId: $selectedId, dx: $txVal, dy: $tyVal, dz: $tzVal})">Move Selected</button>
+            <div class="flex gap-1 items-center mt-1">
+                <span class="w-8 opacity-50">Rot</span>
+                <select data-bind="rotAxis" class="select select-xs flex-1">
+                    <option value="x">X</option><option value="y" selected>Y</option><option value="z">Z</option>
+                </select>
+                <input type="number" data-bind="rotAngle" step="15" class="input input-xs w-14" placeholder="deg"/>
+            </div>
+            <button data-testid="rotate" class="btn btn-xs btn-outline w-full"
+                    data-on:click="window.cadCommand('rotate', {objectId: $selectedId, axisX: $rotAxis==='x'?1:0, axisY: $rotAxis==='y'?1:0, axisZ: $rotAxis==='z'?1:0, angleDeg: $rotAngle})">Rotate Selected</button>
+            <div class="flex gap-1 items-center mt-1">
+                <span class="w-8 opacity-50">Scale</span>
+                <input type="number" data-bind="scaleVal" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="factor"/>
+            </div>
+            <button data-testid="scale" class="btn btn-xs btn-outline w-full"
+                    data-on:click="window.cadCommand('scale', {objectId: $selectedId, sx: $scaleVal, sy: $scaleVal, sz: $scaleVal})">Scale Selected</button>
+        </div>
+
+        <!-- Sketch section -->
+        <h3 data-section="sketch">Sketch</h3>
+        <div class="sketch-section text-xs">
+            <div data-show="!$sketchActive">
+                <div class="flex flex-col gap-1">
+                    <div class="flex gap-1 items-center">
+                        <span class="w-10 opacity-50">Plane</span>
+                        <select data-bind="sketchPlane" class="select select-xs flex-1">
+                            <option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-1 items-center">
+                        <span class="w-10 opacity-50">W/H</span>
+                        <input type="number" data-bind="sketchRectW" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="W"/>
+                        <input type="number" data-bind="sketchRectH" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="H"/>
+                    </div>
+                    <div class="flex gap-1 items-center">
+                        <span class="w-10 opacity-50">Depth</span>
+                        <input type="number" data-bind="sketchExtH" step="0.1" min="0.01" class="input input-xs flex-1" placeholder="Depth"/>
+                    </div>
+                    <button data-testid="sketch-extrude" class="btn btn-xs btn-primary w-full mt-1"
+                            data-on:click="window.__sketch.quickRectExtrude()">Extrude Rectangle</button>
+                </div>
+                <details class="mt-2">
+                    <summary class="opacity-40 cursor-pointer">Advanced sketch</summary>
+                    <button class="btn btn-outline btn-xs mt-1" data-on:click="window.__sketch.begin()">Begin Empty Sketch</button>
+                    <button class="btn btn-outline btn-xs mt-1" data-on:click="window.__sketch.quickRect()">Draw Rectangle</button>
+                </details>
+            </div>
+            <div data-show="$sketchActive">
+                <div class="badge badge-info badge-sm mb-1">Sketch active</div>
+                <div class="opacity-60" data-text="$sketchInfo"></div>
+                <div class="flex gap-1 items-center mt-1">
+                    <input type="number" data-bind="sketchPtX" step="0.1" class="input input-xs w-14" placeholder="x"/>
+                    <input type="number" data-bind="sketchPtY" step="0.1" class="input input-xs w-14" placeholder="y"/>
+                    <button class="btn btn-outline btn-xs" data-on:click="window.__sketch.addPoint()">+Pt</button>
+                </div>
+                <div class="flex gap-1 items-center mt-1">
+                    <select id="sketchEdgeP0" class="select select-xs w-16"><option value="">from</option></select>
+                    <select id="sketchEdgeP1" class="select select-xs w-16"><option value="">to</option></select>
+                    <button class="btn btn-outline btn-xs" data-on:click="window.__sketch.addEdge()">+Edge</button>
+                </div>
+                <details class="mt-1">
+                    <summary class="opacity-40 cursor-pointer">Constraints</summary>
+                    <select data-bind="sketchConType" class="select select-xs w-full mt-1">
+                        <option value="">Type...</option>
+                        <option value="fixed">Fixed</option>
+                        <option value="horizontal">Horizontal</option>
+                        <option value="vertical">Vertical</option>
+                        <option value="distance">Distance</option>
+                        <option value="horizontal_distance">H-Distance</option>
+                        <option value="vertical_distance">V-Distance</option>
+                        <option value="coincident">Coincident</option>
+                        <option value="parallel">Parallel</option>
+                        <option value="perpendicular">Perpendicular</option>
+                        <option value="equal_length">Equal length</option>
+                        <option value="midpoint">Midpoint</option>
+                    </select>
+                    <div class="flex gap-1 mt-1" data-show="['fixed','distance','horizontal_distance','vertical_distance','coincident','midpoint'].includes($sketchConType)">
+                        <select id="sketchConP0" class="select select-xs w-16 sketch-point-select"><option value="">P0</option></select>
+                        <select id="sketchConP1" class="select select-xs w-16 sketch-point-select"><option value="">P1</option></select>
+                    </div>
+                    <div class="flex gap-1 mt-1" data-show="['horizontal','vertical','parallel','perpendicular','equal_length','midpoint'].includes($sketchConType)">
+                        <select id="sketchConEdge0" class="select select-xs w-16 sketch-edge-select"><option value="">E0</option></select>
+                        <select id="sketchConEdge1" class="select select-xs w-16 sketch-edge-select"
+                                data-show="['parallel','perpendicular','equal_length'].includes($sketchConType)"><option value="">E1</option></select>
+                    </div>
+                    <div class="flex gap-1 mt-1" data-show="['fixed','distance','horizontal_distance','vertical_distance'].includes($sketchConType)">
+                        <input type="number" data-bind="sketchConVal" step="0.1" class="input input-xs w-14" placeholder="val"/>
+                    </div>
+                    <div class="flex gap-1 mt-1" data-show="$sketchConType === 'fixed'">
+                        <input type="number" data-bind="sketchConVal2" step="0.1" class="input input-xs w-14" placeholder="y"/>
+                    </div>
+                    <button class="btn btn-outline btn-xs mt-1" data-on:click="window.__sketch.addConstraint()">Add</button>
+                </details>
+                <div class="flex gap-1 items-center mt-2">
+                    <button class="btn btn-outline btn-xs" data-on:click="window.__sketch.solve()">Solve</button>
+                    <input type="number" data-bind="sketchExtH" step="0.1" min="0.01" class="input input-xs w-14"/>
+                    <button class="btn btn-success btn-xs flex-1" data-on:click="window.__sketch.extrude()">Extrude</button>
+                </div>
+                <button class="btn btn-outline btn-error btn-xs w-full mt-1" data-on:click="window.__sketch.cancel()">Cancel</button>
+            </div>
+        </div>
+
+        <!-- File section -->
+        <h3 data-section="file">File</h3>
+        <div class="flex flex-col gap-1 text-xs">
+            <div class="flex gap-1">
+                <button id="newDocBtn" class="btn btn-xs btn-outline flex-1">New</button>
+                <button id="shareBtn" class="btn btn-xs btn-outline flex-1">Share</button>
+            </div>
+            <div class="flex gap-1">
+                <button id="saveBtn" class="btn btn-xs btn-outline flex-1">Save</button>
+                <button id="loadBtn" class="btn btn-xs btn-outline flex-1">Load</button>
+                <input type="file" id="fileInput" accept=".json" class="hidden" />
+            </div>
+            <select id="exampleSelect" class="select select-xs w-full">
+                <option value="">Load example...</option>
+            </select>
+        </div>
+    </aside>
+
+    <!-- ═══════════════════ CANVAS ═══════════════════ -->
+    <main class="app-canvas">
+        <canvas id="cad-canvas" data-testid="cad-canvas"></canvas>
+        <!-- Feedback toast -->
+        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-lg bg-base-300/90 backdrop-blur-sm pointer-events-none transition-opacity"
+             data-show="$feedback"
+             data-text="$feedback"
+             data-class="{'text-error': $feedbackError, 'text-success': !$feedbackError}"></div>
+    </main>
+
+    <!-- ═══════════════════ RIGHT PANEL: PROPERTIES ═══════════════════ -->
+    <aside class="app-props" data-testid="props-panel" data-show="$selectedId">
+        <h3>Properties</h3>
+        <div data-text="$selectedId ? $selectedId.slice(0,8) + '...' : ''" class="text-xs opacity-50 mb-2"></div>
+        <fieldset class="fieldset">
+            <label class="label text-xs">Color</label>
+            <input type="color" data-bind="propColor"
+                   data-on:input="window.__applyStyle(false)"
+                   data-on:change="window.__applyStyle(true)"
+                   class="w-full h-8 cursor-pointer rounded" />
+        </fieldset>
+        <fieldset class="fieldset mt-2">
+            <label class="label text-xs">Opacity <span class="opacity-50" data-text="$propOpacity.toFixed(2)"></span></label>
+            <input type="range" data-bind="propOpacity" min="0" max="1" step="0.05"
+                   data-on:input="window.__applyStyle(false)"
+                   data-on:change="window.__applyStyle(true)"
+                   class="range range-xs" />
+        </fieldset>
+        <fieldset class="fieldset mt-2">
+            <label class="label text-xs">Roughness <span class="opacity-50" data-text="$propRoughness.toFixed(2)"></span></label>
+            <input type="range" data-bind="propRoughness" min="0" max="1" step="0.05"
+                   data-on:input="window.__applyStyle(false)"
+                   data-on:change="window.__applyStyle(true)"
+                   class="range range-xs" />
+        </fieldset>
+        <fieldset class="fieldset mt-2">
+            <label class="label text-xs">Reflectance <span class="opacity-50" data-text="$propReflectance.toFixed(2)"></span></label>
+            <input type="range" data-bind="propReflectance" min="0" max="1" step="0.05"
+                   data-on:input="window.__applyStyle(false)"
+                   data-on:change="window.__applyStyle(true)"
+                   class="range range-xs" />
+        </fieldset>
+    </aside>
+
+    <!-- ═══════════════════ TIMELINE ═══════════════════ -->
+    <div class="app-timeline" data-testid="timeline">
+        <div id="timelineStrip" class="flex items-center gap-0"></div>
+    </div>
+
+    <!-- ═══════════════════ STATUS BAR ═══════════════════ -->
+    <footer class="app-status" data-testid="status-bar">
+        <span data-text="'Objects: ' + $objectCount"></span>
+        <span data-show="$selectedId" data-text="'Selected: ' + ($selectedId ? $selectedId.slice(0,8) : '')"></span>
+        <span class="flex-1"></span>
+        <span id="status-mode" class="opacity-50"></span>
+    </footer>
+
+    <!-- ═══════════════════ MOBILE DOCK ═══════════════════ -->
+    <div class="app-dock dock dock-sm bg-base-300 hidden max-lg:flex">
+        <button data-tab="scene" onclick="cadUI.setTab('scene')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="dock-label">Scene</span>
+        </button>
+        <button data-tab="transform" onclick="cadUI.setTab('transform')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l4-4 4 4M9 5v14"/></svg>
+            <span class="dock-label">Move</span>
+        </button>
+        <button data-tab="sketch" onclick="cadUI.setTab('sketch')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20L20 4M4 4l16 16"/></svg>
+            <span class="dock-label">Sketch</span>
+        </button>
+        <button data-tab="file" onclick="cadUI.setTab('file')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="dock-label">File</span>
+        </button>
+    </div>
+
+    <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <script type="module">
         import init, { SceneController } from './pkg-browser-renderer/truck_webgpu_gui.js';
 
@@ -358,58 +352,52 @@
                 const controller = await new SceneController("cad-canvas");
                 controller.run();
                 window.sceneController = controller;
-                // Set initial selection to the default cube UUID
-                const initIds = controller.object_ids();
-                window.selectedObjectId = initIds.length > 0 ? initIds[0] : null;
                 console.log("CAD running.");
-                updateObjectList();
+                if (window.reconcile) window.reconcile({});
 
-                // Wait for cadDocManager (ES module loads automerge-bundle.js + WASM)
-                let _amRetries = 0;
-                while (!window.cadDocManager && _amRetries < 30) {
+                // Show mode in status bar
+                var modeEl = document.getElementById('status-mode');
+                var indicatorEl = document.getElementById('mode-indicator');
+                if (window.__cadLocalMode) {
+                    if (modeEl) modeEl.textContent = 'Local mode';
+                    if (indicatorEl) indicatorEl.textContent = 'Local';
+                } else {
+                    if (modeEl) modeEl.textContent = 'Online';
+                    if (indicatorEl) indicatorEl.textContent = 'Online';
+                }
+
+                // Init Automerge
+                let retries = 0;
+                while (!window.cadDocManager && retries < 30) {
                     await new Promise(r => setTimeout(r, 100));
-                    _amRetries++;
+                    retries++;
                 }
                 if (window.cadDocManager) {
                     try {
                         await window.cadDocManager.init();
                         console.log("Automerge doc ready:", window.cadDocManager.documentUrl);
                     } catch (err) {
-                        console.warn("Automerge init failed (falling back to local-only):", err);
+                        console.warn("Automerge init failed:", err);
                     }
-                } else {
-                    console.warn("cadDocManager not available after 3s, running without Automerge");
                 }
             } catch (e) {
                 console.error("Init error:", e);
-                document.body.innerHTML = `<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>`;
+                document.body.innerHTML = '<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>';
             }
         }
-
-        window.updateObjectList = function() {
-            const c = window.sceneController;
-            if (!c) return;
-            const ids = c.object_ids();
-            const el = document.getElementById('objectList');
-            if (ids.length === 0) {
-                el.textContent = 'Scene empty';
-            } else {
-                const items = ids.map((id, i) => {
-                    const sel = id === window.selectedObjectId ? '*' : '';
-                    return `[${i}:${id.slice(0, 4)}]${sel}`;
-                });
-                el.textContent = 'Objects: ' + items.join(' ');
-            }
-        };
-
         runWasm();
     </script>
-    <script src="sync-adapter.js"></script>
-    <script type="module" src="cad-document.js"></script>
-    <script src="cad-commands.js"></script>
-    <script type="module" src="main.js"></script>
-    <script src="sketch-ui.js"></script>
-    <script src="properties-panel.js"></script>
-    <script src="api-bridge.js"></script>
+    <script type="module" src="state.js"></script>
+    <script type="module" src="history.js"></script>
+    <script type="module" src="ui.js"></script>
+    <script src="sketch.js"></script>
+    <script>
+        if (!window.__cadLocalMode) {
+            var s = document.createElement('script');
+            s.type = 'module';
+            s.src = 'worker-relay.js';
+            document.body.appendChild(s);
+        }
+    </script>
 </body>
 </html>

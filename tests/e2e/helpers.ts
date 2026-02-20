@@ -1,13 +1,18 @@
 import { Page, expect } from '@playwright/test';
+import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 
-/** Directory where doc screenshots are saved */
-export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../web/gui/docs/screenshots');
+/** Hugo static asset directories */
+export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../docs/hugo/static/screenshots');
+export const VIDEOS_DIR = path.resolve(__dirname, '../../docs/hugo/static/videos');
 
-/** Directory where lesson videos are saved */
-export const LESSONS_DIR = path.resolve(__dirname, '../../web/gui/docs/lessons');
+/** Directory where example scene JSON files are saved */
+export const EXAMPLES_DIR = path.resolve(__dirname, '../../web/gui/examples');
 
-/** Slow mode: set SLOW=1 for longer pauses (useful for video recording / debugging) */
+/** Env flags — all gated so normal test runs produce no side effects */
+export const CAPTURE_SCREENSHOTS = !!process.env.SCREENSHOTS;
+export const CAPTURE_EXAMPLES = !!process.env.EXAMPLES;
+export const CAPTURE_VIDEOS = !!process.env.VIDEOS;
 export const IS_SLOW = !!process.env.SLOW;
 
 /** Pause between steps — short in fast mode, longer in slow/video mode */
@@ -15,44 +20,33 @@ export async function pause(page: Page) {
   await page.waitForTimeout(IS_SLOW ? 500 : 50);
 }
 
-/** Wait for the WASM SceneController to be ready */
-export async function waitForWasm(page: Page) {
-  // Wait for the module to load and SceneController to be available
-  await page.waitForFunction(() => window['sceneController'] !== undefined, {
-    timeout: 30_000,
-  });
-  // Give the first render a moment to complete
-  await page.waitForTimeout(IS_SLOW ? 1000 : 200);
+// ─── Stable API: cadCommand is the ONLY way to drive tests ─────
+
+/** Wait for WASM SceneController + cadCommand to be ready */
+export async function waitForReady(page: Page) {
+  await page.waitForFunction(
+    () => (window as any).sceneController && typeof (window as any).cadCommand === 'function',
+    { timeout: 30_000 },
+  );
+  await page.waitForTimeout(IS_SLOW ? 1000 : 50);
+}
+/** @deprecated Use waitForReady */
+export const waitForWasm = waitForReady;
+
+/** Execute via cadCommand — the ONE test entry point for mutations */
+export async function apiCommand(
+  page: Page,
+  type: string,
+  params: Record<string, unknown> = {},
+  opts: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  return await page.evaluate(
+    ({ t, p, o }) => (window as any).cadCommand(t, p, { source: 'test', ...o }),
+    { t: type, p: params, o: opts },
+  );
 }
 
-/** Click a button by its ID and wait for the scene to update */
-export async function clickButton(page: Page, id: string) {
-  await page.click(`#${id}`);
-  await pause(page);
-}
-
-/** Set an input value by ID */
-export async function setInput(page: Page, id: string, value: string) {
-  await page.fill(`#${id}`, value);
-}
-
-/** Take a screenshot of the viewport (canvas area) and save for docs */
-export async function docScreenshot(page: Page, name: string) {
-  await page.screenshot({
-    path: path.join(SCREENSHOTS_DIR, `${name}.png`),
-    fullPage: false,
-  });
-}
-
-/** Take a screenshot of just the canvas */
-export async function canvasScreenshot(page: Page, name: string) {
-  const canvas = page.locator('#cad-canvas');
-  await canvas.screenshot({
-    path: path.join(SCREENSHOTS_DIR, `${name}.png`),
-  });
-}
-
-/** Get the object count from the scene */
+/** Read-only WASM queries (stable, lightweight) */
 export async function getObjectCount(page: Page): Promise<number> {
   return await page.evaluate(() => {
     const ctrl = window['sceneController'];
@@ -60,7 +54,6 @@ export async function getObjectCount(page: Page): Promise<number> {
   });
 }
 
-/** Get all object UUIDs from the scene */
 export async function getObjectIds(page: Page): Promise<string[]> {
   return await page.evaluate(() => {
     const ctrl = window['sceneController'];
@@ -68,50 +61,33 @@ export async function getObjectIds(page: Page): Promise<string[]> {
   });
 }
 
-/** Add a primitive via WASM and return its UUID */
-export async function addPrimitive(page: Page, type: string, params: Record<string, number> = {}): Promise<string> {
-  return await page.evaluate(({ type, params }) => {
-    const ctrl = window['sceneController'];
-    switch (type) {
-      case 'cube': return ctrl.add_cube(params.size || 1.0);
-      case 'sphere': return ctrl.add_sphere(params.radius || 1.0);
-      case 'cylinder': return ctrl.add_cylinder(params.radius || 0.5, params.height || 1.0);
-      case 'torus': return ctrl.add_torus(params.majorRadius || 1.0, params.minorRadius || 0.3);
-      default: throw new Error(`Unknown type: ${type}`);
-    }
-  }, { type, params });
+/** Get state from cadCommand (not Datastar signals) */
+export async function getState(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(() => {
+    const ctrl = (window as any).sceneController;
+    if (!ctrl) return { ready: false };
+    return (window as any).cadCommand('get_state', {}, { ephemeral: true, skipAutomerge: true });
+  });
 }
 
-/** Execute a CAD command via the unified cadCommand() dispatcher.
- *  This is the preferred way to drive scene changes from tests — uses the
- *  same code path as GUI buttons and the HTTP API. */
-export async function apiCommand(
-  page: Page,
-  type: string,
-  params: Record<string, unknown> = {},
-): Promise<Record<string, unknown>> {
-  return await page.evaluate(
-    ({ t, p }) => (window as any).cadCommand(t, p, { source: 'test' }),
-    { t: type, p: params },
-  );
+/** Canvas element locator (data-testid, not element ID) */
+export function canvas(page: Page) {
+  return page.locator('[data-testid="cad-canvas"]');
 }
 
-/** Wait for Automerge CadDocumentManager to fully initialize (handle + ops loaded).
- *  This ensures the default cube has been recorded in the op log and the scene is ready. */
-export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
-  await page.waitForFunction(
-    () => {
-      const mgr = (window as any).cadDocManager;
-      if (!mgr?.handle) return false;
-      // Ensure the doc has been loaded and has at least one op (the default cube)
-      const doc = mgr.handle.docSync?.();
-      return doc && doc.operations && doc.operations.length > 0;
-    },
-    { timeout: timeoutMs },
-  );
+/** Click a toolbar button by its data-testid */
+export async function clickToolbar(page: Page, testId: string) {
+  await page.click(`[data-testid="${testId}"]`);
+  await pause(page);
 }
 
-/** Wait for WASM scene object_count() to reach expected value (polls WASM, not signals) */
+/** Click an outliner item by object ID */
+export async function clickOutlinerItem(page: Page, objectId: string) {
+  await page.click(`[data-testid="outliner-item"][data-oid="${objectId}"]`);
+  await pause(page);
+}
+
+/** Wait for object count to reach expected (polls WASM, not signals) */
 export async function waitForObjectCount(
   page: Page,
   expected: number,
@@ -126,4 +102,51 @@ export async function waitForObjectCount(
   const actual = await getObjectCount(page);
   expect(actual, `object_count() did not reach ${expected} within ${timeoutMs}ms`).toBe(expected);
   return actual;
+}
+
+/** Wait for Automerge CadDocumentManager to fully initialize */
+export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
+  await page.waitForFunction(
+    () => {
+      const mgr = (window as any).cadDocManager;
+      if (!mgr?.handle) return false;
+      const doc = mgr.handle.docSync?.();
+      return doc && doc.operations && doc.operations.length > 0;
+    },
+    { timeout: timeoutMs },
+  );
+}
+
+// ─── Doc/screenshot helpers ────────────────────────────────────
+
+export async function docScreenshot(page: Page, name: string) {
+  await page.screenshot({
+    path: path.join(SCREENSHOTS_DIR, `${name}.png`),
+    fullPage: false,
+  });
+}
+
+export async function canvasScreenshot(page: Page, name: string) {
+  const c = canvas(page);
+  await c.screenshot({
+    path: path.join(SCREENSHOTS_DIR, `${name}.png`),
+  });
+}
+
+export async function saveExample(page: Page, filename: string) {
+  if (!CAPTURE_EXAMPLES) return;
+  mkdirSync(EXAMPLES_DIR, { recursive: true });
+  const json = await page.evaluate(() => window['sceneController'].export_scene());
+  writeFileSync(path.join(EXAMPLES_DIR, `${filename}.json`), json, 'utf-8');
+}
+
+export async function saveVideo(page: Page, filename: string) {
+  const video = page.video();
+  if (!video) return;
+  mkdirSync(VIDEOS_DIR, { recursive: true });
+  await video.saveAs(path.join(VIDEOS_DIR, `${filename}.webm`));
+}
+
+export async function videoPause(page: Page, ms = 800) {
+  await page.waitForTimeout(ms);
 }

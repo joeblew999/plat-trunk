@@ -10,8 +10,10 @@ routes = [
 ]
 
 # Serve web/gui/ as static assets — HTML, JS, WASM all served from the edge
+# SPA routing: /model/:id paths serve index.html (JS reads pathname for modelId)
 [assets]
 directory = "../../../web/gui"
+not_found_handling = "single-page-application"
 
 [[r2_buckets]]
 binding = "DOCS_BUCKET"

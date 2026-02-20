@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { waitForWasm, getObjectCount, getObjectIds } from './helpers';
+import {
+  waitForReady, getObjectCount, getObjectIds, pause,
+  docScreenshot, CAPTURE_SCREENSHOTS,
+} from './helpers';
 
 test.describe('Sketch & Extrude', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    await waitForWasm(page);
+    await waitForReady(page);
   });
 
   test('begin_sketch returns UUID', async ({ page }) => {
@@ -96,6 +99,7 @@ test.describe('Sketch & Extrude', () => {
 
     expect(objectId).toMatch(/^[0-9a-f]{8}-/);
     expect(await getObjectCount(page)).toBe(beforeCount + 1);
+    if (CAPTURE_SCREENSHOTS) await docScreenshot(page, '11-sketch-rectangle-extrude');
 
     // New object should be in the ids list
     const ids = await getObjectIds(page);
@@ -125,6 +129,7 @@ test.describe('Sketch & Extrude', () => {
 
     expect(objectId).toMatch(/^[0-9a-f]{8}-/);
     expect(await getObjectCount(page)).toBe(beforeCount + 1);
+    if (CAPTURE_SCREENSHOTS) await docScreenshot(page, '12-sketch-triangle-extrude');
   });
 
   test('sketch_cancel clears active sketch', async ({ page }) => {
