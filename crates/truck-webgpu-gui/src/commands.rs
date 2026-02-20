@@ -140,6 +140,16 @@ pub struct SketchExtrudeParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ImportStepParams {
+    pub data: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ImportIfcParams {
+    pub data: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SelectParams {
     pub id: String,
 }
@@ -177,7 +187,13 @@ pub fn build_schema() -> serde_json::Value {
         ("delete", "Delete an object by ID", schema_for::<ObjectIdParam>(), "success", false, false),
         ("clear", "Clear all objects from the scene", serde_json::json!({"type": "object"}), "success", false, false),
         ("export_scene", "Export scene as JSON string", serde_json::json!({"type": "object"}), "scene", false, true),
+        ("export_step", "Export scene as STEP string", serde_json::json!({"type": "object"}), "step", false, true),
+        ("export_obj", "Export scene as OBJ string", serde_json::json!({"type": "object"}), "obj", false, true),
+        ("export_stl", "Export scene as STL string", serde_json::json!({"type": "object"}), "stl", false, true),
+        ("clash_detect", "Detect intersection between two objects", schema_for::<BooleanParams>(), "clash", false, true),
         ("import_scene", "Import scene from JSON string", schema_for::<ImportSceneParams>(), "success", false, false),
+        ("import_step", "Import B-Rep data from STEP string", schema_for::<ImportStepParams>(), "success", false, false),
+        ("import_ifc", "Import BIM data from IFC string", schema_for::<ImportIfcParams>(), "success", false, false),
         // Selection (ephemeral — not recorded in Automerge, not MCP tools)
         ("select", "Select an object by ID", schema_for::<SelectParams>(), "selectedId", true, false),
         ("deselect", "Clear selection", serde_json::json!({"type": "object"}), "selectedId", true, false),

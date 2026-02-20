@@ -356,6 +356,15 @@ app.all('/mcp', async (c) => {
   return mcpTransport.handleRequest(c);
 });
 
+// Serve CONTEXT.md as /llms.txt (single source of truth for AI discovery)
+app.get('/llms.txt', async (c) => {
+  try {
+    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/CONTEXT.md', c.req.url)));
+    if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
+  } catch {}
+  return c.text('See https://github.com/joeblew999/plat-trunk/blob/main/CONTEXT.md', 302);
+});
+
 // SPA catch-all: serve index.html for /model/* paths
 // Note: In local dev, we return 404 to let wrangler assets fallback handle it,
 // but for robustness we explicitly handle /model/* here if possible.

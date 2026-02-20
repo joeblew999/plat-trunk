@@ -151,6 +151,29 @@
       "readonly": false,
       "returns": "objectId"
     },
+    "clash_detect": {
+      "description": "Detect intersection between two objects",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "idA": {
+            "type": "string"
+          },
+          "idB": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idA",
+          "idB"
+        ],
+        "title": "BooleanParams",
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "clash"
+    },
     "clear": {
       "description": "Clear all objects from the scene",
       "ephemeral": false,
@@ -207,6 +230,15 @@
       "readonly": false,
       "returns": "objectId"
     },
+    "export_obj": {
+      "description": "Export scene as OBJ string",
+      "ephemeral": false,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "obj"
+    },
     "export_scene": {
       "description": "Export scene as JSON string",
       "ephemeral": false,
@@ -215,6 +247,24 @@
       },
       "readonly": true,
       "returns": "scene"
+    },
+    "export_step": {
+      "description": "Export scene as STEP string",
+      "ephemeral": false,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "step"
+    },
+    "export_stl": {
+      "description": "Export scene as STL string",
+      "ephemeral": false,
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "stl"
     },
     "get_object_style": {
       "description": "Get object material style",
@@ -244,6 +294,25 @@
       "readonly": true,
       "returns": "state"
     },
+    "import_ifc": {
+      "description": "Import BIM data from IFC string",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "data": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ImportIfcParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
     "import_scene": {
       "description": "Import scene from JSON string",
       "ephemeral": false,
@@ -258,6 +327,25 @@
           "json"
         ],
         "title": "ImportSceneParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "import_step": {
+      "description": "Import B-Rep data from STEP string",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "data": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "ImportStepParams",
         "type": "object"
       },
       "readonly": false,

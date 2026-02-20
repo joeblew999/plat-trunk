@@ -64,13 +64,16 @@ pub fn make_cube(size: f64) -> Solid {
 }
 
 pub fn make_sphere(radius: f64) -> Solid {
-    let north = builder::vertex(Point3::new(0.0, 0.0, radius));
-    let south = builder::vertex(Point3::new(0.0, 0.0, -radius));
-    let arc = builder::circle_arc(&north, &south, Point3::new(radius, 0.0, 0.0));
-    let line = builder::line(&south, &north);
-    let wire = Wire::from(vec![arc, line]);
-    let face = builder::try_attach_plane(&[wire]).unwrap();
-    builder::rsweep(&face, Point3::origin(), Vector3::unit_z(), Rad(2.0 * PI), 36)
+    // Use builder::cone to handle pole singularities correctly (like truck examples).
+    // 1. Create a vertex at North Pole (0, 0, radius).
+    let v0 = builder::vertex(Point3::new(0.0, 0.0, radius));
+    // 2. Sweep it around Y axis by PI to create a semi-circle arc from North to South.
+    //    This arc lies in the XZ plane (passing through x=radius).
+    let wire: Wire = builder::rsweep(&v0, Point3::origin(), Vector3::unit_y(), Rad(PI), 16);
+    // 3. Revolve this arc around Z axis by 2*PI to form the sphere surface.
+    //    The ends of the arc are on the Z axis, so cone() handles the degeneration.
+    let shell = builder::cone(&wire, Vector3::unit_z(), Rad(2.0 * PI), 36);
+    Solid::new(vec![shell])
 }
 
 pub fn make_cylinder(radius: f64, height: f64) -> Solid {

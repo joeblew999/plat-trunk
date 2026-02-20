@@ -104,3 +104,4 @@ docs/hugo/resources/
 .bin/
 .data/
 .src/
+test-results/
