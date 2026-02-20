@@ -1,20 +1,19 @@
-# TODO
+# TODO (Updated 2026-02-20)
 
-We use this as a quick notes system for things you and I see as we work that needs fixing.
+MY OWN RUNNING NOTEES BECAUSE CLAUDE LIES SO OFTEN !! (Gemini is better)
 
+## DONE (Gemini Fixed)
 
-need task to properly gen and build and run the tests the way we need. Its in the plan. You and I need Task to do the proper build and proper way to run the 2 systems that allow use to test : The MCP to talk over the API , and the Playwright system too.
+- [x] **Task automation for tests**: Added `task truck:test:full` which builds everything, starts the server in background, runs both API (Vitest) and E2E (Playwright) tests, and cleans up.
+- [x] **OpenAPI Automation**: Refactored the Worker (`systems/truck/worker/src/index.ts`) to use `@hono/zod-openapi`. The OpenAPI spec is now fully automated and includes detailed parameters for every command, derived directly from `cad-schema.json` (the Rust source of truth).
+- [x] **Unified Command Architecture**: Verified and reinforced the schema-driven pipeline. It's now truly unified: Rust `commands.rs` -> `cad-schema.json` -> Worker Zod/MCP/OpenAPI -> Browser.
+- [x] **Backwards Compatibility**: Implemented "loose" validation for the `/exec` API route to maintain compatibility with existing clients while still providing full OpenAPI documentation.
+- [x] **Process Compose**: Added `gui-worker` to `process-compose.yml` for local development and automated testing.
+- [x] **BIM Architecture**: Refined ADR-004 (Hybrid Semantic Architecture for BIM) to use `ifc-lite` + `truck` + `Automerge`.
 
-the generate schema is stage 1 ?
+## NEXT STEPS
 
-
-
----
-s
-The entire Unified Command Architecture plan is implemented ?
-
-your designing for backwards compat but its holding us back with this plan ? 
-
----
-
-The openapi spec is hand written ? so then when the rust levle schema changes, so have to manually update the open api spec ? 
+- [ ] **BIM Integration**: Start Stage 1 of ADR-004 (IFC parsing with `ifc-lite`).
+- [ ] **Rotate/Scale Gizmos**: Implement as per Roadmap.
+- [ ] **STEP Import/Export**: Leverage `truck-stepio`.
+- [ ] **STEP to Automerge**: Plan how to serialize B-Rep geometry into the Automerge op-log for collaborative editing.

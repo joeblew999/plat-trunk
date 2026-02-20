@@ -55,6 +55,7 @@
     feedback: '', feedbackError: false,
     sizeParam: 1, txVal: 0.5, tyVal: 0, tzVal: 0, rotAxis: 'y', rotAngle: 45, scaleVal: 2,
     propColor: '#3399ff', propOpacity: 1.0, propRoughness: 0.30, propReflectance: 0.50,
+    bimType: '', bimId: '',
     sketchActive: false, sketchInfo: 'No active sketch',
     sketchPlane: 'xy', sketchPtX: 0, sketchPtY: 0,
     sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
@@ -112,6 +113,8 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('boolean_subtract', {idA: $boolSelA, idB: $boolSelB})">Sub</button>
         <button data-testid="boolean-intersect" class="btn btn-sm btn-error" title="Intersect A&B"
                 data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('boolean_intersect', {idA: $boolSelA, idB: $boolSelB})">Inter</button>
+        <button data-testid="clash-detect" class="btn btn-sm btn-outline btn-info" title="Check if A and B clash"
+                data-attr:disabled="!$boolReady" data-on:click="window.cadCommand('clash_detect', {idA: $boolSelA, idB: $boolSelB})">Clash</button>
 
         <span class="tb-sep"></span>
 
@@ -261,10 +264,17 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline flex-1">Share</button>
             </div>
             <div class="flex gap-1">
-                <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1">Save</button>
-                <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1">Load</button>
-                <input type="file" id="fileInput" accept=".json" class="hidden" />
+                <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1" title="Save scene as JSON">Save</button>
+                <button id="exportStepBtn" data-testid="export-step" class="btn btn-xs btn-outline flex-1" title="Export scene as STEP">STEP</button>
+                <button id="exportObjBtn" data-testid="export-obj" class="btn btn-xs btn-outline flex-1" title="Export scene as OBJ">OBJ</button>
+                <button id="exportStlBtn" data-testid="export-stl" class="btn btn-xs btn-outline flex-1" title="Export scene as STL">STL</button>
+                <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1" title="Load scene from JSON">Load</button>
             </div>
+            <div class="flex gap-1">
+                <button id="importStepBtn" data-testid="import-step" class="btn btn-xs btn-outline flex-1" title="Import B-Rep from STEP">Import STEP</button>
+                <button id="importIfcBtn" data-testid="import-ifc" class="btn btn-xs btn-outline flex-1" title="Import BIM from IFC">Import IFC</button>
+            </div>
+            <input type="file" id="fileInput" accept=".json,.step,.stp,.ifc" class="hidden" />
             <select id="exampleSelect" class="select select-xs w-full">
                 <option value="">Load example...</option>
             </select>
@@ -313,6 +323,20 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                    data-on:change="window.__applyStyle(true)"
                    class="range range-xs" />
         </fieldset>
+
+        <div data-show="$bimId" class="mt-4 pt-4 border-t border-base-content/10">
+            <h3 class="mb-2">BIM</h3>
+            <div class="flex flex-col gap-1 text-xs">
+                <div class="flex justify-between">
+                    <span class="opacity-50">Type</span>
+                    <span data-text="$bimType" class="font-mono"></span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="opacity-50">ID</span>
+                    <span data-text="$bimId" class="font-mono text-[10px]"></span>
+                </div>
+            </div>
+        </div>
     </aside>
 
     <!-- ═══════════════════ TIMELINE ═══════════════════ -->

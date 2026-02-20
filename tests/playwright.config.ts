@@ -30,7 +30,7 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts'],
+      testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts', 'bim.spec.ts'],
       testIgnore: [/cross-tab-sync\.spec\.ts/, /doc-videos\.spec\.ts/, /cad-ui\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },

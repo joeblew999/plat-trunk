@@ -266,6 +266,25 @@
       "readonly": true,
       "returns": "stl"
     },
+    "get_bim_metadata": {
+      "description": "Get BIM metadata for an object",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "objectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectId"
+        ],
+        "title": "ObjectIdParam",
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "bim"
+    },
     "get_object_style": {
       "description": "Get object material style",
       "ephemeral": true,

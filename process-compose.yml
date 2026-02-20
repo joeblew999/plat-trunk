@@ -1,0 +1,10 @@
+version: "0.5"
+processes:
+  gui-worker:
+    command: task truck:gui:serve
+    availability:
+      restart: on_failure
+  shape-viewer:
+    command: task truck:run:shape-viewer
+    availability:
+      restart: on_failure

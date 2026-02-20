@@ -201,6 +201,7 @@ pub fn build_schema() -> serde_json::Value {
         ("select_at", "Pick + select at NDC coords", schema_for::<PickAtParams>(), "selectedId", true, false),
         // Style
         ("get_object_style", "Get object material style", schema_for::<ObjectIdParam>(), "style", true, true),
+        ("get_bim_metadata", "Get BIM metadata for an object", schema_for::<ObjectIdParam>(), "bim", true, true),
         ("set_style", "Set object material style", schema_for::<SetStyleParams>(), "success", false, false),
         ("set_color", "Set object color (RGBA)", schema_for::<SetColorParams>(), "success", false, false),
         // Naming

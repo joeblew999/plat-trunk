@@ -23,6 +23,8 @@ use truck_modeling::*;
 use truck_platform::*;
 use truck_rendimpl::*;
 
+use ifc_lite_core as ifc;
+
 use crate::{make_cube, make_sphere, make_cylinder, make_torus};
 
 #[wasm_bindgen]
@@ -43,6 +45,29 @@ macro_rules! error {
 // ---------------------------------------------------------------------------
 // Scene object: a solid + its rendered instances
 // ---------------------------------------------------------------------------
+
+/// Per-object BIM metadata (for IFC objects).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct BimMetadata {
+    ifc_type: String,
+    global_id: String,
+    properties: HashMap<String, String>,
+}
+
+/// Simplified BIM node for hierarchy export.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct BimNodeJson {
+    #[serde(rename = "entityId")]
+    entity_id: u32,
+    #[serde(rename = "globalId")]
+    global_id: String,
+    #[serde(rename = "ifcType")]
+    ifc_type: String,
+    name: String,
+    #[serde(rename = "objectId")]
+    object_id: Option<String>,
+    children: Vec<u32>,
+}
 
 /// Per-object visual style (color + PBR material properties).
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -107,11 +132,13 @@ impl PickMesh {
 struct SceneObject {
     id: Uuid,
     name: String,
-    solid: Solid,
+    solid: Option<Solid>,
+    mesh: PolygonMesh,
     polygon: PolygonInstance,
     wireframe: WireFrameInstance,
     style: ObjectStyle,
     pick_mesh: PickMesh,
+    bim: Option<BimMetadata>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,9 +146,12 @@ struct ExportEntry {
     id: String,
     #[serde(default)]
     name: String,
-    solid: Solid,
+    solid: Option<Solid>,
+    mesh: Option<PolygonMesh>,
     #[serde(default)]
     style: Option<ObjectStyle>,
+    #[serde(default)]
+    bim: Option<BimMetadata>,
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +453,7 @@ fn solid_to_instances(
     creator: &InstanceCreator,
     solid: &Solid,
     style: &ObjectStyle,
-) -> (PolygonInstance, WireFrameInstance, PickMesh) {
+) -> (PolygonInstance, WireFrameInstance, PickMesh, PolygonMesh) {
     let mut bdd_box = BoundingBox::new();
     solid
         .boundaries()
@@ -486,6 +516,7 @@ fn solid_to_instances(
         creator.create_instance(&poly, &polygon_state),
         creator.create_instance(&curves, &wire_state),
         pick_mesh,
+        poly
     )
 }
 
@@ -606,19 +637,106 @@ fn next_name(s: &mut SharedState, kind: &str) -> String {
     format!("{} {}", kind, counter)
 }
 
-fn add_solid_to_state(s: &mut SharedState, solid: Solid, kind: &str) -> String {
+#[allow(dead_code)]
+fn mesh_to_instances(
+    creator: &InstanceCreator,
+    mesh: &PolygonMesh,
+    style: &ObjectStyle,
+) -> (PolygonInstance, WireFrameInstance, PickMesh) {
+    let bdd_box = mesh.bounding_box();
+    let size = bdd_box.size();
+    let mat = Matrix4::from_scale(size);
+    let inv_mat = mat.invert().unwrap();
+
+    let raw_pick = extract_pick_mesh(mesh);
+    let pick_mesh = PickMesh {
+        positions: raw_pick.positions.iter().map(|p| inv_mat.transform_point(*p)).collect(),
+        triangles: raw_pick.triangles,
+    };
+
+    let polygon_state = PolygonState {
+        matrix: inv_mat,
+        material: Material {
+            albedo: style.to_material_color(),
+            roughness: style.roughness,
+            reflectance: style.reflectance,
+            ambient_ratio: style.ambient_ratio,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    
+    // Extract wireframe segments from the polygon mesh
+    let mut edges = Vec::new();
+    for face in mesh.face_iter() {
+        for i in 0..face.len() {
+            let p0 = mesh.positions()[face[i].pos];
+            let p1 = mesh.positions()[face[(i + 1) % face.len()].pos];
+            edges.push((p0, p1));
+        }
+    }
+
+    let wire_state = WireFrameState {
+        matrix: inv_mat,
+        ..Default::default()
+    };
+
+    (
+        creator.create_instance(mesh, &polygon_state),
+        creator.create_instance(&edges, &wire_state),
+        pick_mesh,
+    )
+}
+
+fn add_mesh_to_state(s: &mut SharedState, mesh: PolygonMesh, kind: &str, bim: Option<BimMetadata>) -> String {
     let id = Uuid::new_v4();
     let idx = s.objects.len();
     let name = next_name(s, kind);
     let style = ObjectStyle::from_index(idx);
-    let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+    let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
     let (center, radius) = pick_mesh.bounding_sphere();
     s.scene.add_object(&polygon);
     s.scene.add_object(&wireframe);
     let id_str = id.to_string();
     s.id_to_index.insert(id_str.clone(), idx);
     s.bounding_spheres.push((id_str.clone(), center, radius));
-    s.objects.push(SceneObject { id, name, solid, polygon, wireframe, style, pick_mesh });
+    s.objects.push(SceneObject {
+        id,
+        name,
+        solid: None,
+        mesh,
+        polygon,
+        wireframe,
+        style,
+        pick_mesh,
+        bim,
+    });
+    id_str
+}
+
+fn add_solid_to_state(s: &mut SharedState, solid: Solid, kind: &str, bim: Option<BimMetadata>) -> String {
+    let id = Uuid::new_v4();
+    let idx = s.objects.len();
+    let name = next_name(s, kind);
+    let style = ObjectStyle::from_index(idx);
+    let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+    let (center, radius) = pick_mesh.bounding_sphere();
+    s.scene.add_object(&polygon);
+    s.scene.add_object(&wireframe);
+    let id_str = id.to_string();
+    s.id_to_index.insert(id_str.clone(), idx);
+    s.bounding_spheres.push((id_str.clone(), center, radius));
+    s.objects.push(SceneObject {
+        id,
+        name,
+        solid: Some(solid),
+        mesh,
+        polygon,
+        wireframe,
+        style,
+        pick_mesh,
+        bim,
+    });
     id_str
 }
 
@@ -754,7 +872,7 @@ impl SceneController {
         };
 
         // Start with a default cube
-        let default_id = add_solid_to_state(&mut shared, make_cube(1.0), "Box");
+        let default_id = add_solid_to_state(&mut shared, make_cube(1.0), "Box", None);
         shared.selected = Some(default_id);
 
         let state = Rc::new(RefCell::new(shared));
@@ -950,7 +1068,7 @@ impl SceneController {
         log!("WASM: add_cube({})", size);
         let solid = make_cube(size);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Box")
+        add_solid_to_state(&mut s, solid, "Box", None)
     }
 
     #[wasm_bindgen]
@@ -958,7 +1076,7 @@ impl SceneController {
         log!("WASM: add_sphere({})", radius);
         let solid = make_sphere(radius);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Sphere")
+        add_solid_to_state(&mut s, solid, "Sphere", None)
     }
 
     #[wasm_bindgen]
@@ -966,7 +1084,7 @@ impl SceneController {
         log!("WASM: add_cylinder({}, {})", radius, height);
         let solid = make_cylinder(radius, height);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Cylinder")
+        add_solid_to_state(&mut s, solid, "Cylinder", None)
     }
 
     #[wasm_bindgen]
@@ -974,7 +1092,7 @@ impl SceneController {
         log!("WASM: add_torus({}, {})", major_r, minor_r);
         let solid = make_torus(major_r, minor_r);
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Torus")
+        add_solid_to_state(&mut s, solid, "Torus", None)
     }
 
     // =====================================================================
@@ -988,10 +1106,25 @@ impl SceneController {
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
         let style = s.objects[idx].style.clone();
-        let solid = builder::translated(&s.objects[idx].solid, Vector3::new(dx, dy, dz));
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
+        let solid = match &s.objects[idx].solid {
+            Some(s) => s,
+            None => return false, // Not yet supported for raw meshes
+        };
+        let solid = builder::translated(solid, Vector3::new(dx, dy, dz));
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
         let (center, radius) = pick_mesh.bounding_sphere();
-        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
+        let bim = s.objects[idx].bim.clone();
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(solid),
+            mesh,
+            polygon,
+            wireframe,
+            style,
+            pick_mesh,
+            bim,
+        };
         // Update bounding sphere for this object (rendered-space coords from pick_mesh)
         if let Some(bs) = s.bounding_spheres.iter_mut().find(|(bid, _, _)| bid == id) {
             bs.1 = center;
@@ -1010,14 +1143,29 @@ impl SceneController {
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
         let style = s.objects[idx].style.clone();
+        let solid = match &s.objects[idx].solid {
+            Some(s) => s,
+            None => return false,
+        };
         let solid = builder::rotated(
-            &s.objects[idx].solid,
+            solid,
             Point3::origin(),
             axis.normalize(),
             Rad(angle_deg.to_radians()),
         );
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+        let bim = s.objects[idx].bim.clone();
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(solid),
+            mesh,
+            polygon,
+            wireframe,
+            style,
+            pick_mesh,
+            bim,
+        };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -1031,13 +1179,28 @@ impl SceneController {
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
         let style = s.objects[idx].style.clone();
+        let solid = match &s.objects[idx].solid {
+            Some(s) => s,
+            None => return false,
+        };
         let solid = builder::scaled(
-            &s.objects[idx].solid,
+            solid,
             Point3::origin(),
             Vector3::new(sx, sy, sz),
         );
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+        let bim = s.objects[idx].bim.clone();
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(solid),
+            mesh,
+            polygon,
+            wireframe,
+            style,
+            pick_mesh,
+            bim,
+        };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -1045,24 +1208,35 @@ impl SceneController {
 
     #[wasm_bindgen]
     pub fn duplicate_object(&self, id: &str) -> String {
-        let (solid, style, src_name) = {
+        let (solid, style, src_name, bim) = {
             let s = self.state.borrow();
             let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return String::new() };
-            (s.objects[idx].solid.clone(), s.objects[idx].style.clone(), s.objects[idx].name.clone())
+            let solid = match &s.objects[idx].solid { Some(s) => s.clone(), None => return String::new() };
+            (solid, s.objects[idx].style.clone(), s.objects[idx].name.clone(), s.objects[idx].bim.clone())
         };
         // Offset the duplicate so it's visible
         let dup_solid = builder::translated(&solid, Vector3::new(0.5, 0.0, 0.0));
         // Derive kind from source name (e.g. "Box 1" → "Box")
         let kind = src_name.rsplitn(2, ' ').last().unwrap_or("Object");
         let mut s = self.state.borrow_mut();
-        let new_id = add_solid_to_state(&mut s, dup_solid, kind);
+        let new_id = add_solid_to_state(&mut s, dup_solid, kind, bim.clone());
         // Apply same style as original
         let idx = s.id_to_index[&new_id];
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
-        let dup_solid = s.objects[idx].solid.clone();
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &dup_solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, name, solid: dup_solid, polygon, wireframe, style, pick_mesh };
+        let dup_solid = match s.objects[idx].solid.clone() { Some(s) => s, None => unreachable!() };
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &dup_solid, &style);
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(dup_solid),
+            mesh,
+            polygon,
+            wireframe,
+            style,
+            pick_mesh,
+            bim,
+        };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         new_id
@@ -1084,8 +1258,8 @@ impl SceneController {
         let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
         if idx_a == idx_b { return String::new(); }
 
-        let solid_a = s.objects[idx_a].solid.clone();
-        let solid_b = s.objects[idx_b].solid.clone();
+        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
         let try_union = |a: &Solid, b: &Solid| -> Option<Solid> {
             // Try direct or() first
@@ -1117,7 +1291,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid, "Union");
+                let new_id = add_solid_to_state(&mut s, solid, "Union", None);
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1138,8 +1312,8 @@ impl SceneController {
         let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
         if idx_a == idx_b { return String::new(); }
 
-        let solid_a = s.objects[idx_a].solid.clone();
-        let solid_b = s.objects[idx_b].solid.clone();
+        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
         let try_subtract = |a: &Solid, b: &Solid| -> Option<Solid> {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1162,7 +1336,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid, "Subtracted");
+                let new_id = add_solid_to_state(&mut s, solid, "Subtracted", None);
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1183,8 +1357,8 @@ impl SceneController {
         let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
         if idx_a == idx_b { return String::new(); }
 
-        let solid_a = s.objects[idx_a].solid.clone();
-        let solid_b = s.objects[idx_b].solid.clone();
+        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
         let try_intersect = |a: &Solid, b: &Solid| -> Option<Solid> {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1205,7 +1379,7 @@ impl SceneController {
                 s.objects.remove(hi);
                 s.objects.remove(lo);
                 rebuild_id_index(&mut s);
-                let new_id = add_solid_to_state(&mut s, solid, "Intersected");
+                let new_id = add_solid_to_state(&mut s, solid, "Intersected", None);
                 rebuild_bounding_spheres(&mut s);
                 rebuild_scene(&mut s);
                 new_id
@@ -1265,12 +1439,100 @@ impl SceneController {
             id: obj.id.to_string(),
             name: obj.name.clone(),
             solid: obj.solid.clone(),
+            mesh: Some(obj.mesh.clone()),
             style: Some(obj.style.clone()),
+            bim: obj.bim.clone(),
         }).collect();
         serde_json::to_string_pretty(&entries).unwrap_or_else(|e| {
             error!("Export failed: {}", e);
             "[]".to_string()
         })
+    }
+
+    /// Export entire scene as STEP string.
+    #[wasm_bindgen]
+    pub fn export_step(&self) -> String {
+        use truck_stepio::out::*;
+        let s = self.state.borrow();
+        log!("WASM: export_step processing {} objects", s.objects.len());
+        
+        let compressed_solids: Vec<_> = s.objects.iter()
+            .filter_map(|obj| {
+                if let Some(solid) = &obj.solid {
+                    log!("WASM: compressing solid for {}", obj.id);
+                    Some(solid.compress())
+                } else {
+                    log!("WASM: object {} has no solid, skipping", obj.id);
+                    None
+                }
+            })
+            .collect();
+        
+        if compressed_solids.is_empty() {
+            error!("WASM: export_step failed — no solids found in {} objects", s.objects.len());
+            return String::new();
+        }
+
+        let models = StepModels::from_iter(compressed_solids.iter());
+        
+        CompleteStepDisplay::new(
+            models,
+            StepHeaderDescriptor {
+                organization_system: "truck-webgpu-gui".to_owned(),
+                ..Default::default()
+            },
+        ).to_string()
+    }
+
+    /// Export entire scene as OBJ string.
+    #[wasm_bindgen]
+    pub fn export_obj(&self) -> String {
+        use truck_polymesh::obj;
+        let s = self.state.borrow();
+        let meshes: Vec<_> = s.objects.iter().map(|obj| obj.mesh.clone()).collect();
+        
+        let mut buf = Vec::new();
+        if obj::write_vec(&meshes, &mut buf).is_ok() {
+            String::from_utf8_lossy(&buf).into_owned()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Export entire scene as STL string (ASCII).
+    #[wasm_bindgen]
+    pub fn export_stl(&self) -> String {
+        use truck_polymesh::stl;
+        let s = self.state.borrow();
+        let mut meshes = PolygonMesh::default();
+        for obj in &s.objects {
+            meshes.merge(obj.mesh.clone());
+        }
+        
+        let mut buf = Vec::new();
+        if stl::write(&meshes, &mut buf, stl::StlType::Ascii).is_ok() {
+            String::from_utf8_lossy(&buf).into_owned()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Detect clash between two solids.
+    #[wasm_bindgen]
+    pub fn clash_detect(&self, id_a: &str, id_b: &str) -> bool {
+        let s = self.state.borrow();
+        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return false };
+        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return false };
+        
+        let solid_a = match &s.objects[idx_a].solid { Some(s) => s, None => return false };
+        let solid_b = match &s.objects[idx_b].solid { Some(s) => s, None => return false };
+        
+        // Use a reasonable tolerance for clash detection
+        if let Some(result) = truck_shapeops::and(solid_a, solid_b, 0.05) {
+            !result.boundaries().is_empty()
+        } else {
+            false
+        }
     }
 
     /// Import scene from JSON string. Replaces current scene.
@@ -1293,15 +1555,28 @@ impl SceneController {
             let id = Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::new_v4());
             let idx = s.objects.len();
             let style = entry.style.unwrap_or_else(|| ObjectStyle::from_index(idx));
-            let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &entry.solid, &style);
-            let (center, radius) = pick_mesh.bounding_sphere();
-            s.scene.add_object(&polygon);
-            s.scene.add_object(&wireframe);
-            let id_str = id.to_string();
-            s.id_to_index.insert(id_str.clone(), idx);
-            s.bounding_spheres.push((id_str, center, radius));
-            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
-            s.objects.push(SceneObject { id, name, solid: entry.solid, polygon, wireframe, style, pick_mesh });
+            
+            if let Some(solid) = entry.solid {
+                let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+                let (center, radius) = pick_mesh.bounding_sphere();
+                s.scene.add_object(&polygon);
+                s.scene.add_object(&wireframe);
+                let id_str = id.to_string();
+                s.id_to_index.insert(id_str.clone(), idx);
+                s.bounding_spheres.push((id_str, center, radius));
+                let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+                s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            } else if let Some(mesh) = entry.mesh {
+                let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
+                let (center, radius) = pick_mesh.bounding_sphere();
+                s.scene.add_object(&polygon);
+                s.scene.add_object(&wireframe);
+                let id_str = id.to_string();
+                s.id_to_index.insert(id_str.clone(), idx);
+                s.bounding_spheres.push((id_str, center, radius));
+                let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+                s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            }
         }
         log!("WASM: Imported {} objects", s.objects.len());
         true
@@ -1755,7 +2030,7 @@ impl SceneController {
             Ok(solid) => {
                 log!("WASM: sketch extruded, height={}", height);
                 let mut s = self.state.borrow_mut();
-                let id = add_solid_to_state(&mut s, solid, "Extruded");
+                let id = add_solid_to_state(&mut s, solid, "Extruded", None);
                 rebuild_scene(&mut s);
                 id
             }
@@ -1822,6 +2097,17 @@ impl SceneController {
         serde_json::to_string(&s.objects[idx].style).unwrap_or_default()
     }
 
+    /// Get object BIM metadata as JSON (or empty string if none).
+    #[wasm_bindgen]
+    pub fn get_bim_metadata(&self, id: &str) -> String {
+        let s = self.state.borrow();
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return String::new() };
+        match &s.objects[idx].bim {
+            Some(bim) => serde_json::to_string(bim).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
     /// Set object style from JSON. Rebuilds the visual instance.
     #[wasm_bindgen]
     pub fn set_object_style(&self, id: &str, style_json: &str) -> bool {
@@ -1833,9 +2119,23 @@ impl SceneController {
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
-        let solid = s.objects[idx].solid.clone();
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &new_style);
-        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style: new_style, pick_mesh };
+        let solid = match &s.objects[idx].solid {
+            Some(s) => s.clone(),
+            None => return false, // Not yet supported for raw meshes
+        };
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &new_style);
+        let bim = s.objects[idx].bim.clone();
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(solid),
+            mesh,
+            polygon,
+            wireframe,
+            style: new_style,
+            pick_mesh,
+            bim,
+        };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -1848,11 +2148,25 @@ impl SceneController {
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
         let obj_id = s.objects[idx].id;
         let name = s.objects[idx].name.clone();
-        let solid = s.objects[idx].solid.clone();
+        let solid = match &s.objects[idx].solid {
+            Some(s) => s.clone(),
+            None => return false,
+        };
         let mut style = s.objects[idx].style.clone();
         style.albedo = [r, g, b, a];
-        let (polygon, wireframe, pick_mesh) = solid_to_instances(&s.creator, &solid, &style);
-        s.objects[idx] = SceneObject { id: obj_id, name, solid, polygon, wireframe, style, pick_mesh };
+        let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+        let bim = s.objects[idx].bim.clone();
+        s.objects[idx] = SceneObject {
+            id: obj_id,
+            name,
+            solid: Some(solid),
+            mesh,
+            polygon,
+            wireframe,
+            style,
+            pick_mesh,
+            bim,
+        };
         rebuild_bounding_spheres(&mut s);
         rebuild_scene(&mut s);
         true
@@ -2004,11 +2318,200 @@ impl SceneController {
             "export_scene" => {
                 serde_json::json!({ "scene": self.export_scene() })
             }
+            "export_step" => {
+                let step = self.export_step();
+                if step.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                else { serde_json::json!({ "step": step }) }
+            }
+            "export_obj" => {
+                let obj = self.export_obj();
+                if obj.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                else { serde_json::json!({ "obj": obj }) }
+            }
+            "export_stl" => {
+                let stl = self.export_stl();
+                if stl.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                else { serde_json::json!({ "stl": stl }) }
+            }
+            "clash_detect" => {
+                match serde_json::from_value::<BooleanParams>(p) {
+                    Ok(params) => {
+                        let clash = self.clash_detect(&params.id_a, &params.id_b);
+                        serde_json::json!({ "clash": clash })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
             "import_scene" => {
                 match serde_json::from_value::<ImportSceneParams>(p) {
                     Ok(params) => {
                         let ok = self.import_scene(&params.json);
                         serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "import_ifc" => {
+                match serde_json::from_value::<ImportIfcParams>(p) {
+                    Ok(params) => {
+                        log!("WASM: import_ifc data length={}", params.data.len());
+                        let index = ifc::build_entity_index(&params.data);
+                        let ids: Vec<u32> = index.keys().cloned().collect();
+                        let mut decoder = ifc::EntityDecoder::with_index(&params.data, index);
+                        let router = ifc_lite_geometry::router::GeometryRouter::new();
+                        
+                        let mut count = 0;
+                        let mut s = self.state.borrow_mut();
+                        let mut entity_to_uuid = HashMap::new();
+                        let mut hierarchy_map: HashMap<u32, BimNodeJson> = HashMap::new();
+                        
+                        // First pass: extract geometry and metadata
+                        for &id in &ids {
+                            if let Ok(entity) = decoder.decode_by_id(id) {
+                                let type_name: &str = entity.ifc_type.as_str();
+                                
+                                // Register spatial nodes even if they don't have geometry
+                                let is_spatial = matches!(entity.ifc_type, 
+                                    ifc::IfcType::IfcProject | ifc::IfcType::IfcSite | ifc::IfcType::IfcBuilding | ifc::IfcType::IfcBuildingStorey);
+                                
+                                if is_spatial || ifc::generated::has_geometry_by_name(type_name) {
+                                    let mut object_id = None;
+                                    
+                                    if ifc::generated::has_geometry_by_name(type_name) {
+                                        if let Ok(ifc_mesh) = router.process_element(&entity, &mut decoder) {
+                                            if !ifc_mesh.positions.is_empty() && !ifc_mesh.indices.is_empty() {
+                                                let mut positions = Vec::new();
+                                                for i in (0..ifc_mesh.positions.len()).step_by(3) {
+                                                    positions.push(Point3::new(
+                                                        ifc_mesh.positions[i] as f64,
+                                                        ifc_mesh.positions[i+1] as f64,
+                                                        ifc_mesh.positions[i+2] as f64
+                                                    ));
+                                                }
+                                                
+                                                let mut faces_vec = Vec::new();
+                                                for i in (0..ifc_mesh.indices.len()).step_by(3) {
+                                                    let i0 = ifc_mesh.indices[i] as usize;
+                                                    let i1 = ifc_mesh.indices[i+1] as usize;
+                                                    let i2 = ifc_mesh.indices[i+2] as usize;
+                                                    faces_vec.push(vec![
+                                                        StandardVertex { pos: i0, uv: None, nor: None },
+                                                        StandardVertex { pos: i1, uv: None, nor: None },
+                                                        StandardVertex { pos: i2, uv: None, nor: None },
+                                                    ]);
+                                                }
+                                                
+                                                let poly = PolygonMesh::new(
+                                                    StandardAttributes {
+                                                        positions,
+                                                        ..Default::default()
+                                                    },
+                                                    Faces::from_iter(faces_vec)
+                                                );
+                                                
+                                                let bim = BimMetadata {
+                                                    ifc_type: type_name.to_string(),
+                                                    global_id: entity.get_string(0).unwrap_or("").to_string(),
+                                                    properties: HashMap::new(),
+                                                };
+                                                
+                                                let uuid = add_mesh_to_state(&mut s, poly, type_name, Some(bim));
+                                                entity_to_uuid.insert(id, uuid.clone());
+                                                object_id = Some(uuid);
+                                                count += 1;
+                                            }
+                                        }
+                                    }
+                                    
+                                    hierarchy_map.insert(id, BimNodeJson {
+                                        entity_id: id,
+                                        global_id: entity.get_string(0).unwrap_or("").to_string(),
+                                        ifc_type: type_name.to_string(),
+                                        name: entity.get_string(2).unwrap_or(type_name).to_string(),
+                                        object_id,
+                                        children: Vec::new(),
+                                    });
+                                }
+                            }
+                        }
+                        
+                        // Second pass: extract relationships
+                        for &id in &ids {
+                            if let Ok(entity) = decoder.decode_by_id(id) {
+                                match entity.ifc_type {
+                                    ifc::IfcType::IfcRelAggregates => {
+                                        // 4: RelatingObject, 5: RelatedObjects
+                                        if let Some(parent_id) = entity.get_ref(4) {
+                                            if let Some(children) = entity.get_list(5) {
+                                                for child_attr in children {
+                                                    if let Some(child_id) = child_attr.as_entity_ref() {
+                                                        if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
+                                                            parent_node.children.push(child_id);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    ifc::IfcType::IfcRelContainedInSpatialStructure => {
+                                        // 4: RelatedElements, 5: RelatingStructure
+                                        if let Some(parent_id) = entity.get_ref(5) {
+                                            if let Some(children) = entity.get_list(4) {
+                                                for child_attr in children {
+                                                    if let Some(child_id) = child_attr.as_entity_ref() {
+                                                        if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
+                                                            parent_node.children.push(child_id);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        
+                        rebuild_scene(&mut s);
+                        log!("WASM: Imported {} entities from IFC", count);
+                        let nodes: Vec<BimNodeJson> = hierarchy_map.into_values().collect();
+                        serde_json::json!({ "success": true, "meshCount": count, "hierarchy": nodes })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "import_step" => {
+                match serde_json::from_value::<ImportStepParams>(p) {
+                    Ok(params) => {
+                        log!("WASM: import_step data length={}", params.data.len());
+                        use truck_stepio::r#in::*;
+                        match Table::from_step(&params.data) {
+                            Some(table) => {
+                                let mut count = 0;
+                                let mut s = self.state.borrow_mut();
+                                
+                                for step_solid in table.manifold_solid_brep.values() {
+                                    if let Ok(csolid) = table.to_compressed_solid(step_solid) {
+                                        for cshell in csolid.boundaries {
+                                            // Triangulate the shell directly
+                                            let pre = cshell.robust_triangulation(0.01).to_polygon();
+                                            let bdd = pre.bounding_box();
+                                            let mesh = cshell.robust_triangulation(bdd.diameter() * 0.001).to_polygon();
+                                            add_mesh_to_state(&mut s, mesh, "STEP Mesh", None);
+                                            count += 1;
+                                        }
+                                    }
+                                }
+                                
+                                rebuild_scene(&mut s);
+                                log!("WASM: Imported {} meshes from STEP", count);
+                                serde_json::json!({ "success": true, "meshCount": count })
+                            }
+                            None => {
+                                error!("WASM: STEP parse failed (returned None)");
+                                serde_json::json!({ "error": "STEP parse failed" })
+                            }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
@@ -2079,6 +2582,21 @@ impl SceneController {
                         else {
                             match serde_json::from_str::<serde_json::Value>(&json) {
                                 Ok(v) => serde_json::json!({ "style": v }),
+                                Err(_) => serde_json::json!({ "error": "Parse error" }),
+                            }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "get_bim_metadata" => {
+                match serde_json::from_value::<ObjectIdParam>(p) {
+                    Ok(params) => {
+                        let json = self.get_bim_metadata(&params.object_id);
+                        if json.is_empty() { serde_json::json!({ "bim": null }) }
+                        else {
+                            match serde_json::from_str::<serde_json::Value>(&json) {
+                                Ok(v) => serde_json::json!({ "bim": v }),
                                 Err(_) => serde_json::json!({ "error": "Parse error" }),
                             }
                         }

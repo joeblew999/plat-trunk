@@ -72,6 +72,7 @@ class CadDocumentManager {
             name: name || 'Untitled',
             createdAt: new Date().toISOString(),
             operations: [],
+            bimHierarchy: {},
         });
 
         await this.handle.doc();
@@ -137,6 +138,24 @@ class CadDocumentManager {
         this._localOpCount = this._getDocOpCount();
         reconcile({});
         this._renderTimeline();
+    }
+
+    /** Update the BIM hierarchy in the document */
+    updateBimHierarchy(nodes) {
+        if (!this.handle || !nodes) return;
+        this.handle.change((d) => {
+            if (!d.bimHierarchy) d.bimHierarchy = {};
+            for (const node of nodes) {
+                d.bimHierarchy[node.entityId] = {
+                    id: node.objectId || null,
+                    globalId: node.globalId,
+                    type: node.ifcType,
+                    name: node.name,
+                    children: node.children.map(String),
+                };
+            }
+        });
+        reconcile({});
     }
 
     /** Undo last own enabled operation (or entire group) — sets enabled=false and replays */

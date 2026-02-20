@@ -61,8 +61,11 @@ function reconcile(result) {
 
   ds.endBatch();
 
-  // Load style for selected object
-  if (r.selectedId) loadStyle(r.selectedId);
+  // Load style and BIM metadata for selected object
+  if (r.selectedId) {
+    loadStyle(r.selectedId);
+    loadBim(r.selectedId);
+  }
 
   // Update object list DOM
   renderObjectList(ids);
@@ -93,6 +96,22 @@ function loadStyle(objectId) {
     ds.root.propReflectance = s.reflectance;
     ds.endBatch();
   } catch {}
+}
+
+function loadBim(objectId) {
+  const ctrl = window.sceneController;
+  const ds = window._ds;
+  if (!ctrl || !objectId || !ds) return;
+  const result = executeWasm(ctrl, 'get_bim_metadata', { objectId });
+  ds.beginBatch();
+  if (result.bim) {
+    ds.root.bimType = result.bim.ifc_type || '';
+    ds.root.bimId = result.bim.global_id || '';
+  } else {
+    ds.root.bimType = '';
+    ds.root.bimId = '';
+  }
+  ds.endBatch();
 }
 
 function applyStyle(commit) {
@@ -171,13 +190,28 @@ function cadCommand(type, params = {}, options = {}) {
   // Record to Automerge (skip for ephemeral commands like select/deselect/pick_at)
   if (!options.ephemeral && !options.skipAutomerge) {
     const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
-    if (mgr) mgr.record(type, params, { objectId: result.objectId, groupId: options.groupId });
+    if (mgr) {
+      mgr.record(type, params, { objectId: result.objectId, groupId: options.groupId });
+      if (result.hierarchy) {
+        mgr.updateBimHierarchy(result.hierarchy);
+      }
+    }
   }
 
-  // Reconcile: WASM state → Datastar signals → UI
-  const state = reconcile(result);
-
-  // Broadcast (skip for ephemeral + api-sourced)
+      // Reconcile: WASM state → Datastar signals → UI
+      const state = reconcile(result);
+  
+      // Contextual feedback
+      if (type.startsWith('boolean_') && result.objectId) {
+        showFeedback('Operation success');
+      } else if (type === 'clash_detect') {
+        showFeedback(result.clash ? '💥 CLASH DETECTED!' : '✅ No clash', result.clash);
+      } else if (result.error) {
+        showFeedback(result.error, true);
+      }
+  
+      // Broadcast (skip for ephemeral + api-sourced)
+  
   if (!options.ephemeral && !window.__cadLocalMode && options.source !== 'api') {
     const mid = window.__modelId || 'default';
     fetch(`/api/cad/${mid}/state`, {
