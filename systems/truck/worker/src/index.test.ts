@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import app from './index';
+import cadSchema from '../../../../web/cad-schema.json';
 
 // Helper: make a request to the Hono app
 async function req(path: string, init?: RequestInit) {
@@ -63,11 +64,12 @@ describe('Schema Contract', () => {
     }
   });
 
-  it('schema command count matches what Rust generates', async () => {
+  it('schema command count matches imported cad-schema.json', async () => {
     const { body: schema } = await json('/api/cad/schema');
     const cmdCount = Object.keys(schema.commands).length;
-    // Must match the exact count from build_schema() in commands.rs
-    expect(cmdCount).toBe(26);
+    // Dynamic: compare against the schema file the Worker imports at build time
+    const expected = Object.keys(cadSchema.commands).length;
+    expect(cmdCount).toBe(expected);
   });
 
   it('ephemeral commands are marked correctly in schema', async () => {

@@ -9,8 +9,9 @@ import {
 // ALL operations via cadCommand() — same entry point as MCP/API.
 
 test.describe('CAD Operations', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+  test.beforeEach(async ({ page }, testInfo) => {
+    const modelId = `test-cad-${testInfo.testId}`;
+    await page.goto(`/?model=${modelId}`);
     await waitForReady(page);
   });
 

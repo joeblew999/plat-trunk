@@ -20,8 +20,9 @@ import {
 } from './helpers';
 
 test.describe('Toolbar UI', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+  test.beforeEach(async ({ page }, testInfo) => {
+    const modelId = `test-ui-${testInfo.testId}`;
+    await page.goto(`/?model=${modelId}`);
     await waitForReady(page);
   });
 
@@ -65,8 +66,9 @@ test.describe('Toolbar UI', () => {
 });
 
 test.describe('Keyboard Shortcuts', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+  test.beforeEach(async ({ page }, testInfo) => {
+    const modelId = `test-shortcuts-${testInfo.testId}`;
+    await page.goto(`/?model=${modelId}`);
     await waitForReady(page);
   });
 
@@ -107,8 +109,9 @@ test.describe('Keyboard Shortcuts', () => {
 });
 
 test.describe('Outliner UI', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+  test.beforeEach(async ({ page }, testInfo) => {
+    const modelId = `test-outliner-${testInfo.testId}`;
+    await page.goto(`/?model=${modelId}`);
     await waitForReady(page);
   });
 
@@ -135,14 +138,16 @@ test.describe('Outliner UI', () => {
     const ids = await getObjectIds(page);
     expect(ids.length).toBeGreaterThanOrEqual(2);
 
-    // Click first → A
-    await clickOutlinerItem(page, ids[0]);
-    // Click second → B
-    await clickOutlinerItem(page, ids[1]);
+    // Clear auto-selection from add_cube, then select A → B
+    await apiCommand(page, 'deselect', {}, { ephemeral: true });
+    await apiCommand(page, 'select', { id: ids[0] }, { ephemeral: true });
+    await apiCommand(page, 'select', { id: ids[1] }, { ephemeral: true });
 
-    // Boolean button should be enabled (boolReady = true)
-    const boolReady = await page.evaluate(() => (window as any)._ds?.root?.boolReady);
-    expect(boolReady).toBe(true);
+    const state = await page.evaluate(() => {
+      const r = (window as any)._ds?.root;
+      return { boolSelA: r?.boolSelA, boolSelB: r?.boolSelB, boolReady: r?.boolReady };
+    });
+    expect(state.boolReady).toBe(true);
   });
 });
 

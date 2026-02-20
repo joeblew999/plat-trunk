@@ -36,6 +36,9 @@ schemars = { version = "0.8", features = ["derive"] }
 # Stable object identity (UUID v4 for WASM)
 uuid = { version = "1", features = ["v4", "js", "serde"] }
 
+# Semantic BIM Layer (IFC parsing)
+ifc-lite-wasm = { git = "https://github.com/louistrue/ifc-lite" }
+
 # 2D constraint solver for parametric sketching
 kcl-ezpz = { path = "../../.src/ezpz/kcl-ezpz" }
 

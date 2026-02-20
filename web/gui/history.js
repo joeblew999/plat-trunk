@@ -201,6 +201,24 @@ class CadDocumentManager {
         return true;
     }
 
+    /** Rollback: disable all own ops after the given op index, then replay.
+     *  Double-click on a timeline chip triggers this. */
+    rollback(toOpIndex) {
+        if (!this.handle) return false;
+        const doc = this.handle.doc();
+        if (!doc || toOpIndex < 0 || toOpIndex >= doc.operations.length) return false;
+        this.handle.change((d) => {
+            for (let i = 0; i < d.operations.length; i++) {
+                if (d.operations[i].actorId !== this.actorId) continue;
+                // Enable ops at or before toOpIndex, disable ops after
+                d.operations[i].enabled = (i <= toOpIndex);
+            }
+        });
+        this._replayScene();
+        this._localOpCount = this._getDocOpCount();
+        return true;
+    }
+
     get canUndo() {
         const doc = this.handle?.doc();
         if (!doc) return false;
@@ -403,7 +421,7 @@ class CadDocumentManager {
             return `<button class="btn btn-xs ${chip.color} ${disabled} ${own}" data-chip="${ci}" title="${chip.enabled ? 'Click to disable' : 'Click to re-enable'}">${chip.label}</button>`;
         }).join('');
 
-        // Click handler for toggling ops
+        // Click handler for toggling individual ops
         strip.querySelectorAll('[data-chip]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const ci = parseInt(btn.dataset.chip);
@@ -422,6 +440,15 @@ class CadDocumentManager {
                 });
                 this._replayScene();
                 this._localOpCount = this._getDocOpCount();
+            });
+
+            // Double-click: rollback to this point (disable all own ops after it)
+            btn.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                const ci = parseInt(btn.dataset.chip);
+                const chip = chips[ci];
+                if (!chip.own) return;
+                this.rollback(chip.opIndex);
             });
         });
 

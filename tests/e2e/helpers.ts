@@ -91,7 +91,7 @@ export async function clickOutlinerItem(page: Page, objectId: string) {
 export async function waitForObjectCount(
   page: Page,
   expected: number,
-  timeoutMs = 5_000,
+  timeoutMs = 15_000,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

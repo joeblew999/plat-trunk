@@ -20,11 +20,15 @@
                 localStorage.removeItem('cad-last-model-id');
                 location.href = '/?local';
             }
-            // Extract modelId from URL: /model/:id
+            // Extract modelId from URL: /model/:id or ?model=id
             var match = location.pathname.match(/^\/model\/([^/]+)/);
+            var queryModel = params.get('model');
             if (match && match[1] !== 'new') {
                 window.__modelId = match[1];
                 localStorage.setItem('cad-last-model-id', match[1]);
+            } else if (queryModel) {
+                window.__modelId = queryModel;
+                localStorage.setItem('cad-last-model-id', queryModel);
             } else if (match && match[1] === 'new') {
                 // Generate short random model ID
                 var id = Math.random().toString(36).slice(2, 10);
@@ -44,6 +48,7 @@
     </script>
 </head>
 <body data-signals="{
+    modelId: window.__modelId || 'default',
     objectCount: 0, sceneEmpty: true, selectedId: '',
     boolSelA: '', boolSelB: '', boolLabel: 'Click first object', boolReady: false,
     canUndo: false, canRedo: false,
@@ -54,7 +59,8 @@
     sketchPlane: 'xy', sketchPtX: 0, sketchPtY: 0,
     sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
     sketchConType: '', sketchConVal: 1, sketchConVal2: 0
-}">
+}"
+data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
     <!-- ═══════════════════ HEADER BAR ═══════════════════ -->
     <header class="app-header">
@@ -170,18 +176,18 @@
                 <div class="flex flex-col gap-1">
                     <div class="flex gap-1 items-center">
                         <span class="w-10 opacity-50">Plane</span>
-                        <select data-bind="sketchPlane" class="select select-xs flex-1">
+                        <select data-testid="sketch-plane" data-bind="sketchPlane" class="select select-xs flex-1">
                             <option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option>
                         </select>
                     </div>
                     <div class="flex gap-1 items-center">
                         <span class="w-10 opacity-50">W/H</span>
-                        <input type="number" data-bind="sketchRectW" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="W"/>
-                        <input type="number" data-bind="sketchRectH" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="H"/>
+                        <input type="number" data-testid="sketch-width" data-bind="sketchRectW" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="W"/>
+                        <input type="number" data-testid="sketch-height" data-bind="sketchRectH" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="H"/>
                     </div>
                     <div class="flex gap-1 items-center">
                         <span class="w-10 opacity-50">Depth</span>
-                        <input type="number" data-bind="sketchExtH" step="0.1" min="0.01" class="input input-xs flex-1" placeholder="Depth"/>
+                        <input type="number" data-testid="sketch-depth" data-bind="sketchExtH" step="0.1" min="0.01" class="input input-xs flex-1" placeholder="Depth"/>
                     </div>
                     <button data-testid="sketch-extrude" class="btn btn-xs btn-primary w-full mt-1"
                             data-on:click="window.__sketch.quickRectExtrude()">Extrude Rectangle</button>
@@ -251,12 +257,12 @@
         <h3 data-section="file">File</h3>
         <div class="flex flex-col gap-1 text-xs">
             <div class="flex gap-1">
-                <button id="newDocBtn" class="btn btn-xs btn-outline flex-1">New</button>
-                <button id="shareBtn" class="btn btn-xs btn-outline flex-1">Share</button>
+                <button id="newDocBtn" data-testid="new-doc" class="btn btn-xs btn-outline flex-1">New</button>
+                <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline flex-1">Share</button>
             </div>
             <div class="flex gap-1">
-                <button id="saveBtn" class="btn btn-xs btn-outline flex-1">Save</button>
-                <button id="loadBtn" class="btn btn-xs btn-outline flex-1">Load</button>
+                <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1">Save</button>
+                <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1">Load</button>
                 <input type="file" id="fileInput" accept=".json" class="hidden" />
             </div>
             <select id="exampleSelect" class="select select-xs w-full">

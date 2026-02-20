@@ -45,7 +45,9 @@ tasks:
     desc: Install truck binaries
     deps: ["deps:clone"]
     cmds:
-      - xplat binary install simple-shape-viewer {{.TRUCK_VERSION}} {{.TRUCK_RELEASE_REPO}} --dir {{.BIN_DIR}} --source-cargo {{.TRUCK_SRC_DIR}} --example
+      - mkdir -p {{.BIN_DIR}}
+      - cd {{.TRUCK_SRC_DIR}} && cargo build --release --example simple-shape-viewer
+      - cp {{.TRUCK_SRC_DIR}}/target/release/examples/simple-shape-viewer {{.BIN_DIR}}/
 
   "deps:wasm-pack":
     desc: Install wasm-pack
@@ -132,9 +134,27 @@ tasks:
     cmds:
       - task: gui:schema
 
+  "gui:mcp":
+    desc: Register CAD MCP server with Claude Code
+    cmds:
+      - |
+        # Ensure .mcp.json exists (project-scope, checked into git)
+        if [ ! -f {{.ROOT_DIR}}/.mcp.json ]; then
+          echo '{"mcpServers":{"truck-cad":{"type":"http","url":"http://localhost:8787/mcp"}}}' > {{.ROOT_DIR}}/.mcp.json
+          echo "Created .mcp.json"
+        fi
+        # Register in ~/.claude.json (user-scope, survives across sessions)
+        if command -v claude >/dev/null 2>&1; then
+          CLAUDECODE= claude mcp add --transport http truck-cad http://localhost:8787/mcp 2>/dev/null || true
+          echo "✓ CAD MCP registered (restart Claude Code to load tools)"
+        else
+          echo "⚠ claude CLI not found — .mcp.json will be used instead"
+        fi
+    silent: true
+
   "gui:serve":
     desc: Local dev server (localhost:8787)
-    deps: ["gui:build"]
+    deps: ["gui:build", "gui:mcp"]
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
@@ -207,6 +227,21 @@ tasks:
           echo "  ✗ not available"
           exit 1
         fi
+        echo "=== MCP Registration ==="
+        if [ -f {{.ROOT_DIR}}/.mcp.json ]; then
+          echo "  ✓ .mcp.json exists (project-scope)"
+        else
+          echo "  ✗ .mcp.json missing → task truck:gui:mcp"
+        fi
+        if command -v claude >/dev/null 2>&1; then
+          if CLAUDECODE= claude mcp list 2>/dev/null | grep -q "truck-cad.*Connected"; then
+            echo "  ✓ truck-cad registered + connected in Claude Code"
+          elif CLAUDECODE= claude mcp list 2>/dev/null | grep -q "truck-cad"; then
+            echo "  ⚠ truck-cad registered but not connected (restart Claude Code)"
+          else
+            echo "  ✗ truck-cad not registered → task truck:gui:mcp"
+          fi
+        fi
         echo "=== Playwright MCP ==="
         echo "  ✓ provided by Claude Code (always available)"
     silent: true
@@ -275,6 +310,27 @@ tasks:
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=ui
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=sync
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=docs
+
+  "test:full":
+    desc: "Build, start server, run all tests, then stop"
+    cmds:
+      - task: gui:build
+      - task: :up:detached
+      - |
+        echo "Waiting for server to be ready..."
+        for i in {1..30}; do
+          if curl -sf http://localhost:8787/api/health > /dev/null 2>&1; then
+            echo "Server ready!"
+            break
+          fi
+          if [ $i -eq 30 ]; then
+            echo "Server failed to start"
+            exit 1
+          fi
+          sleep 1
+        done
+      - task: test:all
+      - task: :down
 
   ci:
     desc: Full CI (check + test + WASM)

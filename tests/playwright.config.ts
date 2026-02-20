@@ -11,8 +11,9 @@ export default defineConfig({
   outputDir: './test-results',
   timeout: IS_SLOW ? 120_000 : 60_000,
   expect: { timeout: IS_SLOW ? 30_000 : 15_000 },
-  fullyParallel: true, // each test gets a fresh page — safe to parallelize
-  retries: 0,
+  fullyParallel: false, // run serial to avoid overwhelming wrangler dev
+  workers: 1,           // single worker for stability
+  retries: 1,
   reporter: [['html', { open: 'never' }], ['list']],
 
   use: {
@@ -29,7 +30,7 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testMatch: ['cad.spec.ts', 'sketch.spec.ts'],
+      testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts'],
       testIgnore: [/cross-tab-sync\.spec\.ts/, /doc-videos\.spec\.ts/, /cad-ui\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },

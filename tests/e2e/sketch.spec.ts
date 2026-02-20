@@ -5,8 +5,9 @@ import {
 } from './helpers';
 
 test.describe('Sketch & Extrude', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+  test.beforeEach(async ({ page }, testInfo) => {
+    const modelId = `test-sketch-${testInfo.testId}`;
+    await page.goto(`/?model=${modelId}`);
     await waitForReady(page);
   });
 

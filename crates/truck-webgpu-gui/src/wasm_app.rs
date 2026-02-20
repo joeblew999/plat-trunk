@@ -1253,23 +1253,6 @@ impl SceneController {
         self.state.borrow().objects.iter().map(|o| o.id.to_string()).collect()
     }
 
-    /// DEPRECATED: Use execute("select", {"id": ...}) instead.
-    #[wasm_bindgen]
-    pub fn select_object(&self, id: &str) {
-        let mut s = self.state.borrow_mut();
-        if id.is_empty() {
-            s.selected = None;
-            s.interaction = InteractionMode::Idle;
-        } else if s.id_to_index.contains_key(id) {
-            s.selected = Some(id.to_string());
-            s.interaction = InteractionMode::Selected { object_id: id.to_string() };
-        } else {
-            s.selected = None;
-            s.interaction = InteractionMode::Idle;
-        }
-        rebuild_scene(&mut s);
-    }
-
     // =====================================================================
     // Save / Load (JSON serialization of truck Solids)
     // =====================================================================
@@ -1327,49 +1310,6 @@ impl SceneController {
     // =====================================================================
     // Gizmo: picking, drag, callbacks
     // =====================================================================
-
-    /// DEPRECATED: Use execute("pick_at", ...) + execute("select", ...) instead.
-    /// Pick and select the object at the given NDC coordinates.
-    /// Returns the selected object UUID, or null if nothing was hit.
-    #[wasm_bindgen]
-    pub fn select_object_at(&self, ndc_x: f64, ndc_y: f64) -> JsValue {
-        // Must drop the mutable borrow BEFORE calling JS callbacks,
-        // because callbacks may re-enter WASM (e.g. get_object_style).
-        let (picked_id, callback) = {
-            let mut s = self.state.borrow_mut();
-            let picked = pick_object(&s, ndc_x, ndc_y);
-            match &picked {
-                Some(id) => {
-                    log!("WASM: selected object {}", &id[..8.min(id.len())]);
-                    s.selected = Some(id.clone());
-                    s.interaction = InteractionMode::Selected { object_id: id.clone() };
-                }
-                None => {
-                    s.selected = None;
-                    s.interaction = InteractionMode::Idle;
-                }
-            }
-            rebuild_scene(&mut s);
-            let cb = s.on_select.clone();
-            (picked, cb)
-        }; // mutable borrow dropped here
-
-        // Now safe to call JS callback (state is no longer borrowed)
-        match &picked_id {
-            Some(id) => {
-                if let Some(ref f) = callback {
-                    let _ = f.call1(&JsValue::NULL, &JsValue::from_str(id));
-                }
-                JsValue::from_str(id)
-            }
-            None => {
-                if let Some(ref f) = callback {
-                    let _ = f.call1(&JsValue::NULL, &JsValue::NULL);
-                }
-                JsValue::NULL
-            }
-        }
-    }
 
     /// Get the currently selected object UUID (or null).
     #[wasm_bindgen]
@@ -2076,10 +2016,23 @@ impl SceneController {
 
             // ── Selection ───────────────────────────────────────────
             "select_at" => {
+                // Pick + select in one step (combines pick_at + select)
                 let params: PickAtParams = serde_json::from_value(p).unwrap_or(PickAtParams { ndc_x: 0.0, ndc_y: 0.0 });
-                let _js = self.select_object_at(params.ndc_x, params.ndc_y);
-                let s = self.state.borrow();
-                match &s.selected {
+                let mut s = self.state.borrow_mut();
+                let picked = pick_object(&s, params.ndc_x, params.ndc_y);
+                match picked {
+                    Some(ref id) => {
+                        s.selected = Some(id.clone());
+                        s.interaction = InteractionMode::Selected { object_id: id.clone() };
+                    }
+                    None => {
+                        s.selected = None;
+                        s.interaction = InteractionMode::Idle;
+                    }
+                }
+                rebuild_scene(&mut s);
+                let selected_id = s.selected.clone();
+                match selected_id {
                     Some(id) => serde_json::json!({ "selectedId": id }),
                     None => serde_json::json!({ "selectedId": null }),
                 }
