@@ -12,8 +12,9 @@ vars:
   ROOT_DIR: '{{.ROOT_DIR | default "."}}'
   BIN_DIR: '{{.ROOT_DIR}}/.bin'
   EXE: '{{if eq OS "windows"}}.exe{{end}}'
-  GH_BIN: '{{.BIN_DIR}}/gh{{.EXE}}'
-  # Go install path for gh CLI
+  # Prefer system gh (pre-installed on GitHub Actions runners), fall back to .bin/gh
+  GH_BIN:
+    sh: "command -v gh 2>/dev/null || echo '{{.BIN_DIR}}/gh{{.EXE}}'"
   GH_GO_PKG: 'github.com/cli/cli/v2/cmd/gh@latest'
 
 tasks:
@@ -39,14 +40,14 @@ tasks:
   # Dependencies
   # ===========================================================================
   "deps:install":
-    desc: Install GitHub CLI via Go
+    desc: Install GitHub CLI (uses system gh if available, otherwise Go)
     status:
-      - test -f {{.GH_BIN}}
+      - command -v gh >/dev/null 2>&1 || test -f {{.BIN_DIR}}/gh{{.EXE}}
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - echo "Installing gh CLI via Go..."
       - GOWORK=off GOBIN={{.BIN_DIR}} go install {{.GH_GO_PKG}}
-      - echo "Installed gh to {{.GH_BIN}}"
+      - echo "Installed gh to {{.BIN_DIR}}/gh"
 
   "deps:upgrade":
     desc: Upgrade GitHub CLI to latest
