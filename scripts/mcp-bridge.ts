@@ -6,12 +6,15 @@
  * /mcp endpoint. This bridge just adapts the stdio transport and adds:
  *   - Retry with exponential backoff (survives dev server restarts)
  *   - Schema version polling (hot-reload tools without AI client restart)
+ *   - Auto-detect: local dev server first, PR preview URL as fallback
  *
- * Works identically for dev and production — just change CAD_URL.
+ * URL resolution (no CAD_URL set):
+ *   1. http://localhost:8788 — if dev server is running (quick health check)
+ *   2. PR preview URL — if current branch has an open PR on GitHub
+ *   3. http://localhost:8788 — fallback (retry will kick in when server starts)
  *
- * Usage:
- *   bun scripts/mcp-bridge.ts                                   # localhost:8788
- *   CAD_URL=https://cad.ubuntusoftware.net bun scripts/mcp-bridge.ts  # production
+ * Explicit override always wins:
+ *   CAD_URL=https://cad.ubuntusoftware.net bun scripts/mcp-bridge.ts
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -21,13 +24,74 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-// --- Config ---
-const BASE_URL = process.env.CAD_URL || 'http://localhost:8788';
+const LOCAL_URL = 'http://localhost:8788';
 const RETRY_ATTEMPTS = 6;
 const RETRY_BASE_MS = 1000;
 const POLL_INTERVAL_MS = 30_000;
 
+// --- URL Resolution ---
+
+/** Quick health check — returns true if the URL responds within 1.5s */
+async function isReachable(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1500) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if current git branch has an open PR, return its preview URL */
+function detectPrPreviewUrl(): string | null {
+  try {
+    const git = Bun.spawnSync(['git', 'rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = git.stdout.toString().trim();
+    if (!branch || branch === 'main' || branch === 'HEAD') return null;
+
+    const gh = Bun.spawnSync(['gh', 'pr', 'view', '--json', 'number,state']);
+    if (gh.exitCode !== 0) return null;
+    const pr = JSON.parse(gh.stdout.toString());
+    if (pr.number && pr.state === 'OPEN') {
+      return `https://pr-${pr.number}-truck-cad.gedw99.workers.dev`;
+    }
+  } catch {
+    // git or gh not available — fine, skip
+  }
+  return null;
+}
+
+/** Resolve the target URL with logging */
+async function resolveBaseUrl(): Promise<string> {
+  // Explicit override always wins
+  if (process.env.CAD_URL) {
+    console.error(`[mcp-bridge] CAD_URL set → ${process.env.CAD_URL}`);
+    return process.env.CAD_URL;
+  }
+
+  // Try local dev server first (fastest path)
+  if (await isReachable(LOCAL_URL)) {
+    console.error(`[mcp-bridge] Local dev server detected → ${LOCAL_URL}`);
+    return LOCAL_URL;
+  }
+
+  // No local server — check for PR preview
+  const prUrl = detectPrPreviewUrl();
+  if (prUrl) {
+    if (await isReachable(prUrl)) {
+      console.error(`[mcp-bridge] PR preview detected → ${prUrl}`);
+      return prUrl;
+    }
+    console.error(`[mcp-bridge] PR preview ${prUrl} not reachable yet, falling back to local`);
+  }
+
+  // Default: local (retry logic will handle waiting for server to start)
+  console.error(`[mcp-bridge] Waiting for local dev server → ${LOCAL_URL}`);
+  return LOCAL_URL;
+}
+
 // --- HTTP Proxy with Retry ---
+let BASE_URL = LOCAL_URL; // set properly in start()
+
 async function proxy(body: any): Promise<any> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
@@ -92,6 +156,7 @@ async function pollVersion() {
 const transport = new StdioServerTransport();
 
 async function start() {
+  BASE_URL = await resolveBaseUrl();
   await server.connect(transport);
   console.error(`[mcp-bridge] Proxy → ${BASE_URL}/mcp`);
 
