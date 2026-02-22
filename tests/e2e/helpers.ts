@@ -117,6 +117,11 @@ export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
   );
 }
 
+/** Get the Automerge document URL for sharing */
+export async function getAutomergeUrl(page: Page): Promise<string> {
+  return await page.evaluate(() => (window as any).cadDocManager.documentUrl);
+}
+
 // ─── Doc/screenshot helpers ────────────────────────────────────
 
 export async function docScreenshot(page: Page, name: string) {

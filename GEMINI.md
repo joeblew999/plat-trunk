@@ -5,7 +5,7 @@ Read **CONTEXT.md** first for the core stack, ADRs, and essential commands.
 ## 🚀 Quick Start
 ```sh
 task deps:install   # Install dependencies
-task up             # Start services (localhost:8787)
+task up             # Start services (localhost:8788)
 task down           # Stop all services
 ```
 

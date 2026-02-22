@@ -11,14 +11,14 @@ We aim for a standard, high-performance web stack that is isomorphic across brow
 - **Framework**: [Hono](https://hono.dev) — chosen for its lightweight footprint and first-class support for Edge (Cloudflare Workers).
 - **Validation**: [Zod](https://zod.dev) — the industry standard for type-safe schema validation in TypeScript.
 - **Documentation**: **`@hono/zod-openapi`** — automatically generates OpenAPI 3.1 specifications from Zod schemas.
-- **AI Agent Access**: **`@hono/mcp`** — exposes our internal CAD commands as Model Context Protocol (MCP) tools for AI agents like Claude.
+- **AI Agent Access**: Worker `/mcp` endpoint — stateless MCP StreamableHTTP (JSON-RPC) serving tools from `cad-schema.json`. Bridge provides stdio transport with retry + hot-reload.
 - **Persistence**: **Cloudflare R2** — for storing Automerge document snapshots and doc-videos.
 
 ## Why this Stack?
 
 1.  **Isomorphic**: The same Hono application runs in the browser (for local dev and Tier 1 rendering) and on Cloudflare Workers (for sync and coordination).
 2.  **Schema-Driven**: By using Zod-OpenAPI, we avoid manually writing `openapi.json`. The documentation stays in sync with the code.
-3.  **AI-First**: Integrating `@hono/mcp` allows AI agents to have native, typed access to the CAD modeling kernel with zero additional glue code.
+3.  **AI-First**: The Worker's `/mcp` endpoint exposes typed CAD tools via stateless MCP StreamableHTTP (JSON-RPC). The stdio bridge adds retry and hot-reload for dev and production AI agents.
 
 ## Unified Route Pattern
 

@@ -12,7 +12,12 @@ vars:
   TRUCK_REPO: '{{.TRUCK_FORK}}'
   TRUCK_RELEASE_REPO: 'joeblew999/plat-trunk'
   TRUCK_VERSION: 'v0.1.0'
+  IFC_LITE_SRC_DIR: '{{.SRC_DIR}}/ifc-lite'
+  IFC_LITE_REPO: 'github.com/louistrue/ifc-lite'
   BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
+  WORKER_DIR: '{{.ROOT_DIR}}/systems/truck/worker'
+  CAD_VERSION:
+    sh: cat {{.ROOT_DIR}}/web/cad-schema.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"
 
 tasks:
   default:
@@ -32,6 +37,12 @@ tasks:
   # --- Dependencies ---
 
   "deps:clone":
+    desc: Clone dependencies
+    cmds:
+      - task: deps:clone:truck
+      - task: deps:clone:ifc-lite
+
+  "deps:clone:truck":
     desc: Clone truck fork
     status:
       - test -d {{.TRUCK_SRC_DIR}}
@@ -40,6 +51,14 @@ tasks:
       - git clone https://{{.TRUCK_FORK}}.git {{.TRUCK_SRC_DIR}}
       - cd {{.TRUCK_SRC_DIR}} && git remote add upstream https://{{.TRUCK_UPSTREAM}}.git || true
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
+
+  "deps:clone:ifc-lite":
+    desc: Clone ifc-lite
+    status:
+      - test -d {{.IFC_LITE_SRC_DIR}}
+    cmds:
+      - mkdir -p {{.SRC_DIR}}
+      - git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
 
   "deps:install":
     desc: Install truck binaries
@@ -121,12 +140,40 @@ tasks:
     cmds:
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
 
+  # --- Watch ---
+
+  "watch:gui":
+    desc: Watch and rebuild browser WASM + schema
+    cmds:
+      - watchexec -w {{.ROOT_DIR}}/crates/truck-webgpu-gui/src -e rs -- "task truck:gui:build"
+
+  "watch:worker":
+    desc: Watch and rebuild worker WASM
+    cmds:
+      - watchexec -w {{.TRUCK_SRC_DIR}}/truck-js/src -e rs -- "task truck:wasm:build"
+
+  "watch:all":
+    desc: Watch everything (requires process-compose or multiple terminals)
+    cmds:
+      - |
+        echo "Starting full watch mode..."
+        echo "Terminal 1: task truck:watch:gui"
+        echo "Terminal 2: task truck:watch:worker"
+        echo "Terminal 3: task truck:gui:serve"
+    silent: true
+
   # --- GUI (browser + Worker) ---
 
   "gui:schema":
     desc: Generate cad-schema.json from Rust structs
+    dir: "{{.ROOT_DIR}}/crates/truck-webgpu-gui"
+    sources:
+      - src/**/*.rs
+      - Cargo.toml
+    generates:
+      - "{{.ROOT_DIR}}/web/cad-schema.json"
     cmds:
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo run --bin generate-schema 2>/dev/null > {{.ROOT_DIR}}/web/cad-schema.json
+      - cargo run --bin generate-schema 2>/dev/null > {{.ROOT_DIR}}/web/cad-schema.json
 
   "gui:build":
     desc: Build browser WASM + generate schema
@@ -134,41 +181,54 @@ tasks:
     cmds:
       - task: gui:schema
 
-  "gui:mcp":
-    desc: Register CAD MCP server with Claude Code
+  "mcp:bootstrap":
+    desc: "Bootstrap all MCP components: schema, deps, configs"
+    deps: ["gui:schema"]
     cmds:
-      - |
-        # Ensure .mcp.json exists (project-scope, checked into git)
-        if [ ! -f {{.ROOT_DIR}}/.mcp.json ]; then
-          echo '{"mcpServers":{"truck-cad":{"type":"http","url":"http://localhost:8787/mcp"}}}' > {{.ROOT_DIR}}/.mcp.json
-          echo "Created .mcp.json"
-        fi
-        # Register in ~/.claude.json (user-scope, survives across sessions)
-        if command -v claude >/dev/null 2>&1; then
-          CLAUDECODE= claude mcp add --transport http truck-cad http://localhost:8787/mcp 2>/dev/null || true
-          echo "✓ CAD MCP registered (restart Claude Code to load tools)"
-        else
-          echo "⚠ claude CLI not found — .mcp.json will be used instead"
-        fi
+      - task: mcp:install
+      - task: mcp:configure
+
+  "mcp:install":
+    desc: "Install dependencies for MCP bridge (scripts/)"
+    dir: "{{.ROOT_DIR}}/scripts"
+    sources:
+      - package.json
+    generates:
+      - node_modules/@modelcontextprotocol/sdk/package.json
+    cmds:
+      - bun install --silent
+
+  "mcp:configure":
+    desc: "Generate MCP client configs (Gemini, Cursor)"
+    cmds:
+      - '{{.ROOT_DIR}}/scripts/mcp-setup.sh'
+    silent: true
+
+  "mcp:teardown":
+    desc: Remove MCP settings (server not running)
+    cmds:
+      - '{{.ROOT_DIR}}/scripts/mcp-teardown.sh'
     silent: true
 
   "gui:serve":
-    desc: Local dev server (localhost:8787)
-    deps: ["gui:build", "gui:mcp"]
+    desc: Local dev server (localhost:8788)
+    deps: ["gui:build", "mcp:bootstrap"]
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
   "gui:deploy":
-    desc: Deploy to Cloudflare Workers
+    desc: "Build + upload + deploy to 100% + git tag v{{.CAD_VERSION}}"
     deps: ["gui:build"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler deploy
+      - task: deploy:upload
+      - task: deploy:promote
+      - task: deploy:tag
 
   # --- Tests & Docs ---
   #
   # Two MCP systems power the dev+test workflow:
   #
-  #   1. CAD MCP   — lives at http://localhost:8787/mcp (part of dev server)
+  #   1. CAD MCP   — lives at http://localhost:8788/mcp (part of dev server)
   #      Provides: cad_add_cube, cad_translate, cad_boolean_subtract, ...
   #      Config:   .claude/settings.json → truck-cad
   #      Start:    task truck:gui:serve
@@ -198,7 +258,7 @@ tasks:
   #   SLOW=1         pauses between steps + video recording
   #   SCREENSHOTS=1  save PNGs → docs/hugo/static/screenshots/
   #   EXAMPLES=1     save scene JSON → web/gui/examples/
-  #   BASE_URL=...   override localhost:8787
+  #   BASE_URL=...   override localhost:8788
 
   "test:install":
     desc: Install Playwright + Chrome
@@ -213,16 +273,16 @@ tasks:
     cmds:
       - |
         echo "=== Dev Server ==="
-        if curl -sf http://localhost:8787/api/health > /dev/null 2>&1; then
-          echo "  ✓ running (http://localhost:8787)"
+        if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
+          echo "  ✓ running (http://localhost:8788)"
         else
           echo "  ✗ not running → task truck:gui:serve"
           exit 1
         fi
         echo "=== CAD MCP ==="
-        if curl -sf http://localhost:8787/api/cad/schema > /dev/null 2>&1; then
-          CMDS=$(curl -s http://localhost:8787/api/cad/schema | python3 -c "import sys,json; print(len(json.load(sys.stdin)['commands']))" 2>/dev/null || echo "?")
-          echo "  ✓ schema: $CMDS commands (http://localhost:8787/mcp)"
+        if curl -sf http://localhost:8788/api/cad/schema > /dev/null 2>&1; then
+          CMDS=$(curl -s http://localhost:8788/api/cad/schema | python3 -c "import sys,json; print(len(json.load(sys.stdin)['commands']))" 2>/dev/null || echo "?")
+          echo "  ✓ schema: $CMDS commands (http://localhost:8788/mcp)"
         else
           echo "  ✗ not available"
           exit 1
@@ -319,7 +379,7 @@ tasks:
       - |
         echo "Waiting for server to be ready..."
         for i in {1..30}; do
-          if curl -sf http://localhost:8787/api/health > /dev/null 2>&1; then
+          if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
             echo "Server ready!"
             break
           fi
@@ -356,7 +416,133 @@ tasks:
           [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/videos/$(basename $f)" --file="$f" --ct="video/webm" --remote
         done
 
-  # --- Deploy ---
+  # --- Version Management ---
+  # Source of truth: commands.rs → build_schema() → cad-schema.json → CAD_VERSION
+  # Flow: version:bump → gui:deploy (upload + promote + tag)
+
+  "version:bump":
+    desc: "Bump CAD version (usage: task truck:version:bump -- 0.4.0)"
+    preconditions:
+      - sh: '[ -n "{{.CLI_ARGS}}" ]'
+        msg: "Usage: task truck:version:bump -- 0.4.0"
+    cmds:
+      - |
+        sed -i '' 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "{{.CLI_ARGS}}"/' {{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands.rs
+      - task: gui:schema
+      - |
+        cd {{.ROOT_DIR}}
+        git add crates/truck-webgpu-gui/src/commands.rs web/cad-schema.json
+        git commit -m "release: v{{.CLI_ARGS}}"
+        git tag "v{{.CLI_ARGS}}"
+        echo ""
+        echo "Version bumped to v{{.CLI_ARGS}} (committed + tagged)"
+        echo "Next: task truck:gui:deploy"
+
+  "version:current":
+    desc: Show current CAD version
+    cmds:
+      - echo "v{{.CAD_VERSION}}"
+    silent: true
+
+  # --- Deploy (versioned) ---
+  # Uses Cloudflare Workers Versions + Gradual Deployments.
+  # Schema version (cad-schema.json) is the release tag.
+  # Flow: setup → upload → canary (optional) → promote → tag → verify
+
+  "deploy:tag":
+    desc: "Create git tag v{{.CAD_VERSION}} + GitHub release (idempotent)"
+    deps: [":gh:deps:install"]
+    cmds:
+      - |
+        VERSION="v{{.CAD_VERSION}}"
+        cd {{.ROOT_DIR}}
+        if git rev-parse "$VERSION" >/dev/null 2>&1; then
+          echo "Tag $VERSION already exists"
+        else
+          git tag "$VERSION"
+          echo "Created tag $VERSION"
+        fi
+        if git remote get-url origin >/dev/null 2>&1; then
+          git push origin "$VERSION" 2>/dev/null || echo "Tag $VERSION already pushed"
+        fi
+      - |
+        VERSION="v{{.CAD_VERSION}}"
+        GH={{.BIN_DIR}}/gh
+        if $GH release view "$VERSION" >/dev/null 2>&1; then
+          echo "Release $VERSION already exists"
+        else
+          BODY=$(cat <<NOTES
+        ## Live URLs
+
+        - **Production**: https://cad.ubuntusoftware.net
+        - **API Health**: https://cad.ubuntusoftware.net/api/health
+        - **API Schema**: https://cad.ubuntusoftware.net/api/cad/schema
+
+        ## Verify
+        \`\`\`sh
+        curl -sf https://cad.ubuntusoftware.net/api/health
+        # {"version":"{{.CAD_VERSION}}"}
+        \`\`\`
+        NOTES
+          )
+          $GH release create "$VERSION" --title "$VERSION" --notes "$BODY"
+          echo "Created GitHub release $VERSION"
+        fi
+
+  "deploy:setup":
+    desc: Ensure Cloudflare auth + GitHub CI secret (idempotent, runs once)
+    cmds:
+      - task: :gh:secret:set:cloudflare
+
+  "deploy:upload":
+    desc: "Upload new Worker version (tagged v{{.CAD_VERSION}}, does NOT deploy)"
+    deps: ["gui:build", "deploy:setup"]
+    cmds:
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}"
+
+  "deploy:promote":
+    desc: Deploy latest uploaded version to 100% traffic
+    cmds:
+      - |
+        cd {{.WORKER_DIR}}
+        LATEST=$(bun x wrangler versions list --env="" 2>&1 | grep "Version ID:" | tail -1 | awk '{print $NF}')
+        echo "Deploying $LATEST to 100%..."
+        bun x wrangler versions deploy "$LATEST@100" --env="" --yes
+
+  "deploy:canary":
+    desc: Deploy with gradual traffic split (interactive)
+    cmds:
+      - cd {{.WORKER_DIR}} && bun x wrangler versions deploy --env=""
+
+  "deploy:rollback":
+    desc: Roll back to previous version
+    cmds:
+      - cd {{.WORKER_DIR}} && bun x wrangler rollback --env=""
+
+  "deploy:versions":
+    desc: List recent versions (tags, dates, authors)
+    cmds:
+      - cd {{.WORKER_DIR}} && bun x wrangler versions list --env=""
+
+  "deploy:status":
+    desc: Show current deployment (versions + traffic split)
+    cmds:
+      - cd {{.WORKER_DIR}} && bun x wrangler deployments list --env=""
+
+  "deploy:preview":
+    desc: "Deploy branch to preview (truck-cad-preview.gedw99.workers.dev)"
+    deps: ["gui:build", "deploy:setup"]
+    cmds:
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler deploy --env preview
+      - |
+        echo ""
+        echo "Preview live at: https://truck-cad-preview.gedw99.workers.dev"
+        echo "Production untouched: https://cad.ubuntusoftware.net"
+
+  "deploy:preview:down":
+    desc: Tear down preview deployment
+    cmds:
+      - cd {{.WORKER_DIR}} && bun install --silent && bun x wrangler delete --env preview --force
 
   "deploy:full":
     desc: Deploy Worker + publish docs to R2

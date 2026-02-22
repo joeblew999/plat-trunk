@@ -1,8 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPTransport } from '@hono/mcp';
 import cadSchema from '../../../../web/cad-schema.json';
 
 type Bindings = {
@@ -169,13 +167,11 @@ async function waitForCommand(modelId: string, type: string, params: any) {
   return { id, status: 'timeout' as const, error: 'Browser did not respond within 10s' };
 }
 
-const mcpServer = new McpServer({ name: 'truck-cad', version: '1.0.0' });
-
 // =========================================================================
 // mountModule()
 // =========================================================================
 
-function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema, mcp: typeof mcpServer) {
+function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema) {
   // --- CORE ROUTES ---
   
   hono.openapi(createRoute({
@@ -224,11 +220,25 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema, mcp
   });
 
   hono.post(`/${prefix}/:modelId/result/:id`, async (c) => {
-    const m = getModel(c.req.param('modelId'));
+    const mid = c.req.param('modelId');
+    const m = getModel(mid);
     const cmd = m.commandQueue.get(c.req.param('id'));
     if (!cmd) return c.json({ error: 'Not found' }, 404);
     const body = await c.req.json() as any;
-    cmd.status = body.error ? 'error' : 'done'; cmd.result = body.result; cmd.error = body.error; cmd.completedAt = Date.now();
+    cmd.status = body.error ? 'error' : 'done'; 
+    cmd.result = body.result; 
+    cmd.error = body.error; 
+    cmd.completedAt = Date.now();
+
+    // Sync state from result if available (ensures Worker cache is fresh)
+    if (body.result && typeof body.result === 'object' && 'objectCount' in body.result) {
+      const { ready, objectCount, objectIds, selectedId, boolSelA, boolSelB, canUndo, canRedo } = body.result;
+      m.sceneState = { ready, objectCount, objectIds, selectedId, boolSelA, boolSelB, canUndo, canRedo };
+      m.sceneStateAt = Date.now();
+      // Broadcast update to other tabs (but not back to the one that sent it)
+      broadcast(mid, { type: 'datastar-patch-signals', data: m.sceneState });
+    }
+
     return c.json({ status: 'ok' });
   });
 
@@ -276,15 +286,6 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema, mcp
       return c.json(res, res.status === 'timeout' ? 504 : 200);
     });
 
-    if (!def.ephemeral && !def.readonly) {
-      const mcpInput = zodFromJsonSchema(props, required);
-      (mcpInput as any).modelId = z.string().optional();
-      mcp.registerTool(`${prefix}_${name}`, { description: `[${prefix}] ${def.description}`, inputSchema: z.object(mcpInput) }, async (p) => {
-        const { modelId, ...rest } = p as any;
-        const res = await waitForCommand(modelId || lastActiveModelId || 'default', name, rest);
-        return { content: [{ type: 'text', text: JSON.stringify(res, null, 2) }] };
-      });
-    }
   }
 
   // --- POLYMORPHIC QUEUE (LEGACY COMPAT) ---
@@ -323,7 +324,7 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema, mcp
   });
 }
 
-mountModule(api, 'cad', cadSchema as ModuleSchema, mcpServer);
+mountModule(api, 'cad', cadSchema as ModuleSchema);
 
 app.doc('/api/openapi.json', {
   openapi: '3.1.0',
@@ -333,7 +334,7 @@ app.doc('/api/openapi.json', {
 
 api.openapi(createRoute({
   method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
-}), (c) => c.json({ status: 'ok', service: 'truck-cad' }));
+}), (c) => c.json({ status: 'ok', service: 'truck-cad', version: (cadSchema as ModuleSchema).version }));
 
 app.get('/api-docs', (c) => c.html(`<!DOCTYPE html><html><head><title>Truck CAD API</title></head><body><script id="api-reference" data-url="/api/openapi.json"></script><script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script></body></html>`));
 
@@ -347,14 +348,115 @@ api.delete('/docs/:docId', async (c) => { await c.env.CAD_DOCS_BUCKET.delete(`do
 
 app.route('/api', api);
 
-let mcpTransport: StreamableHTTPTransport | null = null;
-app.all('/mcp', async (c) => {
-  if (!mcpTransport || !mcpServer.isConnected()) {
-    mcpTransport = new StreamableHTTPTransport({ sessionIdGenerator: () => crypto.randomUUID(), enableJsonResponse: true });
-    await mcpServer.connect(mcpTransport);
+// =========================================================================
+// MCP StreamableHTTP endpoint (stateless JSON-RPC, no SDK needed at runtime)
+// =========================================================================
+
+function buildMcpTools(schema: ModuleSchema) {
+  const tools = [];
+  for (const [name, def] of Object.entries(schema.commands)) {
+    if (def.ephemeral || def.readonly) continue;
+    tools.push({
+      name: `cad_${name}`,
+      description: def.description,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...(def.params?.properties || {}),
+          modelId: { type: 'string', description: "Target model ID (defaults to 'default')" }
+        },
+        required: def.params?.required || []
+      }
+    });
   }
-  return mcpTransport.handleRequest(c);
+  // Meta-tools
+  tools.push(
+    { name: 'cad_health', description: 'Check if the CAD server and browser are connected', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } }
+  );
+  return tools;
+}
+
+app.post('/mcp', async (c) => {
+  const body = await c.req.json();
+  const messages = Array.isArray(body) ? body : [body];
+  const responses: any[] = [];
+
+  for (const msg of messages) {
+    // Notifications (no id) — acknowledge silently
+    if (!('id' in msg)) continue;
+
+    switch (msg.method) {
+      case 'initialize':
+        responses.push({
+          jsonrpc: '2.0', id: msg.id,
+          result: {
+            protocolVersion: '2025-03-26',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'truck-cad', version: (cadSchema as ModuleSchema).version || '1.0.0' }
+          }
+        });
+        break;
+
+      case 'tools/list':
+        responses.push({
+          jsonrpc: '2.0', id: msg.id,
+          result: { tools: buildMcpTools(cadSchema as ModuleSchema) }
+        });
+        break;
+
+      case 'tools/call': {
+        const { name, arguments: toolArgs } = msg.params;
+
+        // Meta-tools
+        if (name === 'cad_health') {
+          const mid = lastActiveModelId || 'default';
+          const m = models.get(mid);
+          responses.push({
+            jsonrpc: '2.0', id: msg.id,
+            result: { content: [{ type: 'text', text: JSON.stringify({
+              status: 'ok', service: 'truck-cad',
+              version: (cadSchema as ModuleSchema).version,
+              activeModel: mid, sseClients: m?.sseClientCount ?? 0,
+              browserConnected: (m?.sseClientCount ?? 0) > 0
+            }) }] }
+          });
+          break;
+        }
+        if (name === 'cad_schema') {
+          responses.push({
+            jsonrpc: '2.0', id: msg.id,
+            result: { content: [{ type: 'text', text: JSON.stringify(cadSchema, null, 2) }] }
+          });
+          break;
+        }
+
+        // CAD command dispatch
+        const cmdName = name.startsWith('cad_') ? name.slice(4) : name;
+        const { modelId, ...params } = toolArgs || {};
+        const result = await waitForCommand(modelId || lastActiveModelId || 'default', cmdName, params);
+        responses.push({
+          jsonrpc: '2.0', id: msg.id,
+          result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+        });
+        break;
+      }
+
+      default:
+        responses.push({
+          jsonrpc: '2.0', id: msg.id,
+          error: { code: -32601, message: `Method not found: ${msg.method}` }
+        });
+    }
+  }
+
+  if (responses.length === 0) return c.body(null, 202);
+  return c.json(Array.isArray(body) ? responses : responses[0]);
 });
+
+// Stateless server — no SSE or session teardown
+app.get('/mcp', (c) => c.body(null, 405));
+app.delete('/mcp', (c) => c.body(null, 405));
 
 // Serve CONTEXT.md as /llms.txt (single source of truth for AI discovery)
 app.get('/llms.txt', async (c) => {

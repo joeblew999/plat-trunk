@@ -43,7 +43,7 @@ tasks:
     status:
       - test -f {{.GH_BIN}}
     cmds:
-      - xplat os mkdir -p {{.BIN_DIR}}
+      - mkdir -p {{.BIN_DIR}}
       - echo "Installing gh CLI via Go..."
       - GOWORK=off GOBIN={{.BIN_DIR}} go install {{.GH_GO_PKG}}
       - echo "Installed gh to {{.GH_BIN}}"
@@ -118,6 +118,29 @@ tasks:
     deps: ["deps:install"]
     cmds:
       - '{{.GH_BIN}} run watch'
+
+  # ===========================================================================
+  # Secrets
+  # ===========================================================================
+  "secret:list":
+    desc: List repository secrets
+    deps: ["deps:install"]
+    cmds:
+      - '{{.GH_BIN}} secret list'
+
+  "secret:set:cloudflare":
+    desc: Set CLOUDFLARE_API_TOKEN secret (idempotent — skips if already set)
+    deps: ["deps:install"]
+    status:
+      - '{{.GH_BIN}} secret list 2>/dev/null | grep -q CLOUDFLARE_API_TOKEN'
+    cmds:
+      - |
+        if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+          echo "$CLOUDFLARE_API_TOKEN" | {{.GH_BIN}} secret set CLOUDFLARE_API_TOKEN
+        else
+          echo "Paste your Cloudflare API token (get one at https://dash.cloudflare.com/profile/api-tokens):"
+          {{.GH_BIN}} secret set CLOUDFLARE_API_TOKEN
+        fi
 
   # ===========================================================================
   # Releases

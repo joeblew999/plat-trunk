@@ -8,7 +8,7 @@
  *   boolean-subtract.webm  → docs/user/boolean-operations.md
  *   save-and-load.webm     → docs/user/save-load.md
  *
- * Run: xplat task truck:test:videos
+ * Run: task truck:test:videos
  *   or: cd tests && bun x playwright test --project=docs
  */
 import { test } from '@playwright/test';

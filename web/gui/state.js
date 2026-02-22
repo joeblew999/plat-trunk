@@ -4,7 +4,14 @@
 // ─── Core WASM call ─────────────────────────────────────────────
 
 function executeWasm(ctrl, type, params) {
-  return JSON.parse(ctrl.execute(type, JSON.stringify(params || {})));
+  try {
+    const res = ctrl.execute(type, JSON.stringify(params || {}));
+    if (!res) return { error: 'Empty response' };
+    return JSON.parse(res);
+  } catch (err) {
+    console.error(`WASM execute(${type}) failed:`, err);
+    return { error: String(err) };
+  }
 }
 
 // ─── Reconcile: WASM state → Datastar signals → DOM ─────────────
@@ -30,7 +37,7 @@ function reconcile(result) {
   if (r.boolSelB && !ids.includes(r.boolSelB)) r.boolSelB = '';
 
   // Apply selection from result (select/deselect/pick commands)
-  if (result.selectedId !== undefined) {
+  if (result && result.selectedId !== undefined) {
     const id = result.selectedId || '';  // coerce null → ''
     // Auto-B: if A exists and selecting a different object, assign B
     if (id && r.boolSelA && id !== r.boolSelA) {
@@ -42,8 +49,8 @@ function reconcile(result) {
     r.selectedId = id;
   }
 
-  // Auto-select new object after mutations (e.g. boolean result)
-  if (result.objectId && !r.selectedId && ids.includes(result.objectId)) {
+  // Auto-select new object after mutations (e.g. creation or boolean result)
+  if (result && result.objectId && ids.includes(result.objectId)) {
     r.selectedId = result.objectId;
     r.boolSelA = result.objectId;
     r.boolSelB = '';
@@ -58,13 +65,27 @@ function reconcile(result) {
   r.boolReady = !!(a && b);
   r.canUndo = mgr?.canUndo ?? false;
   r.canRedo = mgr?.canRedo ?? false;
+  r.statusMode = window.__cadLocalMode ? 'Local' : 'Online';
+  r.automergeEnabled = mgr?.enabled ?? true;
+
+  // Update reactive Lit state object
+  r.litState = {
+    objectIds: ids,
+    selectedId: r.selectedId,
+    canUndo: r.canUndo,
+    canRedo: r.canRedo
+  };
 
   ds.endBatch();
 
   // Load style and BIM metadata for selected object
   if (r.selectedId) {
-    loadStyle(r.selectedId);
-    loadBim(r.selectedId);
+    try {
+      loadStyle(r.selectedId);
+      loadBim(r.selectedId);
+    } catch (err) {
+      console.warn('Metadata load failed:', err);
+    }
   }
 
   // Update object list DOM
@@ -164,7 +185,14 @@ function renderObjectList(ids) {
     const cls = isA ? 'obj-item obj-sel-a' : isB ? 'obj-item obj-sel-b' : 'obj-item';
     const label = isA ? 'A' : isB ? 'B' : '';
     const name = names[id] || id.slice(0, 6);
-    return `<button class="${cls}" data-testid="outliner-item" data-oid="${id}" title="Click to select&#10;${id}">${i}: ${name}${label ? ' <b>' + label + '</b>' : ''}</button>`;
+    return `
+      <div class="flex items-center gap-1 group">
+        <button class="${cls} flex-1" data-testid="outliner-item" data-oid="${id}" title="${id}">${i}: ${name}${label ? ' <b>' + label + '</b>' : ''}</button>
+        <button class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-50 hover:!opacity-100 p-0.5 h-auto min-h-0" 
+                data-focus-oid="${id}" title="Focus object">
+          <svg xmlns="http://www.w3.org/2000/svg" class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        </button>
+      </div>`;
   }).join('');
   el.innerHTML = html;
   el.querySelectorAll('[data-oid]').forEach(btn => {
@@ -172,29 +200,125 @@ function renderObjectList(ids) {
       cadCommand('select', { id: btn.dataset.oid }, { ephemeral: true });
     });
   });
+  el.querySelectorAll('[data-focus-oid]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('viewport').zoomTo(btn.dataset.focusOid);
+    });
+  });
+}
+
+// ─── Control Plane (JS Layer) ───────────────────────────────────
+
+const JS_COMMANDS = new Set([
+  'undo', 'redo', 'get_status', 'set_mode', 'create_model', 'set_automerge', 'clear_data'
+]);
+
+async function handleJsCommand(type, params) {
+  const mgr = window.cadDocManager;
+  
+  switch (type) {
+    case 'undo':
+      if (mgr && mgr.canUndo) {
+        mgr.handle.undo();
+        return { success: true };
+      }
+      return { error: 'Nothing to undo' };
+      
+    case 'redo':
+      if (mgr && mgr.canRedo) {
+        mgr.handle.redo();
+        return { success: true };
+      }
+      return { error: 'Nothing to redo' };
+
+    case 'get_status':
+      return {
+        mode: window.__cadLocalMode ? 'local' : 'online',
+        automergeReady: !!mgr?.handle,
+        automergeEnabled: mgr?.enabled ?? true,
+        objectCount: window._ds?.root?.objectCount || 0
+      };
+
+    case 'set_mode':
+      const mode = params.mode;
+      if (mode === 'local') {
+        window.__cadLocalMode = true;
+      } else if (mode === 'online') {
+        window.__cadLocalMode = false;
+      }
+      return { mode: window.__cadLocalMode ? 'local' : 'online' };
+
+    case 'set_automerge':
+      if (mgr) {
+        mgr.enabled = !!params.enabled;
+        return { enabled: mgr.enabled };
+      }
+      return { error: 'DocManager not ready' };
+
+    case 'create_model':
+      if (mgr) {
+        await mgr.createDocument(params.name || 'Untitled');
+        // Reset scene
+        const ctrl = window.sceneController;
+        if (ctrl) ctrl.clear_scene();
+        return { success: true, modelId: 'new' }; // simplified
+      }
+      return { error: 'DocManager not ready' };
+
+    case 'clear_data':
+      if (confirm('WIPE ALL LOCAL DATA? This cannot be undone.')) {
+        localStorage.clear();
+        location.reload();
+        return { success: true };
+      }
+      return { success: false };
+
+    default:
+      return { error: `Unknown JS command: ${type}` };
+  }
 }
 
 // ─── Single entry point for all CAD operations ───────────────────
 
-function cadCommand(type, params = {}, options = {}) {
+let _busy = false;
+async function cadCommand(type, params = {}, options = {}) {
   const ctrl = window.sceneController;
-  if (!ctrl) return { error: 'SceneController not ready' };
-
-  let result;
+  if (!ctrl && !JS_COMMANDS.has(type)) return { error: 'SceneController not ready' };
+  
+  // Guard against re-entrancy for WASM commands, but allow JS commands
+  if (_busy && !options.ephemeral && !JS_COMMANDS.has(type)) return { error: 'Busy' };
+  
+  if (!JS_COMMANDS.has(type)) _busy = true;
+  
   try {
-    result = executeWasm(ctrl, type, params);
-  } catch (err) {
-    return { error: String(err) };
-  }
+    let result;
+    
+    if (JS_COMMANDS.has(type)) {
+      // 1. JS Control Plane Dispatch
+      try {
+        result = await handleJsCommand(type, params);
+      } catch (err) {
+        return { error: String(err) };
+      }
+    } else {
+      // 2. WASM Kernel Dispatch
+      try {
+        result = executeWasm(ctrl, type, params);
+      } catch (err) {
+        return { error: String(err) };
+      }
+    }
 
-  // Record to Automerge (skip for ephemeral commands like select/deselect/pick_at)
-  if (!options.ephemeral && !options.skipAutomerge) {
+  // Record to Automerge (skip for ephemeral commands and JS commands which handle their own state)
+  if (!options.ephemeral && !options.skipAutomerge && !JS_COMMANDS.has(type)) {
     const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
     if (mgr) {
-      mgr.record(type, params, { objectId: result.objectId, groupId: options.groupId });
-      if (result.hierarchy) {
-        mgr.updateBimHierarchy(result.hierarchy);
-      }
+      mgr.record(type, params, { 
+        objectId: result.objectId, 
+        groupId: options.groupId,
+        hierarchy: result.hierarchy 
+      });
     }
   }
 
@@ -206,6 +330,13 @@ function cadCommand(type, params = {}, options = {}) {
         showFeedback('Operation success');
       } else if (type === 'clash_detect') {
         showFeedback(result.clash ? '💥 CLASH DETECTED!' : '✅ No clash', result.clash);
+      } else if (type === 'import_mvt' || type === 'import_step' || type === 'import_ifc') {
+        showFeedback(`Imported ${result.objectCount || ''} objects`);
+        // Auto-zoom to extents after big imports
+        setTimeout(() => {
+          const vp = document.getElementById('viewport');
+          if (vp && vp.zoomToExtents) vp.zoomToExtents();
+        }, 500);
       } else if (result.error) {
         showFeedback(result.error, true);
       }
@@ -221,10 +352,12 @@ function cadCommand(type, params = {}, options = {}) {
     }).catch(() => {});
   }
 
-  return { ...result, ...state };
-}
-
-function showFeedback(msg, isError = false) {
+      return { ...result, ...state };
+    } finally {
+      _busy = false;
+    }
+  }
+  function showFeedback(msg, isError = false) {
   const ds = window._ds;
   if (!ds?.root) return;
   try {

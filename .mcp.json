@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "truck-cad": {
-      "type": "http",
-      "url": "http://localhost:8787/mcp"
+      "command": "bun",
+      "args": ["scripts/mcp-bridge.ts"],
+      "env": { "CAD_URL": "http://localhost:8788" }
     }
   }
 }

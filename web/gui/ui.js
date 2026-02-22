@@ -36,20 +36,23 @@ document.addEventListener('keydown', (e) => {
         const sel = window._ds?.root?.selectedId;
         if (sel) cadCommand('duplicate', { objectId: sel });
     }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') {
+            const sel = window._ds?.root?.selectedId;
+            if (sel) cadCommand('delete', { objectId: sel });
+        }
+    }
 });
 
 // ─── Document management (Automerge) ────────────────────────────
 
-document.getElementById('newDocBtn')?.addEventListener('click', async () => {
-    const mgr = docMgr();
-    if (mgr) {
-        const name = prompt('Document name:', 'Untitled');
-        if (name === null) return;
-        ctrl()?.clear_scene();
-        await window.cadDocManager.createDocument(name);
-        cadCommand('deselect', {}, { ephemeral: true });
-        showFeedback('New document created', false);
-    }
+document.getElementById('importIfcBtn')?.addEventListener('click', () => {
+    document.getElementById('fileInput')?.click();
+});
+
+document.getElementById('importGltfBtn')?.addEventListener('click', () => {
+    document.getElementById('fileInput')?.click();
 });
 
 document.getElementById('shareBtn')?.addEventListener('click', () => {
@@ -90,113 +93,106 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
     URL.revokeObjectURL(url);
 });
 
+document.getElementById('exportStepBtn')?.addEventListener('click', () => {
+    if (!ctrl()) return;
+    const result = cadCommand('export_step', {}, { ephemeral: true });
+    if (result.step) {
+        const blob = new Blob([result.step], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'cad-export.step';
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        showFeedback('Export failed — no solids in scene', true);
+    }
+});
+
+document.getElementById('exportObjBtn')?.addEventListener('click', () => {
+    if (!ctrl()) return;
+    const result = cadCommand('export_obj', {}, { ephemeral: true });
+    if (result.obj) {
+        const blob = new Blob([result.obj], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'cad-export.obj';
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        showFeedback('Export failed', true);
+    }
+});
+
+document.getElementById('exportStlBtn')?.addEventListener('click', () => {
+    if (!ctrl()) return;
+    const result = cadCommand('export_stl', {}, { ephemeral: true });
+    if (result.stl) {
+        const blob = new Blob([result.stl], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'cad-export.stl';
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        showFeedback('Export failed', true);
+    }
+});
+
 document.getElementById('loadBtn')?.addEventListener('click', () => {
+    document.getElementById('fileInput')?.click();
+});
+
+document.getElementById('importStepBtn')?.addEventListener('click', () => {
+    document.getElementById('fileInput')?.click();
+});
+
+document.getElementById('importIfcBtn')?.addEventListener('click', () => {
     document.getElementById('fileInput')?.click();
 });
 
 document.getElementById('fileInput')?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file || !ctrl()) return;
+    const name = file.name.toLowerCase();
     const reader = new FileReader();
+    
     reader.onload = () => {
-        cadCommand('import_scene', { json: reader.result });
+        const data = reader.result;
+        
+        if (name.endsWith('.glb') || name.endsWith('.gltf')) {
+            const bytes = new Uint8Array(data);
+            let binary = '';
+            // Chunked processing to avoid stack overflow on large files
+            const chunk = 8192;
+            for (let i = 0; i < bytes.length; i += chunk) {
+                binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+            }
+            const b64 = btoa(binary);
+            cadCommand('import_gltf', { data: b64, x: 0, y: 0, z: 0 });
+        } else {
+            // Text based formats
+            const str = new TextDecoder().decode(data);
+            if (name.endsWith('.json')) {
+                cadCommand('import_scene', { json: str });
+            } else if (name.endsWith('.step') || name.endsWith('.stp')) {
+                cadCommand('import_step', { data: str });
+            } else if (name.endsWith('.ifc')) {
+                cadCommand('import_ifc', { data: str });
+            }
+        }
+        
         // Select first object after import
-        const ids = ctrl().object_ids();
-        if (ids.length > 0) cadCommand('select', { id: ids[0] }, { ephemeral: true });
+        setTimeout(() => {
+            const ids = ctrl().object_ids();
+            if (ids.length > 0) cadCommand('select', { id: ids[0] }, { ephemeral: true });
+        }, 100);
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
     e.target.value = '';
 });
-
-// ─── Gizmo: canvas click-to-select + drag-to-translate ──────────
-
-(function setupGizmo() {
-    const canvas = document.getElementById('cad-canvas');
-    if (!canvas) return;
-
-    let isDragging = false;
-    let prevNdcX = 0;
-    let prevNdcY = 0;
-
-    function toNdc(e) {
-        const rect = canvas.getBoundingClientRect();
-        const x = (2 * (e.clientX - rect.left) / rect.width) - 1;
-        const y = 1 - (2 * (e.clientY - rect.top) / rect.height);
-        return [x, y];
-    }
-
-    canvas.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || !ctrl()) return;
-        const [ndcX, ndcY] = toNdc(e);
-
-        // Skip gizmo when picking B for boolean (A set, B not yet)
-        const r = ds()?.root;
-        const pickingB = r?.boolSelA && !r?.boolSelB;
-        if (!pickingB && ctrl().get_interaction_mode() === 'selected') {
-            const axis = ctrl().begin_gizmo_drag(ndcX, ndcY);
-            if (axis) {
-                isDragging = true;
-                prevNdcX = ndcX;
-                prevNdcY = ndcY;
-                canvas.style.cursor = 'grabbing';
-                canvas.setPointerCapture(e.pointerId);
-                e.stopPropagation();
-                return;
-            }
-        }
-
-        // Pick + select: two commands, same path as outliner click
-        const { pickedId } = cadCommand('pick_at', { ndcX, ndcY }, { ephemeral: true });
-        cadCommand('select', { id: pickedId || '' }, { ephemeral: true });
-    });
-
-    canvas.addEventListener('pointermove', (e) => {
-        if (!isDragging || !ctrl()) return;
-        const [ndcX, ndcY] = toNdc(e);
-        ctrl().update_gizmo_drag(ndcX, ndcY, prevNdcX, prevNdcY);
-        prevNdcX = ndcX;
-        prevNdcY = ndcY;
-        e.stopPropagation();
-    });
-
-    canvas.addEventListener('pointerup', (e) => {
-        if (!isDragging || !ctrl()) return;
-        isDragging = false;
-        canvas.style.cursor = '';
-        canvas.releasePointerCapture(e.pointerId);
-        const result = ctrl().end_gizmo_drag();
-        if (result && result.objectId) {
-            const mgr = docMgr();
-            if (mgr) {
-                mgr.record('translate', {
-                    objectId: result.objectId,
-                    dx: result.dx, dy: result.dy, dz: result.dz,
-                });
-            }
-        }
-        reconcile({});
-        e.stopPropagation();
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            if (isDragging && ctrl()) {
-                isDragging = false;
-                canvas.style.cursor = '';
-                ctrl().cancel_gizmo_drag();
-            } else if (ctrl()) {
-                cadCommand('deselect', {}, { ephemeral: true });
-            }
-            e.preventDefault();
-        }
-        if (e.key === 'Delete' && !isDragging && ctrl()) {
-            const objectId = ds()?.root?.selectedId;
-            if (objectId && ctrl().object_ids().includes(objectId)) {
-                cadCommand('delete', { objectId });
-            }
-        }
-    });
-})();
 
 // ─── Example scenes ──────────────────────────────────────────────
 

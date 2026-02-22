@@ -13,11 +13,14 @@
         (function() {
             var params = new URLSearchParams(location.search);
             window.__cadLocalMode = params.has('local');
+            
+            // Automerge sync control via URL
+            var syncVal = params.get('sync');
+            window.__cadSyncDisabled = (syncVal === '0' || syncVal === 'off');
+
             if (params.has('clear')) {
+                localStorage.clear();
                 indexedDB.deleteDatabase('cad-docs');
-                localStorage.removeItem('cad-last-doc-url');
-                localStorage.removeItem('cad-actor-id');
-                localStorage.removeItem('cad-last-model-id');
                 location.href = '/?local';
             }
             // Extract modelId from URL: /model/:id or ?model=id
@@ -40,18 +43,38 @@
                 window.__modelId = 'default';
             }
         })();
+
+        // Dynamic Import Map for Cache Busting (Local Dev)
+        (function() {
+            const v = Date.now();
+            window.__cadVersion = v;
+            const im = document.createElement('script');
+            im.type = 'importmap';
+            im.textContent = JSON.stringify({
+                imports: {
+                    "./state.js": "./state.js?v=" + v,
+                    "./cad-viewport.js": "./cad-viewport.js?v=" + v,
+                    "./history.js": "./history.js?v=" + v,
+                    "./ui.js": "./ui.js?v=" + v,
+                    "./worker-relay.js": "./worker-relay.js?v=" + v
+                }
+            });
+            document.head.appendChild(im);
+        })();
     </script>
-    <script type="module" src="vendor/datastar.js"></script>
+    <script type="module" src="vendor/datastar.js?v=2"></script>
     <script type="module">
-        import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js';
+        import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js?v=2';
         window._ds = { root, mergePatch, beginBatch, endBatch };
     </script>
+    <script src="vendor/automerge-bundle.js?v=2"></script>
 </head>
 <body data-signals="{
     modelId: window.__modelId || 'default',
     objectCount: 0, sceneEmpty: true, selectedId: '',
+    litState: { objectIds: [], selectedId: '', canUndo: false, canRedo: false },
     boolSelA: '', boolSelB: '', boolLabel: 'Click first object', boolReady: false,
-    canUndo: false, canRedo: false,
+    canUndo: false, canRedo: false, automergeEnabled: !window.__cadSyncDisabled,
     feedback: '', feedbackError: false,
     sizeParam: 1, txVal: 0.5, tyVal: 0, tzVal: 0, rotAxis: 'y', rotAngle: 45, scaleVal: 2,
     propColor: '#3399ff', propOpacity: 1.0, propRoughness: 0.30, propReflectance: 0.50,
@@ -70,17 +93,31 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             <span id="docInfo" class="text-xs opacity-50 truncate max-w-40 cursor-pointer" title="Click to copy doc URL">Untitled</span>
         </div>
         <div class="flex items-center gap-1">
+            <button data-on:click="window.cadCommand('create_model')" class="btn btn-ghost btn-xs opacity-60" title="New Model">
+                <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button data-on:click="if(confirm('WIPE ALL DATA?')) location.href='/?clear=1'" class="btn btn-ghost btn-xs opacity-60 text-error" title="Wipe All Data">
+                <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+            <span class="tb-sep"></span>
             <button data-testid="undo" class="btn btn-ghost btn-xs" title="Undo (Ctrl+Z)"
-                    data-attr:disabled="!$canUndo" data-on:click="window.cadDocManager?.undo()">
+                    data-attr:disabled="!$canUndo" data-on:click="window.cadCommand('undo')">
                 <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h10a5 5 0 015 5v0a5 5 0 01-5 5H3"/><path d="M7 6l-4 4 4 4"/></svg>
             </button>
             <button data-testid="redo" class="btn btn-ghost btn-xs" title="Redo (Ctrl+Shift+Z)"
-                    data-attr:disabled="!$canRedo" data-on:click="window.cadDocManager?.redo()">
+                    data-attr:disabled="!$canRedo" data-on:click="window.cadCommand('redo')">
                 <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H11a5 5 0 00-5 5v0a5 5 0 005 5h10"/><path d="M17 6l4 4-4 4"/></svg>
             </button>
             <span class="tb-sep"></span>
-            <span id="mode-indicator" class="text-xs opacity-40"></span>
-            <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
+            <button class="btn btn-ghost btn-xs opacity-60" title="Toggle Automerge Sync"
+                    data-on:click="window.cadCommand('set_automerge', { enabled: !$automergeEnabled })">
+                <span data-class="{'text-success': $automergeEnabled, 'text-error': !$automergeEnabled}">Sync</span>
+            </button>
+            <button id="modeBtnHeader" class="btn btn-ghost btn-xs opacity-60" title="Toggle Local/Online Mode"
+                    data-on:click="window.cadCommand('set_mode', { mode: $statusMode === 'Online' ? 'local' : 'online' })">
+                <span data-text="$statusMode || 'Online'">Online</span>
+            </button>
+            <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-60" title="API Docs">API</a>
         </div>
     </header>
 
@@ -133,6 +170,10 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 data-on:click="window.cadCommand('delete', {objectId: $selectedId})">Del</button>
         <button data-testid="clear" class="btn btn-sm btn-ghost" title="Clear all"
                 data-on:click="window.cadCommand('clear')">Clear</button>
+        <button data-testid="zoom-extents" class="btn btn-sm btn-ghost" data-on:click="document.getElementById('viewport').zoomToExtents()" title="Fit View">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            Fit
+        </button>
     </nav>
 
     <!-- ═══════════════════ LEFT PANEL: OUTLINER ═══════════════════ -->
@@ -259,22 +300,22 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         <!-- File section -->
         <h3 data-section="file">File</h3>
         <div class="flex flex-col gap-1 text-xs">
-            <div class="flex gap-1">
-                <button id="newDocBtn" data-testid="new-doc" class="btn btn-xs btn-outline flex-1">New</button>
-                <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline flex-1">Share</button>
-            </div>
+            <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline w-full">Share Link</button>
             <div class="flex gap-1">
                 <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1" title="Save scene as JSON">Save</button>
-                <button id="exportStepBtn" data-testid="export-step" class="btn btn-xs btn-outline flex-1" title="Export scene as STEP">STEP</button>
-                <button id="exportObjBtn" data-testid="export-obj" class="btn btn-xs btn-outline flex-1" title="Export scene as OBJ">OBJ</button>
-                <button id="exportStlBtn" data-testid="export-stl" class="btn btn-xs btn-outline flex-1" title="Export scene as STL">STL</button>
                 <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1" title="Load scene from JSON">Load</button>
+            </div>
+            <div class="flex gap-1 mt-1 border-t border-base-content/10 pt-1">
+                <button id="exportStepBtn" data-testid="export-step" class="btn btn-xs btn-ghost flex-1" title="Export scene as STEP">STEP</button>
+                <button id="exportObjBtn" data-testid="export-obj" class="btn btn-xs btn-ghost flex-1" title="Export scene as OBJ">OBJ</button>
+                <button id="exportStlBtn" data-testid="export-stl" class="btn btn-xs btn-ghost flex-1" title="Export scene as STL">STL</button>
             </div>
             <div class="flex gap-1">
                 <button id="importStepBtn" data-testid="import-step" class="btn btn-xs btn-outline flex-1" title="Import B-Rep from STEP">Import STEP</button>
                 <button id="importIfcBtn" data-testid="import-ifc" class="btn btn-xs btn-outline flex-1" title="Import BIM from IFC">Import IFC</button>
             </div>
-            <input type="file" id="fileInput" accept=".json,.step,.stp,.ifc" class="hidden" />
+            <button id="importGltfBtn" data-testid="import-gltf" class="btn btn-xs btn-outline w-full" title="Import Asset from GLTF/GLB">Import GLTF</button>
+            <input type="file" id="fileInput" accept=".json,.step,.stp,.ifc,.glb,.gltf" class="hidden" />
             <select id="exampleSelect" class="select select-xs w-full">
                 <option value="">Load example...</option>
             </select>
@@ -283,7 +324,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
     <!-- ═══════════════════ CANVAS ═══════════════════ -->
     <main class="app-canvas">
-        <canvas id="cad-canvas" data-testid="cad-canvas"></canvas>
+        <cad-viewport id="viewport" data-attr:lit-state="$litState"></cad-viewport>
         <!-- Feedback toast -->
         <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-lg bg-base-300/90 backdrop-blur-sm pointer-events-none transition-opacity"
              data-show="$feedback"
@@ -350,6 +391,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         <span data-show="$selectedId" data-text="'Selected: ' + ($selectedId ? $selectedId.slice(0,8) : '')"></span>
         <span class="flex-1"></span>
         <span id="status-mode" class="opacity-50"></span>
+        <span id="status-version" class="opacity-30 text-[10px]"></span>
     </footer>
 
     <!-- ═══════════════════ MOBILE DOCK ═══════════════════ -->
@@ -375,59 +417,49 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <script type="module">
         import init, { SceneController } from './pkg-browser-renderer/truck_webgpu_gui.js';
+        window.__wasmInit = init;
+        window.__SceneController = SceneController;
 
         async function runWasm() {
-            try {
-                await init();
-                const controller = await new SceneController("cad-canvas");
-                controller.run();
-                window.sceneController = controller;
-                console.log("CAD running.");
-                if (window.reconcile) window.reconcile({});
-
-                // Show mode in status bar
-                var modeEl = document.getElementById('status-mode');
-                var indicatorEl = document.getElementById('mode-indicator');
-                if (window.__cadLocalMode) {
-                    if (modeEl) modeEl.textContent = 'Local mode';
-                    if (indicatorEl) indicatorEl.textContent = 'Local';
-                } else {
-                    if (modeEl) modeEl.textContent = 'Online';
-                    if (indicatorEl) indicatorEl.textContent = 'Online';
+            // SceneController creation moved to cad-viewport.js
+            
+            // Init Automerge
+            let retries = 0;
+            while (!window.cadDocManager && retries < 30) {
+                await new Promise(r => setTimeout(r, 100));
+                retries++;
+            }
+            if (window.cadDocManager) {
+                try {
+                    await window.cadDocManager.init();
+                    console.log("Automerge doc ready:", window.cadDocManager.documentUrl);
+                } catch (err) {
+                    console.warn("Automerge init failed:", err);
                 }
-
-                // Init Automerge
-                let retries = 0;
-                while (!window.cadDocManager && retries < 30) {
-                    await new Promise(r => setTimeout(r, 100));
-                    retries++;
-                }
-                if (window.cadDocManager) {
-                    try {
-                        await window.cadDocManager.init();
-                        console.log("Automerge doc ready:", window.cadDocManager.documentUrl);
-                    } catch (err) {
-                        console.warn("Automerge init failed:", err);
-                    }
-                }
-            } catch (e) {
-                console.error("Init error:", e);
-                document.body.innerHTML = '<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>';
             }
         }
         runWasm();
     </script>
-    <script type="module" src="state.js"></script>
-    <script type="module" src="history.js"></script>
-    <script type="module" src="ui.js"></script>
-    <script src="sketch.js"></script>
-    <script>
+    <script type="module">
+        // Use dynamic imports to leverage the import map for cache busting
+        import('./state.js');
+        import('./cad-viewport.js');
+        import('./history.js');
+        import('./ui.js');
+        
+        // Non-module script needs manual busting
+        const s = document.createElement('script');
+        s.src = 'sketch.js?v=' + (window.__cadVersion || Date.now());
+        document.body.appendChild(s);
+
         if (!window.__cadLocalMode) {
-            var s = document.createElement('script');
-            s.type = 'module';
-            s.src = 'worker-relay.js';
-            document.body.appendChild(s);
+            import('./worker-relay.js');
         }
+
+        // Show version from API health
+        fetch('/api/health').then(r => r.json()).then(d => {
+            if (d.version) document.getElementById('status-version').textContent = 'v' + d.version;
+        }).catch(() => {});
     </script>
 </body>
 </html>

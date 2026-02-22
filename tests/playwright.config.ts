@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 // Dev server must be running before tests start.
 // Start it with: task truck:test:serve:start
 // Or run the full pipeline: task truck:test:all
-const BASE_URL = process.env.BASE_URL || 'http://localhost:8787';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8788';
 const IS_SLOW = !!process.env.SLOW;
 
 export default defineConfig({

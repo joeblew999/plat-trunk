@@ -3,16 +3,14 @@
     "add_cube": {
       "description": "Add a cube primitive",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "size": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           }
         },
-        "title": "AddCubeParams",
         "type": "object"
       },
       "readonly": false,
@@ -21,21 +19,18 @@
     "add_cylinder": {
       "description": "Add a cylinder primitive",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "height": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "radius": {
             "default": 0.5,
-            "format": "double",
             "type": "number"
           }
         },
-        "title": "AddCylinderParams",
         "type": "object"
       },
       "readonly": false,
@@ -44,16 +39,14 @@
     "add_sphere": {
       "description": "Add a sphere primitive",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "radius": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           }
         },
-        "title": "AddSphereParams",
         "type": "object"
       },
       "readonly": false,
@@ -62,21 +55,18 @@
     "add_torus": {
       "description": "Add a torus primitive",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "majorRadius": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "minorRadius": {
             "default": 0.3,
-            "format": "double",
             "type": "number"
           }
         },
-        "title": "AddTorusParams",
         "type": "object"
       },
       "readonly": false,
@@ -85,8 +75,8 @@
     "boolean_intersect": {
       "description": "Intersect two objects (A & B)",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "idA": {
             "type": "string"
@@ -99,7 +89,6 @@
           "idA",
           "idB"
         ],
-        "title": "BooleanParams",
         "type": "object"
       },
       "readonly": false,
@@ -108,8 +97,8 @@
     "boolean_subtract": {
       "description": "Subtract B from A",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "idA": {
             "type": "string"
@@ -122,7 +111,6 @@
           "idA",
           "idB"
         ],
-        "title": "BooleanParams",
         "type": "object"
       },
       "readonly": false,
@@ -131,8 +119,8 @@
     "boolean_union": {
       "description": "Union two objects (A + B)",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "idA": {
             "type": "string"
@@ -145,7 +133,6 @@
           "idA",
           "idB"
         ],
-        "title": "BooleanParams",
         "type": "object"
       },
       "readonly": false,
@@ -154,8 +141,8 @@
     "clash_detect": {
       "description": "Detect intersection between two objects",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "idA": {
             "type": "string"
@@ -168,7 +155,6 @@
           "idA",
           "idB"
         ],
-        "title": "BooleanParams",
         "type": "object"
       },
       "readonly": true,
@@ -177,17 +163,44 @@
     "clear": {
       "description": "Clear all objects from the scene",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
       "readonly": false,
       "returns": "success"
     },
+    "clear_data": {
+      "description": "Wipe all local application data",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "create_model": {
+      "description": "Create a new model",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
+        "properties": {
+          "name": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "modelId"
+    },
     "delete": {
       "description": "Delete an object by ID",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
@@ -196,7 +209,6 @@
         "required": [
           "objectId"
         ],
-        "title": "ObjectIdParam",
         "type": "object"
       },
       "readonly": false,
@@ -205,6 +217,7 @@
     "deselect": {
       "description": "Clear selection",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
@@ -214,8 +227,8 @@
     "duplicate": {
       "description": "Duplicate an object",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
@@ -224,7 +237,6 @@
         "required": [
           "objectId"
         ],
-        "title": "ObjectIdParam",
         "type": "object"
       },
       "readonly": false,
@@ -233,6 +245,7 @@
     "export_obj": {
       "description": "Export scene as OBJ string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
@@ -242,6 +255,7 @@
     "export_scene": {
       "description": "Export scene as JSON string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
@@ -251,6 +265,7 @@
     "export_step": {
       "description": "Export scene as STEP string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
@@ -260,6 +275,7 @@
     "export_stl": {
       "description": "Export scene as STL string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
@@ -269,8 +285,8 @@
     "get_bim_metadata": {
       "description": "Get BIM metadata for an object",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
@@ -279,17 +295,32 @@
         "required": [
           "objectId"
         ],
-        "title": "ObjectIdParam",
         "type": "object"
       },
       "readonly": true,
       "returns": "bim"
     },
+    "get_bounding_sphere": {
+      "description": "Get bounding sphere for object or scene",
+      "ephemeral": true,
+      "layer": "wasm",
+      "params": {
+        "properties": {
+          "objectId": {
+            "description": "If provided, get sphere for this object. If null, get sphere for entire scene.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "sphere"
+    },
     "get_object_style": {
       "description": "Get object material style",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
@@ -298,7 +329,6 @@
         "required": [
           "objectId"
         ],
-        "title": "ObjectIdParam",
         "type": "object"
       },
       "readonly": true,
@@ -307,17 +337,28 @@
     "get_state": {
       "description": "Get full scene state",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
       "readonly": true,
       "returns": "state"
     },
+    "get_status": {
+      "description": "Get complete system status",
+      "ephemeral": true,
+      "layer": "js",
+      "params": {
+        "type": "object"
+      },
+      "readonly": true,
+      "returns": "status"
+    },
     "import_ifc": {
       "description": "Import BIM data from IFC string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "data": {
             "type": "string"
@@ -326,7 +367,40 @@
         "required": [
           "data"
         ],
-        "title": "ImportIfcParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "import_mvt": {
+      "description": "Import Mapbox Vector Tile (MVT) building data",
+      "ephemeral": false,
+      "layer": "wasm",
+      "params": {
+        "properties": {
+          "data": {
+            "description": "Base64-encoded Protobuf data of the MVT tile.",
+            "type": "string"
+          },
+          "x": {
+            "default": 0.0,
+            "description": "X coordinate offset in world meters.",
+            "type": "number"
+          },
+          "y": {
+            "default": 0.0,
+            "description": "Y coordinate offset in world meters.",
+            "type": "number"
+          },
+          "z": {
+            "default": 0.0,
+            "description": "Z coordinate offset in world meters.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "data"
+        ],
         "type": "object"
       },
       "readonly": false,
@@ -335,8 +409,8 @@
     "import_scene": {
       "description": "Import scene from JSON string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "json": {
             "type": "string"
@@ -345,7 +419,6 @@
         "required": [
           "json"
         ],
-        "title": "ImportSceneParams",
         "type": "object"
       },
       "readonly": false,
@@ -354,8 +427,8 @@
     "import_step": {
       "description": "Import B-Rep data from STEP string",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "data": {
             "type": "string"
@@ -364,7 +437,6 @@
         "required": [
           "data"
         ],
-        "title": "ImportStepParams",
         "type": "object"
       },
       "readonly": false,
@@ -373,15 +445,13 @@
     "pick_at": {
       "description": "Ray-cast pick at NDC coords (read-only)",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "ndcX": {
-            "format": "double",
             "type": "number"
           },
           "ndcY": {
-            "format": "double",
             "type": "number"
           }
         },
@@ -389,7 +459,6 @@
           "ndcX",
           "ndcY"
         ],
-        "title": "PickAtParams",
         "type": "object"
       },
       "readonly": true,
@@ -398,17 +467,28 @@
     "pick_mesh_stats": {
       "description": "Get pick mesh statistics",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
         "type": "object"
       },
       "readonly": true,
       "returns": "stats"
     },
+    "redo": {
+      "description": "Redo last operation",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
     "rename": {
       "description": "Rename an object",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "name": {
             "type": "string"
@@ -421,7 +501,6 @@
           "name",
           "objectId"
         ],
-        "title": "RenameParams",
         "type": "object"
       },
       "readonly": false,
@@ -430,27 +509,23 @@
     "rotate": {
       "description": "Rotate an object around an axis",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "angleDeg": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "axisX": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "axisY": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "axisZ": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "objectId": {
@@ -460,7 +535,6 @@
         "required": [
           "objectId"
         ],
-        "title": "RotateParams",
         "type": "object"
       },
       "readonly": false,
@@ -469,32 +543,28 @@
     "scale": {
       "description": "Scale an object by sx/sy/sz",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
           },
           "sx": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "sy": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "sz": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           }
         },
         "required": [
           "objectId"
         ],
-        "title": "ScaleParams",
         "type": "object"
       },
       "readonly": false,
@@ -503,8 +573,8 @@
     "select": {
       "description": "Select an object by ID",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "id": {
             "type": "string"
@@ -513,7 +583,6 @@
         "required": [
           "id"
         ],
-        "title": "SelectParams",
         "type": "object"
       },
       "readonly": false,
@@ -522,15 +591,13 @@
     "select_at": {
       "description": "Pick + select at NDC coords",
       "ephemeral": true,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "ndcX": {
-            "format": "double",
             "type": "number"
           },
           "ndcY": {
-            "format": "double",
             "type": "number"
           }
         },
@@ -538,31 +605,79 @@
           "ndcX",
           "ndcY"
         ],
-        "title": "PickAtParams",
         "type": "object"
       },
       "readonly": false,
       "returns": "selectedId"
     },
+    "set_automerge": {
+      "description": "Enable/disable Automerge sync",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "enabled"
+    },
+    "set_camera": {
+      "description": "Set camera view-projection matrix",
+      "ephemeral": true,
+      "layer": "wasm",
+      "params": {
+        "properties": {
+          "far": {
+            "type": "number"
+          },
+          "fov_deg": {
+            "type": "number"
+          },
+          "matrix_world": {
+            "description": "16 floats (column-major) representing the camera's world matrix (inverse of View).",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "near": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "far",
+          "fov_deg",
+          "matrix_world",
+          "near"
+        ],
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
     "set_color": {
       "description": "Set object color (RGBA)",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "a": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           },
           "b": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "g": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "objectId": {
@@ -570,35 +685,76 @@
           },
           "r": {
             "default": 1.0,
-            "format": "double",
             "type": "number"
           }
         },
         "required": [
           "objectId"
         ],
-        "title": "SetColorParams",
         "type": "object"
       },
       "readonly": false,
       "returns": "success"
     },
+    "set_mode": {
+      "description": "Set local/online mode",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
+        "properties": {
+          "mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "mode"
+    },
     "set_style": {
       "description": "Set object material style",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "objectId": {
             "type": "string"
           },
-          "style": true
+          "style": {
+            "description": "Material style: albedo [r,g,b,a], roughness, reflectance, ambient_ratio (all 0-1)",
+            "properties": {
+              "albedo": {
+                "description": "RGBA color array, each value 0-1",
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              "ambient_ratio": {
+                "description": "Ambient light ratio (0-1)",
+                "type": "number"
+              },
+              "reflectance": {
+                "description": "Surface reflectance (0-1)",
+                "type": "number"
+              },
+              "roughness": {
+                "description": "Surface roughness (0 = mirror, 1 = matte)",
+                "type": "number"
+              }
+            },
+            "type": "object"
+          }
         },
         "required": [
           "objectId",
           "style"
         ],
-        "title": "SetStyleParams",
         "type": "object"
       },
       "readonly": false,
@@ -607,11 +763,10 @@
     "sketch_extrude": {
       "description": "Extrude a 2D sketch to 3D",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "height": {
-            "format": "double",
             "type": "number"
           },
           "sketchJson": {
@@ -622,7 +777,6 @@
           "height",
           "sketchJson"
         ],
-        "title": "SketchExtrudeParams",
         "type": "object"
       },
       "readonly": false,
@@ -631,22 +785,19 @@
     "translate": {
       "description": "Move an object by dx/dy/dz",
       "ephemeral": false,
+      "layer": "wasm",
       "params": {
-        "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
           "dx": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "dy": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "dz": {
             "default": 0.0,
-            "format": "double",
             "type": "number"
           },
           "objectId": {
@@ -656,7 +807,16 @@
         "required": [
           "objectId"
         ],
-        "title": "TranslateParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
+    "undo": {
+      "description": "Undo last operation",
+      "ephemeral": false,
+      "layer": "js",
+      "params": {
         "type": "object"
       },
       "readonly": false,

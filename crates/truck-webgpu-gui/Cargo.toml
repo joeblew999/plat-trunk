@@ -50,13 +50,26 @@ ifc-lite-geometry = { path = "../../.src/ifc-lite/rust/geometry" }
 # 2D constraint solver for parametric sketching
 kcl-ezpz = { path = "../../.src/ezpz/kcl-ezpz" }
 
+# Optional features
+geozero = { version = "0.15.1", features = ["with-mvt"], optional = true }
+earcutr = { version = "0.5.0", optional = true }
+bytes = { version = "1.11.1", optional = true }
+prost = { version = "0.14.3", optional = true }
+gltf = { version = "1.4.1", optional = true }
+base64 = "0.22.1"
+
 [[bin]]
 name = "generate-schema"
 path = "src/bin/generate_schema.rs"
 
 [features]
-default = []
+default = ["mvt"]
 webgl = ["wgpu/webgl", "truck-platform/webgl", "truck-rendimpl/webgl"]
+mvt = ["dep:geozero", "dep:earcutr", "dep:bytes", "dep:prost"]
+gltf = ["dep:gltf"]
 
 [profile.release]
 opt-level = "s"
+
+[build-dependencies]
+prost-build = "0.14.3"

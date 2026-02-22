@@ -25,22 +25,16 @@ use truck_rendimpl::*;
 
 use ifc_lite_core as ifc;
 
+use base64::prelude::*;
+
+#[cfg(feature = "mvt")]
+use crate::mvt::*;
+
+// #[cfg(feature = "gltf")]
+// use crate::gltf_import::*;
+
+use crate::{log, error};
 use crate::{make_cube, make_sphere, make_cylinder, make_torus};
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-    #[wasm_bindgen(js_namespace = console)]
-    fn error(s: &str);
-}
-
-macro_rules! log {
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
-macro_rules! error {
-    ($($t:tt)*) => (error(&format_args!($($t)*).to_string()))
-}
 
 // ---------------------------------------------------------------------------
 // Scene object: a solid + its rendered instances
@@ -84,7 +78,7 @@ impl Default for ObjectStyle {
             albedo: [0.2, 0.6, 1.0, 1.0],
             roughness: 0.3,
             reflectance: 0.5,
-            ambient_ratio: 0.05,
+            ambient_ratio: 0.2,
         }
     }
 }
@@ -96,7 +90,7 @@ impl ObjectStyle {
             albedo: c,
             roughness: 0.3,
             reflectance: 0.5,
-            ambient_ratio: 0.05,
+            ambient_ratio: 0.2,
         }
     }
 
@@ -213,6 +207,8 @@ struct SharedState {
     active_sketch: Option<crate::sketch::Sketch>,
     // Object naming
     name_counters: HashMap<String, usize>,
+    // Passive camera mode (controlled by JS loop)
+    is_passive_camera: bool,
 }
 
 /// Rebuild the id→index lookup after any mutation that changes Vec ordering.
@@ -475,40 +471,37 @@ fn solid_to_instances(
         });
     // Only normalize by size — do NOT re-center.
     // Centering would force all objects back to origin, making translate invisible.
-    let size = bdd_box.size();
-    let mat = Matrix4::from_scale(size);
-
-    let mesh_solid = solid.triangulation(size * 0.005);
+    let mesh_solid = solid.triangulation(0.01); 
     let curves = mesh_solid
         .edge_iter()
         .map(|edge| edge.curve())
         .collect::<Vec<_>>();
 
     let poly = mesh_solid.to_polygon();
-    let inv_mat = mat.invert().unwrap();
-    // Use a finer tessellation for the pick mesh so curved surfaces
-    // (sphere, torus) have more triangles and fewer gaps vs. the visual surface.
-    let pick_solid = solid.triangulation(size * 0.002);
+    let mat = Matrix4::identity();
+    
+    // Use a finer tessellation for the pick mesh
+    let pick_solid = solid.triangulation(0.005);
     let pick_poly = pick_solid.to_polygon();
     let raw_pick = extract_pick_mesh(&pick_poly);
     let pick_mesh = PickMesh {
-        positions: raw_pick.positions.iter().map(|p| inv_mat.transform_point(*p)).collect(),
+        positions: raw_pick.positions.clone(),
         triangles: raw_pick.triangles,
     };
 
     let polygon_state = PolygonState {
-        matrix: inv_mat,
+        matrix: mat,
         material: Material {
             albedo: style.to_material_color(),
             roughness: style.roughness,
             reflectance: style.reflectance,
-            ambient_ratio: style.ambient_ratio,
+            ambient_ratio: 1.0,
             ..Default::default()
         },
         ..Default::default()
     };
     let wire_state = WireFrameState {
-        matrix: mat.invert().unwrap(),
+        matrix: mat,
         ..Default::default()
     };
 
@@ -643,24 +636,20 @@ fn mesh_to_instances(
     mesh: &PolygonMesh,
     style: &ObjectStyle,
 ) -> (PolygonInstance, WireFrameInstance, PickMesh) {
-    let bdd_box = mesh.bounding_box();
-    let size = bdd_box.size();
-    let mat = Matrix4::from_scale(size);
-    let inv_mat = mat.invert().unwrap();
-
+    let mat = Matrix4::identity();
     let raw_pick = extract_pick_mesh(mesh);
     let pick_mesh = PickMesh {
-        positions: raw_pick.positions.iter().map(|p| inv_mat.transform_point(*p)).collect(),
+        positions: raw_pick.positions.clone(),
         triangles: raw_pick.triangles,
     };
 
     let polygon_state = PolygonState {
-        matrix: inv_mat,
+        matrix: mat,
         material: Material {
             albedo: style.to_material_color(),
             roughness: style.roughness,
             reflectance: style.reflectance,
-            ambient_ratio: style.ambient_ratio,
+            ambient_ratio: 1.0,
             ..Default::default()
         },
         ..Default::default()
@@ -677,7 +666,7 @@ fn mesh_to_instances(
     }
 
     let wire_state = WireFrameState {
-        matrix: inv_mat,
+        matrix: mat,
         ..Default::default()
     };
 
@@ -832,11 +821,18 @@ impl SceneController {
                         far_clip: 100.0,
                     }
                 },
-                lights: vec![Light {
-                    position: Point3::new(1.0, 1.0, 1.0),
-                    color: Vector3::new(1.0, 1.0, 1.0),
-                    light_type: LightType::Point,
-                }],
+                lights: vec![
+                    Light {
+                        position: Point3::new(100.0, 100.0, 100.0),
+                        color: Vector3::new(1.0, 1.0, 1.0),
+                        light_type: LightType::Uniform,
+                    },
+                    Light {
+                        position: Point3::new(-100.0, 50.0, -100.0),
+                        color: Vector3::new(0.2, 0.2, 0.3),
+                        light_type: LightType::Uniform,
+                    }
+                ],
             },
             backend_buffer: BackendBufferConfig {
                 sample_count: 1,
@@ -869,6 +865,7 @@ impl SceneController {
             on_drag_complete: None,
             active_sketch: None,
             name_counters: HashMap::new(),
+            is_passive_camera: false,
         };
 
         // Start with a default cube
@@ -935,9 +932,10 @@ impl SceneController {
                         WindowEvent::MouseInput { state: btn_state, button, .. } => {
                             let mut s = state.borrow_mut();
                             let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
+                            let is_passive = s.is_passive_camera;
                             match button {
                                 MouseButton::Left => {
-                                    if !is_dragging {
+                                    if !is_dragging && !is_passive {
                                         s.rotate_flag = btn_state == ElementState::Pressed;
                                     }
                                 }
@@ -962,7 +960,8 @@ impl SceneController {
                             let mut s = state.borrow_mut();
                             let pos = Vector2::new(position.x, position.y);
                             let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
-                            if s.rotate_flag && !is_dragging {
+                            let is_passive = s.is_passive_camera;
+                            if s.rotate_flag && !is_dragging && !is_passive {
                                 let dir2d = pos - s.prev_cursor;
                                 if !dir2d.so_small() {
                                     let matrix = &mut s.scene.studio_config_mut().camera.matrix;
@@ -984,6 +983,7 @@ impl SceneController {
                                 MouseScrollDelta::PixelDelta(pos) => pos.y * 0.01,
                             };
                             let mut s = state.borrow_mut();
+                            if s.is_passive_camera { return; }
                             let camera = &mut s.scene.studio_config_mut().camera;
                             match &mut camera.method {
                                 ProjectionMethod::Parallel { screen_size } => {
@@ -1000,6 +1000,7 @@ impl SceneController {
                         // --- Touch: iOS / mobile ---
                         WindowEvent::Touch(touch) => {
                             let mut s = state.borrow_mut();
+                            if s.is_passive_camera { return; }
                             let pos = Vector2::new(touch.location.x, touch.location.y);
                             match touch.phase {
                                 TouchPhase::Started => {
@@ -1093,6 +1094,26 @@ impl SceneController {
         let solid = make_torus(major_r, minor_r);
         let mut s = self.state.borrow_mut();
         add_solid_to_state(&mut s, solid, "Torus", None)
+    }
+
+    #[wasm_bindgen]
+    pub fn set_camera(&self, matrix_world: &[f64], fov_deg: f64, near: f64, far: f64) -> bool {
+        if matrix_world.len() < 16 { return false; }
+        let mut s = self.state.borrow_mut();
+        s.is_passive_camera = true;
+        
+        let camera = &mut s.scene.studio_config_mut().camera;
+        
+        let mut mat = Matrix4::identity();
+        for i in 0..16 {
+            mat[i / 4][i % 4] = matrix_world[i];
+        }
+        camera.matrix = mat;
+        camera.near_clip = near;
+        camera.far_clip = far;
+        camera.method = ProjectionMethod::Perspective { fov: Rad(fov_deg.to_radians()) };
+        
+        true
     }
 
     // =====================================================================
@@ -1412,6 +1433,7 @@ impl SceneController {
         s.objects.clear();
         s.id_to_index.clear();
         s.bounding_spheres.clear();
+        s.name_counters.clear();
         s.interaction = InteractionMode::Idle;
         s.scene.clear_objects();
     }
@@ -2480,6 +2502,30 @@ impl SceneController {
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
             }
+            #[cfg(feature = "mvt")]
+            "import_mvt" => {
+                match serde_json::from_value::<ImportMvtParams>(p) {
+                    Ok(params) => {
+                        let bytes = match BASE64_STANDARD.decode(&params.data) {
+                            Ok(b) => b,
+                            Err(e) => return serde_json::json!({ "error": format!("Base64 decode failed: {}", e) }).to_string(),
+                        };
+                        let offset = Point3::new(params.x, params.y, params.z);
+                        let solids = parse_mvt_tile(&bytes, offset);
+                        let count = solids.len();
+                        
+                        let mut s = self.state.borrow_mut();
+                        for solid in solids {
+                            add_solid_to_state(&mut s, solid, "Building", None);
+                        }
+                        rebuild_scene(&mut s);
+                        
+                        log!("WASM: Imported {} buildings from MVT", count);
+                        serde_json::json!({ "success": true, "objectCount": count })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
             "import_step" => {
                 match serde_json::from_value::<ImportStepParams>(p) {
                     Ok(params) => {
@@ -2538,6 +2584,15 @@ impl SceneController {
                 match selected_id {
                     Some(id) => serde_json::json!({ "selectedId": id }),
                     None => serde_json::json!({ "selectedId": null }),
+                }
+            }
+            "set_camera" => {
+                match serde_json::from_value::<SetCameraParams>(p) {
+                    Ok(params) => {
+                        let ok = self.set_camera(&params.matrix_world, params.fov_deg, params.near, params.far);
+                        serde_json::json!({ "success": ok })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
             }
             "pick_at" => {
@@ -2646,6 +2701,14 @@ impl SceneController {
                 let s = self.state.borrow();
                 let ids: Vec<String> = s.objects.iter().map(|o| o.id.to_string()).collect();
                 let names: HashMap<String, String> = s.objects.iter().map(|o| (o.id.to_string(), o.name.clone())).collect();
+                
+                let camera = &s.scene.studio_config().camera;
+                let matrix_world: Vec<f64> = (0..16).map(|i| camera.matrix[i / 4][i % 4]).collect();
+                let fov_deg = match camera.method {
+                    ProjectionMethod::Perspective { fov } => fov.0.to_degrees(),
+                    _ => 45.0,
+                };
+
                 serde_json::json!({
                     "ready": true,
                     "objectCount": ids.len(),
@@ -2657,7 +2720,65 @@ impl SceneController {
                         InteractionMode::Selected { .. } => "selected",
                         InteractionMode::Dragging { .. } => "dragging",
                     },
+                    "camera": {
+                        "matrix_world": matrix_world,
+                        "fov_deg": fov_deg,
+                        "near": camera.near_clip,
+                        "far": camera.far_clip,
+                    }
                 })
+            }
+            "get_bounding_sphere" => {
+                match serde_json::from_value::<GetBoundingSphereParams>(p) {
+                    Ok(params) => {
+                        let s = self.state.borrow();
+                        if let Some(id) = params.object_id {
+                            let idx = match s.id_to_index.get(&id) {
+                                Some(&i) => i,
+                                None => return serde_json::json!({"error":"not found"}).to_string(),
+                            };
+                            let (c, r) = s.objects[idx].pick_mesh.bounding_sphere();
+                            serde_json::json!({
+                                "sphere": {
+                                    "center": [c.x, c.y, c.z],
+                                    "radius": r
+                                }
+                            })
+                        } else {
+                            // Entire scene
+                            if s.objects.is_empty() {
+                                serde_json::json!({
+                                    "sphere": {
+                                        "center": [0.0, 0.0, 0.0],
+                                        "radius": 1.0
+                                    }
+                                })
+                            } else {
+                                let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                                let mut max = Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                                for obj in &s.objects {
+                                    for p in &obj.pick_mesh.positions {
+                                        min.x = min.x.min(p.x); min.y = min.y.min(p.y); min.z = min.z.min(p.z);
+                                        max.x = max.x.max(p.x); max.y = max.y.max(p.y); max.z = max.z.max(p.z);
+                                    }
+                                }
+                                if min.x.is_infinite() {
+                                    serde_json::json!({ "sphere": { "center": [0.0, 0.0, 0.0], "radius": 1.0 } })
+                                } else {
+                                    let center = Point3::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0, (min.z + max.z) / 2.0);
+                                    let radius = (max - min).magnitude() / 2.0;
+                                    serde_json::json!({
+                                        "sphere": {
+                                            "center": [center.x, center.y, center.z],
+                                            "radius": radius
+                                        }
+                                    })
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
             }
             "rename" => {
                 match serde_json::from_value::<RenameParams>(p) {
