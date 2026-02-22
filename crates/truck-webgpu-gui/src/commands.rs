@@ -327,7 +327,7 @@ pub fn build_schema() -> serde_json::Value {
 
     serde_json::json!({
         "module": "cad",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "commands": cmd_map,
     })
 }

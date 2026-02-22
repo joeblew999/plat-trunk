@@ -14,6 +14,7 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 | API Docs | http://localhost:8788/api-docs |
 | MCP | http://localhost:8788/mcp |
 | GitHub | https://github.com/joeblew999/plat-trunk |
+| CF Deployments | [Dashboard](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
 
 ## Quick Start
 

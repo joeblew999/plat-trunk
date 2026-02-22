@@ -19,7 +19,9 @@ vars:
   BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
   WORKER_DIR: '{{.ROOT_DIR}}/systems/truck/worker'
   CAD_VERSION:
-    sh: cat {{.ROOT_DIR}}/web/cad-schema.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/web/cad-schema.json','utf8')).version)"
+  CAD_VERSION_SLUG:
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/web/cad-schema.json','utf8')).version.replaceAll('.','-'))"
 
 tasks:
   default:
@@ -228,12 +230,13 @@ tasks:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
   "gui:deploy":
-    desc: "Build + upload + deploy to 100% + git tag v{{.CAD_VERSION}}"
+    desc: "Build + upload + git tag v{{.CAD_VERSION}} (does NOT promote — use deploy:promote when ready)"
     deps: ["gui:build"]
     cmds:
       - task: deploy:upload
-      - task: deploy:promote
       - task: deploy:tag
+      - 'echo "Uploaded v{{.CAD_VERSION}} → https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev"'
+      - 'echo "To promote to production: task truck:deploy:promote"'
 
   # --- Tests & Docs ---
   #
@@ -292,7 +295,7 @@ tasks:
         fi
         echo "=== CAD MCP ==="
         if curl -sf http://localhost:8788/api/cad/schema > /dev/null 2>&1; then
-          CMDS=$(curl -s http://localhost:8788/api/cad/schema | python3 -c "import sys,json; print(len(json.load(sys.stdin)['commands']))" 2>/dev/null || echo "?")
+          CMDS=$(curl -s http://localhost:8788/api/cad/schema | bun -e "process.stdout.write(String(Object.keys(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).commands).length))" 2>/dev/null || echo "?")
           echo "  ✓ schema: $CMDS commands (http://localhost:8788/mcp)"
         else
           echo "  ✗ not available"
@@ -484,19 +487,23 @@ tasks:
           echo "Release $VERSION already exists"
         else
           BODY=$(cat <<NOTES
-        ## Live URLs
+        ## Try this version
+
+        **Preview URL**: https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev
+
+        ## All URLs
 
         | Endpoint | URL |
         |----------|-----|
+        | This version | https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev |
         | Production | https://cad.ubuntusoftware.net |
         | API Health | https://cad.ubuntusoftware.net/api/health |
-        | API Schema | https://cad.ubuntusoftware.net/api/cad/schema |
-        | OpenAPI Spec | https://cad.ubuntusoftware.net/api/doc |
-        | MCP (StreamableHTTP) | https://cad.ubuntusoftware.net/mcp |
+        | MCP | https://cad.ubuntusoftware.net/mcp |
+        | CF Dashboard | [Deployments](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
 
         ## Verify
         \`\`\`sh
-        curl -sf https://cad.ubuntusoftware.net/api/health
+        curl -sf https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev/api/health
         # {"version":"{{.CAD_VERSION}}"}
         \`\`\`
         NOTES
@@ -514,7 +521,35 @@ tasks:
     desc: "Upload new Worker version (tagged v{{.CAD_VERSION}}, does NOT deploy)"
     deps: ["gui:build", "deploy:setup"]
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}"
+      - task: deploy:versions:json
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}" --preview-alias "v{{.CAD_VERSION_SLUG}}"
+
+  "deploy:versions:json":
+    desc: Generate versions.json for GUI version picker
+    dir: "{{.ROOT_DIR}}/systems/truck/worker"
+    cmds:
+      - |
+        bun x wrangler versions list --env="" 2>&1 | \
+          awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print tag, ts}' | \
+          sort -t. -k1,1n -k2,2n -k3,3n -u | \
+          bun -e "
+            const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
+            const versions = [...new Map(lines.map(l => {
+              const [tag, ts] = l.split(' ');
+              const ver = tag.replace('v','');
+              const slug = ver.replaceAll('.','-');
+              return [ver, { version: ver, tag, date: ts, url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' }];
+            })).values()].reverse();
+            const current = '{{.CAD_VERSION}}';
+            if (!versions.find(v => v.version === current)) {
+              const slug = current.replaceAll('.','-');
+              versions.unshift({ version: current, tag: 'v'+current, date: new Date().toISOString(), url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
+            }
+            const out = { production: 'https://cad.ubuntusoftware.net', versions };
+            require('fs').writeFileSync('{{.ROOT_DIR}}/web/gui/versions.json', JSON.stringify(out, null, 2) + '\n');
+            console.log('versions.json: ' + versions.length + ' versions');
+          "
+    silent: true
 
   "deploy:promote":
     desc: Deploy latest uploaded version to 100% traffic
@@ -539,6 +574,24 @@ tasks:
     desc: List recent versions (tags, dates, authors)
     cmds:
       - cd {{.WORKER_DIR}} && bun x wrangler versions list --env=""
+
+  "deploy:list":
+    desc: Show tagged versions with preview URLs
+    dir: "{{.ROOT_DIR}}/systems/truck/worker"
+    cmds:
+      - |
+        echo "=== Tagged Versions ==="
+        echo ""
+        bun x wrangler versions list --env="" 2>&1 | \
+          awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print id, ts, tag}' | \
+          sort -k2 -r | while read VID TS TAG; do
+            SLUG=$(echo "$TAG" | sed 's/^v//' | tr '.' '-')
+            echo "  $TAG  ($TS)"
+            echo "    https://v${SLUG}-truck-cad.gedw99.workers.dev"
+            echo ""
+          done
+        echo "Production:  https://cad.ubuntusoftware.net"
+        echo "Dashboard:   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments"
 
   "deploy:status":
     desc: Show current deployment (versions + traffic split)
