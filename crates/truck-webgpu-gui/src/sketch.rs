@@ -16,6 +16,7 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum SketchPlane {
     XY,
     XZ,

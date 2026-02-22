@@ -5,38 +5,36 @@ This project uses **Taskfile** and **Process Compose** to orchestrate services.
 ## Quick Start
 
 ```sh
-task pc:up          # Start everything (NATS, simulator, narun)
-task pc:down        # Stop everything
-task pc:attach      # Attach to running TUI
+task up             # Start everything (gui-worker, shape-viewer)
+task down           # Stop everything
+task attach         # Attach to running TUI
 ```
 
 ## Architecture
 
 ```
-Task → Process Compose → Task
+Taskfile.yml → process-compose.yml → Taskfile tasks
 ```
 
-- `Taskfile.yml` - Main entry point
-- `process-compose.yml` - Service orchestration with health checks
-- `systems/` - Each subsystem has its own Taskfile
+- `Taskfile.yml` — Main entry point, includes all system Taskfiles
+- `process-compose.yml` — Service orchestration (gui-worker, shape-viewer)
+- `systems/` — Each subsystem has its own Taskfile
 
 ## Systems
 
 | Folder | Description |
 |--------|-------------|
-| `nats-server/` | NATS server binary |
-| `nats-cli/` | NATS CLI tool |
-| `nats/` | Go NATS client (part of main module) |
-| `narun/` | HTTP/gRPC gateway to NATS |
-| `pc/` | Process Compose |
+| `truck/` | Rust CAD kernel: WASM build, Worker, tests |
+| `envsubst/` | Environment variable substitution |
+| `gh/` | GitHub CLI tools |
+| `ezpz/` | External dependency |
+| `docs/` | Documentation generation |
 
 ## Standard Tasks
 
 Each system provides:
 
 ```sh
-task <system>:start         # Start service
-task <system>:stop          # Stop service
 task <system>:deps:install  # Install dependencies
 task <system>:deps:clean    # Remove dependencies
 task <system>:debug:self    # Print debug info
@@ -45,9 +43,9 @@ task <system>:debug:self    # Print debug info
 ## Directories
 
 ```
-.bin/    # Binaries (nats-server, nats, narun, process-compose)
-.data/   # Runtime data (nats-server jetstream, narun config)
-.src/    # Cloned repos (narun)
+.bin/    # Binaries (simple-shape-viewer)
+.data/   # Runtime data
+.src/    # Cloned repos (truck, ifc-lite, ezpz)
 ```
 
 ## Configuration
@@ -55,10 +53,7 @@ task <system>:debug:self    # Print debug info
 `.env` is tracked with defaults. Create `.env.local` for secrets (gitignored).
 
 ```env
-NATS_PORT=4222
-NATS_URL=nats://localhost:4222
-NARUN_PORT=8081
-NARUN_METRICS_PORT=9091
+PC_PORT_NUM=8000
 ```
 
 Both Taskfile and Process Compose load from `.env`.

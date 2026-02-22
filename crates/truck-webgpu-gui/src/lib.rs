@@ -12,6 +12,13 @@
 pub mod sketch;
 pub mod commands;
 
+#[cfg(feature = "mvt")]
+pub mod mvt;
+
+// gltf_import is currently in progress and unstable. 
+// It will be enabled via feature flag once fixed.
+// pub mod gltf_import;
+
 use std::f64::consts::PI;
 use truck_meshalgo::prelude::*;
 use truck_modeling::*;
@@ -106,3 +113,27 @@ mod wasm_app;
 // Re-export WASM types at crate root so wasm_bindgen can find them
 #[cfg(target_arch = "wasm32")]
 pub use wasm_app::SceneController;
+
+use wasm_bindgen::prelude::wasm_bindgen;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    pub fn log(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    pub fn error(s: &str);
+}
+
+#[macro_export]
+macro_rules! log {
+    ($($t:tt)*) => {
+        unsafe { $crate::log(&format_args!($($t)*).to_string()) }
+    }
+}
+
+#[macro_export]
+macro_rules! error {
+    ($($t:tt)*) => {
+        unsafe { $crate::error(&format_args!($($t)*).to_string()) }
+    }
+}

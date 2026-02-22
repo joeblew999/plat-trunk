@@ -1,0 +1,23 @@
+{
+  "production": "https://cad.ubuntusoftware.net",
+  "versions": [
+    {
+      "version": "0.5.0",
+      "tag": "v0.5.0",
+      "date": "2026-02-22T08:39:28.528Z",
+      "url": "https://v0-5-0-truck-cad.gedw99.workers.dev"
+    },
+    {
+      "version": "0.4.0",
+      "tag": "v0.4.0",
+      "date": "2026-02-22T08:03:14.961Z",
+      "url": "https://v0-4-0-truck-cad.gedw99.workers.dev"
+    },
+    {
+      "version": "0.3.0",
+      "tag": "v0.3.0",
+      "date": "2026-02-22T06:08:44.893Z",
+      "url": "https://v0-3-0-truck-cad.gedw99.workers.dev"
+    }
+  ]
+}

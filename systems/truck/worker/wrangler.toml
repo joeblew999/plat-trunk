@@ -2,6 +2,7 @@ name = "truck-cad"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 workers_dev = true
+preview_urls = true
 
 # Custom domain: cad.ubuntusoftware.net
 # Also keeps truck-cad.gedw99.workers.dev active
@@ -28,5 +29,9 @@ MY_VAR = "hello world"
 
 [dev]
 ip = "0.0.0.0"
-port = 8787
+port = 8788
 local_protocol = "http"
+
+# PR previews use --preview-alias on the main Worker (not a separate env).
+# Example: pr-42-truck-cad.gedw99.workers.dev
+# See: task truck:deploy:preview PR_NUMBER=42

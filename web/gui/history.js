@@ -23,7 +23,9 @@ class CadDocumentManager {
         this.handle = null;
         this.actorId = this._getOrCreateActorId();
         this._replayInProgress = false;
+        this._suppressChangeReplay = false;
         this._localOpCount = 0;
+        this.enabled = !window.__cadSyncDisabled;
     }
 
     _getOrCreateActorId() {
@@ -52,16 +54,27 @@ class CadDocumentManager {
         // Check URL for ?doc= parameter
         const params = new URLSearchParams(window.location.search);
         const docParam = params.get('doc');
+        const modelId = window.__modelId || 'default';
 
         if (docParam && isValidAutomergeUrl(docParam)) {
+            console.log(`[Automerge] Loading doc from URL: ${docParam}`);
             await this.loadDocument(docParam);
         } else {
-            // Check localStorage for last document
-            const lastUrl = localStorage.getItem('cad-last-doc-url');
-            if (lastUrl && isValidAutomergeUrl(lastUrl)) {
-                await this.loadDocument(lastUrl);
+            // Check localStorage for document associated with this modelId
+            const modelDocUrl = localStorage.getItem(`cad-doc-url-${modelId}`);
+            if (modelDocUrl && isValidAutomergeUrl(modelDocUrl)) {
+                console.log(`[Automerge] Loading doc for model ${modelId}: ${modelDocUrl}`);
+                await this.loadDocument(modelDocUrl);
             } else {
-                await this.createDocument('Untitled');
+                // Fallback to legacy last-doc
+                const lastUrl = localStorage.getItem('cad-last-doc-url');
+                if (lastUrl && isValidAutomergeUrl(lastUrl)) {
+                    console.log(`[Automerge] Loading legacy last-doc: ${lastUrl}`);
+                    await this.loadDocument(lastUrl);
+                } else {
+                    console.log(`[Automerge] Creating new doc for model ${modelId}`);
+                    await this.createDocument(modelId === 'default' ? 'Untitled' : `Model ${modelId}`);
+                }
             }
         }
     }
@@ -72,7 +85,6 @@ class CadDocumentManager {
             name: name || 'Untitled',
             createdAt: new Date().toISOString(),
             operations: [],
-            bimHierarchy: {},
         });
 
         await this.handle.doc();
@@ -88,7 +100,9 @@ class CadDocumentManager {
         }
 
         this._localOpCount = this._getDocOpCount();
+        const modelId = window.__modelId || 'default';
         localStorage.setItem('cad-last-doc-url', this.handle.url);
+        localStorage.setItem(`cad-doc-url-${modelId}`, this.handle.url);
         this._listenForChanges();
         this._updateDocInfo();
         this._renderTimeline();
@@ -98,7 +112,9 @@ class CadDocumentManager {
     /** Load an existing document by Automerge URL */
     async loadDocument(url) {
         this.handle = await this.repo.find(url);
+        const modelId = window.__modelId || 'default';
         localStorage.setItem('cad-last-doc-url', url);
+        localStorage.setItem(`cad-doc-url-${modelId}`, url);
         this._listenForChanges();
         await this._replayScene();
         this._localOpCount = this._getDocOpCount();
@@ -110,7 +126,7 @@ class CadDocumentManager {
      *  Fire-and-forget — WASM has already executed. This is for undo/redo and cross-tab sync.
      *  (Like bc?.broadcast() in test-hono.) */
     record(type, params = {}, meta = {}) {
-        if (!this.handle) return;
+        if (!this.handle || !this.enabled) return;
 
         const op = {
             id: crypto.randomUUID(),
@@ -122,8 +138,14 @@ class CadDocumentManager {
             groupId: meta.groupId || null,
         };
 
+        this._suppressChangeReplay = true;
         this.handle.change((d) => {
             d.operations.push(op);
+
+            // Special case: BIM hierarchy from IFC import
+            if (type === 'import_ifc' && meta.hierarchy) {
+                d.bimHierarchy = meta.hierarchy;
+            }
 
             // Periodic snapshot for fast replay
             if (d.operations.length % SNAPSHOT_INTERVAL === 0) {
@@ -134,28 +156,11 @@ class CadDocumentManager {
                 }
             }
         });
+        this._suppressChangeReplay = false;
 
         this._localOpCount = this._getDocOpCount();
         reconcile({});
         this._renderTimeline();
-    }
-
-    /** Update the BIM hierarchy in the document */
-    updateBimHierarchy(nodes) {
-        if (!this.handle || !nodes) return;
-        this.handle.change((d) => {
-            if (!d.bimHierarchy) d.bimHierarchy = {};
-            for (const node of nodes) {
-                d.bimHierarchy[node.entityId] = {
-                    id: node.objectId || null,
-                    globalId: node.globalId,
-                    type: node.ifcType,
-                    name: node.name,
-                    children: node.children.map(String),
-                };
-            }
-        });
-        reconcile({});
     }
 
     /** Undo last own enabled operation (or entire group) — sets enabled=false and replays */
@@ -168,6 +173,7 @@ class CadDocumentManager {
         for (let i = doc.operations.length - 1; i >= 0; i--) {
             if (doc.operations[i].actorId === this.actorId && doc.operations[i].enabled) {
                 const targetGroupId = doc.operations[i].groupId;
+                this._suppressChangeReplay = true;
                 this.handle.change((d) => {
                     if (targetGroupId) {
                         for (let j = 0; j < d.operations.length; j++) {
@@ -179,6 +185,7 @@ class CadDocumentManager {
                         d.operations[i].enabled = false;
                     }
                 });
+                this._suppressChangeReplay = false;
                 this._replayScene();
                 this._localOpCount = this._getDocOpCount();
                 return true;
@@ -204,6 +211,7 @@ class CadDocumentManager {
         if (target === -1) return false;
 
         const targetGroupId = doc.operations[target].groupId;
+        this._suppressChangeReplay = true;
         this.handle.change((d) => {
             if (targetGroupId) {
                 for (let j = 0; j < d.operations.length; j++) {
@@ -215,6 +223,7 @@ class CadDocumentManager {
                 d.operations[target].enabled = true;
             }
         });
+        this._suppressChangeReplay = false;
         this._replayScene();
         this._localOpCount = this._getDocOpCount();
         return true;
@@ -226,6 +235,7 @@ class CadDocumentManager {
         if (!this.handle) return false;
         const doc = this.handle.doc();
         if (!doc || toOpIndex < 0 || toOpIndex >= doc.operations.length) return false;
+        this._suppressChangeReplay = true;
         this.handle.change((d) => {
             for (let i = 0; i < d.operations.length; i++) {
                 if (d.operations[i].actorId !== this.actorId) continue;
@@ -233,6 +243,7 @@ class CadDocumentManager {
                 d.operations[i].enabled = (i <= toOpIndex);
             }
         });
+        this._suppressChangeReplay = false;
         this._replayScene();
         this._localOpCount = this._getDocOpCount();
         return true;
@@ -317,19 +328,17 @@ class CadDocumentManager {
         this._replayInProgress = false;
     }
 
-    /** Listen for remote changes via Automerge and replay scene.
-     *  Uses patchInfo.source to distinguish local vs remote changes. */
+    /** Listen for remote changes via Automerge and replay scene. */
     _listenForChanges() {
         if (!this.handle) return;
-        this.handle.on('change', (evt) => {
-            if (this._replayInProgress) return;
+        this.handle.on('change', () => {
+            if (this._replayInProgress || this._suppressChangeReplay) return;
 
-            // Only replay for remote changes — local ops are already executed by cadCommand()
-            const source = evt?.patchInfo?.source;
-            if (source === 'receiveSyncMessage' || source === 'applyChanges') {
+            console.log('[Automerge] Remote change detected, replaying scene...');
+            setTimeout(() => {
                 this._replayScene();
                 this._localOpCount = this._getDocOpCount();
-            }
+            }, 0);
         });
     }
 
@@ -446,6 +455,7 @@ class CadDocumentManager {
                 const ci = parseInt(btn.dataset.chip);
                 const chip = chips[ci];
                 if (!chip.own) return;
+                this._suppressChangeReplay = true;
                 this.handle.change((d) => {
                     if (chip.groupId) {
                         for (let j = 0; j < d.operations.length; j++) {
@@ -457,6 +467,7 @@ class CadDocumentManager {
                         d.operations[chip.opIndex].enabled = !chip.enabled;
                     }
                 });
+                this._suppressChangeReplay = false;
                 this._replayScene();
                 this._localOpCount = this._getDocOpCount();
             });

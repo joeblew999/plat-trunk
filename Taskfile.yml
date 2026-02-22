@@ -3,10 +3,6 @@ version: '3'
 # ============================================================================
 # plat-trunk - CAD Kernel Platform
 #
-# Works with:
-#   - task + process-compose (standalone)
-#   - xplat (bundles both)
-#
 # Usage:
 #   task deps:install   # Install dependencies
 #   task up             # Start services
@@ -63,22 +59,22 @@ tasks:
   up:
     desc: Start all services with TUI
     cmds:
-      - xplat process up -f process-compose.yml --port ${PC_PORT:-8000}
+      - process-compose up -f process-compose.yml --port ${PC_PORT:-8000}
 
   "up:detached":
     desc: Start all services in background
     cmds:
-      - xplat process up -f process-compose.yml -D -t=false --port ${PC_PORT:-8000}
+      - process-compose up -f process-compose.yml -D -t=false --port ${PC_PORT:-8000}
 
   down:
     desc: Stop all services
     cmds:
-      - xplat process down
+      - process-compose down
 
   attach:
     desc: Attach to running TUI
     cmds:
-      - xplat process attach
+      - process-compose attach
 
   # ===========================================================================
   # Debug
@@ -123,6 +119,7 @@ tasks:
       - truck:deps:install
       - ezpz:deps:clone
       - gh:deps:install
+      - truck:mcp:setup
       - skills:update
 
   deps:clean:

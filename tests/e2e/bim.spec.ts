@@ -56,9 +56,9 @@ test.describe('BIM / IFC Operations', () => {
     expect(Object.keys(hierarchy).length).toBeGreaterThan(0);
     
     // Find our selected object in the hierarchy
-    const node = Object.values(hierarchy as any).find((n: any) => n.id === ids[0]) as any;
+    const node = Object.values(hierarchy as any).find((n: any) => n.objectId === ids[0]) as any;
     expect(node).toBeTruthy();
     expect(node.globalId).toBe(bimId);
-    expect(node.type).toBe(bimType);
+    expect(node.ifcType).toBe(bimType);
   });
 });

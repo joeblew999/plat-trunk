@@ -1,7 +1,6 @@
 {
   "dependencies": {
     "@cloudflare/workers-types": "^4.20260212.0",
-    "@hono/mcp": "^0.2.3",
     "@hono/zod-openapi": "^1.2.2",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "hono": "^4.11.9",

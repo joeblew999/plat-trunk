@@ -4,6 +4,17 @@ processes:
     command: task truck:gui:serve
     availability:
       restart: on_failure
+  
+  watch-gui:
+    command: task truck:watch:gui
+    availability:
+      restart: on_failure
+
+  watch-worker:
+    command: task truck:watch:worker
+    availability:
+      restart: on_failure
+
   shape-viewer:
     command: task truck:run:shape-viewer
     availability:
