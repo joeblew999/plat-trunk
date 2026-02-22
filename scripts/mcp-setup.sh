@@ -25,12 +25,12 @@ cat > "$GEMINI_CFG" << EOF
 {
   "mcpServers": {
     "truck-cad": {
-      "command": "bun",
+      "command": "$(which bun)",
       "args": ["$ROOT_DIR/scripts/mcp-bridge.ts"],
       "env": { "CAD_URL": "$CAD_URL" }
     },
     "playwright": {
-      "command": "bunx",
+      "command": "$(which bunx)",
       "args": ["-y", "@playwright/mcp@latest", "--config", "$ROOT_DIR/scripts/playwright-mcp-gemini.config.json"]
     }
   }
@@ -60,12 +60,12 @@ if [ -d "$CURSOR_DIR" ]; then
 {
   "mcpServers": {
     "truck-cad": {
-      "command": "bun",
+      "command": "$(which bun)",
       "args": ["$ROOT_DIR/scripts/mcp-bridge.ts"],
       "env": { "CAD_URL": "$CAD_URL" }
     },
     "playwright": {
-      "command": "bunx",
+      "command": "$(which bunx)",
       "args": ["-y", "@playwright/mcp@latest", "--config", "$ROOT_DIR/scripts/playwright-mcp-gemini.config.json"]
     }
   }
