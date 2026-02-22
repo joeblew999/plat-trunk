@@ -53,12 +53,12 @@ tasks:
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
   "deps:clone:ifc-lite":
-    desc: Clone ifc-lite
+    desc: Clone ifc-lite (skips LFS — large IFC test models not needed for build)
     status:
       - test -d {{.IFC_LITE_SRC_DIR}}
     cmds:
       - mkdir -p {{.SRC_DIR}}
-      - git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
+      - GIT_LFS_SKIP_SMUDGE=1 git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
 
   "deps:install":
     desc: Install truck binaries
@@ -394,7 +394,7 @@ tasks:
 
   ci:
     desc: Full CI (check + test + WASM)
-    deps: ["deps:clone"]
+    deps: ["deps:clone:truck"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
       - cd {{.TRUCK_SRC_DIR}} && cargo test
