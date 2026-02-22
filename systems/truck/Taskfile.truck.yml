@@ -14,6 +14,8 @@ vars:
   TRUCK_VERSION: 'v0.1.0'
   IFC_LITE_SRC_DIR: '{{.SRC_DIR}}/ifc-lite'
   IFC_LITE_REPO: 'github.com/louistrue/ifc-lite'
+  EZPZ_SRC_DIR: '{{.SRC_DIR}}/ezpz'
+  EZPZ_REPO: 'github.com/KittyCAD/ezpz'
   BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
   WORKER_DIR: '{{.ROOT_DIR}}/systems/truck/worker'
   CAD_VERSION:
@@ -41,6 +43,7 @@ tasks:
     cmds:
       - task: deps:clone:truck
       - task: deps:clone:ifc-lite
+      - task: deps:clone:ezpz
 
   "deps:clone:truck":
     desc: Clone truck fork
@@ -59,6 +62,14 @@ tasks:
     cmds:
       - mkdir -p {{.SRC_DIR}}
       - GIT_LFS_SKIP_SMUDGE=1 git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
+
+  "deps:clone:ezpz":
+    desc: Clone ezpz (KittyCAD kcl-ezpz dependency)
+    status:
+      - test -d {{.EZPZ_SRC_DIR}}
+    cmds:
+      - mkdir -p {{.SRC_DIR}}
+      - git clone https://{{.EZPZ_REPO}}.git {{.EZPZ_SRC_DIR}}
 
   "deps:install":
     desc: Install truck binaries
