@@ -1,7 +1,7 @@
 # ADR-0013: Lit + Three.js + Passive WASM Architecture
 
 ## Status
-**In Progress** — Patterns validated via [datastar-lit-examples](https://github.com/Yacobolo/datastar-lit-examples).
+**In Progress** — Epic 1 complete. Patterns validated via [datastar-lit-examples](https://github.com/Yacobolo/datastar-lit-examples), `<cad-viewport>` Lit component working in production.
 
 ## Context
 
@@ -21,14 +21,18 @@ Transition to a **"Passive WASM"** architecture: JavaScript Lit component is the
 The [datastar-lit-examples](https://github.com/Yacobolo/datastar-lit-examples) repo proves this works:
 
 ```html
-<!-- Datastar owns state, passes via data-attr (auto JSON.stringify) -->
-<cad-viewport data-attr:scene-state="$sceneState"></cad-viewport>
+<!-- Datastar owns state, passes individual signals via data-attr -->
+<cad-viewport data-attr:selected-id="$selectedId"
+              data-attr:object-count="$objectCount"
+              data-attr:scene-empty="$sceneEmpty"></cad-viewport>
 ```
 
 ```js
-// Lit component receives as typed property (auto JSON.parse)
+// Lit component receives as typed properties (auto JSON.parse)
 static properties = {
-  sceneState: { type: Object, attribute: 'scene-state' }
+  selectedId:  { type: String, attribute: 'selected-id' },
+  objectCount: { type: Number, attribute: 'object-count' },
+  sceneEmpty:  { type: Boolean, attribute: 'scene-empty' },
 };
 ```
 
@@ -111,10 +115,10 @@ For Three.js overlays (glTF, MVT), see ADR-0014 and ADR-0015.
 
 ## Action Plan
 
-### Epic 1: Viewport Component
-- [ ] 1.1: Vendor OrbitControls addon (`three/examples/jsm/controls/OrbitControls.js`)
-- [ ] 1.2: Rewrite `cad-viewport.js` with proper Lit patterns + Datastar bridge
-- [ ] 1.3: Wire into `index.html` replacing raw `<canvas>`
+### Epic 1: Viewport Component ✅
+- [x] 1.1: Vendor OrbitControls addon (`web/gui/vendor/three-orbit-controls.js`)
+- [x] 1.2: Rewrite `cad-viewport.js` with Lit patterns + Datastar `data-attr` bridge
+- [x] 1.3: Wire into `index.html` — `<cad-viewport data-attr:selected-id="$selectedId" ...>`
 
 ### Epic 2: WASM Camera Command
 - [ ] 2.1: Add `SetCameraParams` to `commands.rs`
@@ -123,5 +127,5 @@ For Three.js overlays (glTF, MVT), see ADR-0014 and ADR-0015.
 
 ### Epic 3: Testing & Verification
 - [ ] 3.1: MCP `cad_set_camera` tool works (AI can control viewport)
-- [ ] 3.2: Existing e2e tests pass with new viewport
-- [ ] 3.3: Gizmo drag + orbit + zoom all work
+- [x] 3.2: Existing e2e tests pass with new viewport
+- [x] 3.3: Gizmo drag + orbit + zoom all work

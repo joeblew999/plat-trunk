@@ -5,52 +5,51 @@
  *   JS owns the camera (Three.js OrbitControls) → pushes matrix to WASM each frame
  *   WASM just renders with the camera it receives — no event loop in Rust
  *
- * Data flow:
- *   Datastar signal → data-attr:scene-state="$sceneState" → Lit @property → updated()
- *   OrbitControls → camera.matrixWorld → cadCommand('set_camera') → WASM renders
+ * Datastar → Lit bridge (data-attr pattern from datastar-lit-examples):
+ *   Datastar signal mutation
+ *     → data-attr:selected-id="$selectedId" calls JSON.stringify()
+ *     → sets HTML attribute on <cad-viewport>
+ *     → Lit @property({ type: String }) auto-parses
+ *     → updated() lifecycle reacts
  *
  * Gizmo traffic controller:
  *   On gizmo drag start → controls.enabled = false (lock orbit)
  *   On gizmo drag end   → controls.enabled = true  (unlock orbit)
  */
-import { LitElement, html, css } from './vendor/lit.js';
+import { LitElement, html } from './vendor/lit.js';
 import * as THREE from './vendor/three.js';
 import { OrbitControls } from './vendor/three-orbit-controls.js';
 
 export class CadViewport extends LitElement {
+  /**
+   * Reactive properties — fed by Datastar via data-attr:
+   *   <cad-viewport data-attr:selected-id="$selectedId"
+   *                 data-attr:object-count="$objectCount"
+   *                 data-attr:scene-empty="$sceneEmpty">
+   *
+   * Datastar's data-attr calls JSON.stringify() internally, which runs inside
+   * the reactive effect and tracks all nested dependencies. Lit's type converters
+   * then parse the JSON back (String, Number, Boolean).
+   */
   static properties = {
-    /** Scene state from Datastar via data-attr:scene-state="$sceneState" */
-    sceneState: { type: Object, attribute: 'scene-state' },
+    selectedId:  { type: String, attribute: 'selected-id' },
+    objectCount: { type: Number, attribute: 'object-count' },
+    sceneEmpty:  { type: Boolean, attribute: 'scene-empty' },
   };
 
-  static styles = css`
-    :host {
-      display: block;
-      width: 100%;
-      height: 100%;
-      position: relative;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-      touch-action: none;
-    }
-  `;
-
-  /**
-   * Light DOM — intentional, not a mistake.
-   * WebGPU requires the <canvas> in the main document tree for requestAdapter()
-   * and getContext('webgpu'). Shadow DOM isolation would break WASM rendering.
-   */
+  /* No static styles — Light DOM means styles come from the page stylesheet.
+   * WebGPU requires <canvas> in main document for requestAdapter()/getContext('webgpu').
+   * Shadow DOM would break WASM rendering. */
   createRenderRoot() {
     return this;
   }
 
   constructor() {
     super();
-    this.sceneState = {};
+    // Datastar-driven properties (defaults)
+    this.selectedId = '';
+    this.objectCount = 0;
+    this.sceneEmpty = true;
 
     // Three.js camera — JS owns this, pushes to WASM each frame
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
@@ -72,10 +71,19 @@ export class CadViewport extends LitElement {
     this._isAnimating = false;
   }
 
+  /**
+   * Lit updated() lifecycle — reacts to Datastar signal changes.
+   * This is the Datastar → Lit → WASM bridge: when a Datastar signal mutates,
+   * data-attr sets the attribute, Lit parses it, and updated() fires.
+   */
   updated(changedProperties) {
-    if (changedProperties.has('sceneState') && this.sceneState) {
-      // Future: react to Datastar-driven state changes
-      // e.g. highlight selected object, toggle grid, etc.
+    if (changedProperties.has('selectedId')) {
+      // Tell WASM which object is selected (for highlight rendering)
+      if (window.sceneController) {
+        try {
+          window.sceneController.select(this.selectedId || '');
+        } catch (_) { /* select may not exist yet */ }
+      }
     }
   }
 
@@ -334,7 +342,17 @@ export class CadViewport extends LitElement {
   // ── Template ─────────────────────────────────────────────────────
 
   render() {
-    return html`<canvas id="cad-canvas" data-testid="cad-canvas"></canvas>`;
+    // Light DOM render — Datastar data-attr feeds selectedId/objectCount/sceneEmpty
+    // Lit re-renders the HUD overlay reactively (same pattern as scene-viewer in datastar-lit-examples)
+    return html`
+      <canvas id="cad-canvas" data-testid="cad-canvas"></canvas>
+      <div class="viewport-hud" data-testid="viewport-hud">
+        ${this.selectedId
+          ? html`<span class="hud-selected">${this.selectedId.slice(0, 8)}</span>`
+          : ''}
+        <span class="hud-count">${this.objectCount} obj</span>
+      </div>
+    `;
   }
 }
 

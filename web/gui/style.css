@@ -98,6 +98,33 @@ body {
   height: 100%;
 }
 
+/* ─── Viewport HUD (Lit-rendered, data-attr driven) ──── */
+.viewport-hud {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  pointer-events: none;
+  font-size: 0.65rem;
+  font-family: ui-monospace, monospace;
+  z-index: 10;
+}
+.viewport-hud .hud-selected {
+  background: oklch(var(--su) / 0.8);
+  color: oklch(var(--suc));
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+}
+.viewport-hud .hud-count {
+  background: oklch(var(--b3) / 0.7);
+  color: oklch(var(--bc) / 0.6);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  backdrop-filter: blur(4px);
+}
+
 /* ─── Properties (right panel) ────────────────────────── */
 .app-props {
   grid-area: props;
