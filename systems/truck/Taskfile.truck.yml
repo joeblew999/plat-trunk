@@ -394,7 +394,7 @@ tasks:
 
   ci:
     desc: Full CI (check + test + WASM)
-    deps: ["deps:clone:truck"]
+    deps: ["deps:clone"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
       # Exclude GPU-dependent crates (need Vulkan drivers not available in CI)
