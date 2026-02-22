@@ -28,6 +28,7 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0007](0007-webgpu-rendering.md) | WebGPU Rendering (Tier 3) | **Future** (Tier 1 browser rendering is shipped) |
 | [0008](0008-undo-redo.md) | Undo/Redo Strategy | **Implemented** |
 | [0009](0009-parametric-modeling.md) | Parametric Modeling | **Future** (direct modeling shipped, constraints not started) |
+| [0013](0013-lit-threejs.md) | Lit + Three.js + Passive WASM | **In Progress** (patterns validated, implementing) |
 
 ## Ideas & Research
 

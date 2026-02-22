@@ -41,6 +41,10 @@
             }
         })();
     </script>
+    <script>
+        // Cache-bust version for local dev (Safari aggressively caches WASM/JS modules)
+        window.__cbv = Date.now();
+    </script>
     <script type="module" src="vendor/datastar.js"></script>
     <script type="module">
         import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js';
@@ -281,9 +285,9 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         </div>
     </aside>
 
-    <!-- ═══════════════════ CANVAS ═══════════════════ -->
+    <!-- ═══════════════════ VIEWPORT ═══════════════════ -->
     <main class="app-canvas">
-        <canvas id="cad-canvas" data-testid="cad-canvas"></canvas>
+        <cad-viewport data-testid="cad-viewport"></cad-viewport>
         <!-- Feedback toast -->
         <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-lg bg-base-300/90 backdrop-blur-sm pointer-events-none transition-opacity"
              data-show="$feedback"
@@ -373,59 +377,72 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     </div>
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
+    <!-- All module imports use ?v= cache-busting (Safari aggressively caches WASM/JS) -->
     <script type="module">
-        import init, { SceneController } from './pkg-browser-renderer/truck_webgpu_gui.js';
+        const v = window.__cbv;
 
-        async function runWasm() {
-            try {
-                await init();
-                const controller = await new SceneController("cad-canvas");
-                controller.run();
-                window.sceneController = controller;
-                console.log("CAD running.");
-                if (window.reconcile) window.reconcile({});
+        // 1. Export WASM modules as globals (cad-viewport does the actual init)
+        const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js?v=' + v);
+        window.__wasmInit = wasm.default;
+        window.__SceneController = wasm.SceneController;
 
-                // Show mode in status bar
-                var modeEl = document.getElementById('status-mode');
-                var indicatorEl = document.getElementById('mode-indicator');
-                if (window.__cadLocalMode) {
-                    if (modeEl) modeEl.textContent = 'Local mode';
-                    if (indicatorEl) indicatorEl.textContent = 'Local';
-                } else {
-                    if (modeEl) modeEl.textContent = 'Online';
-                    if (indicatorEl) indicatorEl.textContent = 'Online';
-                }
+        // 2. Register <cad-viewport> custom element
+        await import('./cad-viewport.js?v=' + v);
 
-                // Init Automerge
-                let retries = 0;
-                while (!window.cadDocManager && retries < 30) {
-                    await new Promise(r => setTimeout(r, 100));
-                    retries++;
+        // 3. Load state, history, UI modules
+        await import('./state.js?v=' + v);
+        await import('./history.js?v=' + v);
+        await import('./ui.js?v=' + v);
+
+        // 4. Post-WASM-init: wait for sceneController, then mode indicator + Automerge
+        let retries = 0;
+        while (!window.sceneController && retries < 60) {
+            await new Promise(r => setTimeout(r, 100));
+            retries++;
+        }
+        if (!window.sceneController) {
+            console.error('WASM init timeout');
+        } else {
+            console.log('CAD running.');
+
+            // Mode indicator
+            var modeEl = document.getElementById('status-mode');
+            var indicatorEl = document.getElementById('mode-indicator');
+            if (window.__cadLocalMode) {
+                if (modeEl) modeEl.textContent = 'Local mode';
+                if (indicatorEl) indicatorEl.textContent = 'Local';
+            } else {
+                if (modeEl) modeEl.textContent = 'Online';
+                if (indicatorEl) indicatorEl.textContent = 'Online';
+            }
+
+            // Init Automerge
+            retries = 0;
+            while (!window.cadDocManager && retries < 30) {
+                await new Promise(r => setTimeout(r, 100));
+                retries++;
+            }
+            if (window.cadDocManager) {
+                try {
+                    await window.cadDocManager.init();
+                    console.log('Automerge doc ready:', window.cadDocManager.documentUrl);
+                } catch (err) {
+                    console.warn('Automerge init failed:', err);
                 }
-                if (window.cadDocManager) {
-                    try {
-                        await window.cadDocManager.init();
-                        console.log("Automerge doc ready:", window.cadDocManager.documentUrl);
-                    } catch (err) {
-                        console.warn("Automerge init failed:", err);
-                    }
-                }
-            } catch (e) {
-                console.error("Init error:", e);
-                document.body.innerHTML = '<div class="alert alert-error m-4"><span>WebGPU not supported. Try Chrome 113+.</span></div>';
             }
         }
-        runWasm();
     </script>
-    <script type="module" src="state.js"></script>
-    <script type="module" src="history.js"></script>
-    <script type="module" src="ui.js"></script>
-    <script src="sketch.js"></script>
+    <script>
+        // sketch.js is not a module — needs manual cache-busting
+        var sk = document.createElement('script');
+        sk.src = 'sketch.js?v=' + (window.__cbv || Date.now());
+        document.body.appendChild(sk);
+    </script>
     <script>
         if (!window.__cadLocalMode) {
             var s = document.createElement('script');
             s.type = 'module';
-            s.src = 'worker-relay.js';
+            s.src = 'worker-relay.js?v=' + (window.__cbv || Date.now());
             document.body.appendChild(s);
         }
     </script>

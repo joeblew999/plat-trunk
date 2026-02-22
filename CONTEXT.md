@@ -25,7 +25,7 @@ The platform is designed for **Real-Time Architectural Coordination**:
 ```
 Rust structs (#[derive(Deserialize, JsonSchema)])
   → cargo run --bin generate-schema
-  → web/cad-schema.json (27 commands)
+  → web/cad-schema.json (34 commands)
   → Worker: Zod enum + MCP tools + OpenAPI spec + route validation
   → Browser: cadCommand() dispatches to same execute()
 ```
@@ -65,7 +65,7 @@ Everything → cadCommand(type, params, opts) → ctrl.execute(type, json) [WASM
 - `systems/truck/worker/src/index.test.ts` — Vitest: API + MCP contract tests
 
 ### Generated artifacts
-- `web/cad-schema.json` — 27 commands, auto-generated from Rust (checked into git)
+- `web/cad-schema.json` — 34 commands, auto-generated from Rust (checked into git)
 - `web/gui/vendor/datastar.js` — Vendored Datastar v1.0.0-RC.7
 - `web/gui/vendor/automerge-bundle.js` — Vendored Automerge
 
