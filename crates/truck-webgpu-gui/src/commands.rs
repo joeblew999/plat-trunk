@@ -10,6 +10,9 @@ use schemars::JsonSchema;
 pub fn default_1() -> f64 { 1.0 }
 pub fn default_0_5() -> f64 { 0.5 }
 pub fn default_0_3() -> f64 { 0.3 }
+pub fn default_45() -> f64 { 45.0 }
+pub fn default_near() -> f64 { 0.01 }
+pub fn default_far() -> f64 { 100.0 }
 
 // ─── Param structs ──────────────────────────────────────────────
 
@@ -150,6 +153,21 @@ pub struct ImportIfcParams {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct SetCameraParams {
+    /// 16 floats: column-major 4×4 camera-to-world matrix
+    #[serde(rename = "matrixWorld")]
+    pub matrix_world: Vec<f64>,
+    /// Vertical field-of-view in degrees (perspective only)
+    #[serde(default = "default_45")]
+    #[serde(rename = "fovDeg")]
+    pub fov_deg: f64,
+    #[serde(default = "default_near")]
+    pub near: f64,
+    #[serde(default = "default_far")]
+    pub far: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SelectParams {
     pub id: String,
 }
@@ -208,6 +226,8 @@ pub fn build_schema() -> serde_json::Value {
         ("rename", "Rename an object", schema_for::<RenameParams>(), "success", false, false),
         // Sketch
         ("sketch_extrude", "Extrude a 2D sketch to 3D", schema_for::<SketchExtrudeParams>(), "objectId", false, false),
+        // Camera
+        ("set_camera", "Set camera from JS (matrixWorld + projection)", schema_for::<SetCameraParams>(), "success", true, false),
         // Queries
         ("get_state", "Get full scene state", serde_json::json!({"type": "object"}), "state", true, true),
         ("pick_mesh_stats", "Get pick mesh statistics", serde_json::json!({"type": "object"}), "stats", true, true),

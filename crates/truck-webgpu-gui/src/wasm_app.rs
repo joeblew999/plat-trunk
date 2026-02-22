@@ -213,6 +213,8 @@ struct SharedState {
     active_sketch: Option<crate::sketch::Sketch>,
     // Object naming
     name_counters: HashMap<String, usize>,
+    // Passive WASM: JS owns camera via set_camera (ADR-0013)
+    camera_external: bool,
 }
 
 /// Rebuild the id→index lookup after any mutation that changes Vec ordering.
@@ -869,6 +871,7 @@ impl SceneController {
             on_drag_complete: None,
             active_sketch: None,
             name_counters: HashMap::new(),
+            camera_external: false,
         };
 
         // Start with a default cube
@@ -937,7 +940,7 @@ impl SceneController {
                             let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
                             match button {
                                 MouseButton::Left => {
-                                    if !is_dragging {
+                                    if !is_dragging && !s.camera_external {
                                         s.rotate_flag = btn_state == ElementState::Pressed;
                                     }
                                 }
@@ -962,7 +965,7 @@ impl SceneController {
                             let mut s = state.borrow_mut();
                             let pos = Vector2::new(position.x, position.y);
                             let is_dragging = matches!(s.interaction, InteractionMode::Dragging { .. });
-                            if s.rotate_flag && !is_dragging {
+                            if s.rotate_flag && !is_dragging && !s.camera_external {
                                 let dir2d = pos - s.prev_cursor;
                                 if !dir2d.so_small() {
                                     let matrix = &mut s.scene.studio_config_mut().camera.matrix;
@@ -979,26 +982,29 @@ impl SceneController {
 
                         // --- Mouse wheel / trackpad: zoom ---
                         WindowEvent::MouseWheel { delta, .. } => {
-                            let y = match delta {
-                                MouseScrollDelta::LineDelta(_, y) => y as f64,
-                                MouseScrollDelta::PixelDelta(pos) => pos.y * 0.01,
-                            };
-                            let mut s = state.borrow_mut();
-                            let camera = &mut s.scene.studio_config_mut().camera;
-                            match &mut camera.method {
-                                ProjectionMethod::Parallel { screen_size } => {
-                                    *screen_size *= 0.9f64.powf(y);
-                                }
-                                ProjectionMethod::Perspective { .. } => {
-                                    let trans = camera.eye_direction() * y * 0.2;
-                                    camera.matrix =
-                                        Matrix4::from_translation(trans) * camera.matrix;
+                            if !state.borrow().camera_external {
+                                let y = match delta {
+                                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                                    MouseScrollDelta::PixelDelta(pos) => pos.y * 0.01,
+                                };
+                                let mut s = state.borrow_mut();
+                                let camera = &mut s.scene.studio_config_mut().camera;
+                                match &mut camera.method {
+                                    ProjectionMethod::Parallel { screen_size } => {
+                                        *screen_size *= 0.9f64.powf(y);
+                                    }
+                                    ProjectionMethod::Perspective { .. } => {
+                                        let trans = camera.eye_direction() * y * 0.2;
+                                        camera.matrix =
+                                            Matrix4::from_translation(trans) * camera.matrix;
+                                    }
                                 }
                             }
                         }
 
                         // --- Touch: iOS / mobile ---
                         WindowEvent::Touch(touch) => {
+                            if !state.borrow().camera_external {
                             let mut s = state.borrow_mut();
                             let pos = Vector2::new(touch.location.x, touch.location.y);
                             match touch.phase {
@@ -1049,6 +1055,7 @@ impl SceneController {
                                     s.prev_pinch_dist = None;
                                 }
                             }
+                            } // camera_external guard
                         }
 
                         _ => {}
@@ -2642,10 +2649,47 @@ impl SceneController {
             }
 
             // ── Queries ─────────────────────────────────────────────
+            // ── Camera ──────────────────────────────────────────────
+            "set_camera" => {
+                match serde_json::from_value::<SetCameraParams>(p) {
+                    Ok(params) => {
+                        if params.matrix_world.len() != 16 {
+                            return serde_json::json!({ "error": "matrixWorld must have 16 elements" }).to_string();
+                        }
+                        let mut s = self.state.borrow_mut();
+                        // Once JS calls set_camera, Rust stops handling camera events
+                        s.camera_external = true;
+                        let camera = &mut s.scene.studio_config_mut().camera;
+                        // Both Three.js and cgmath use column-major layout:
+                        // elements[0..3] = col 0, elements[4..7] = col 1, etc.
+                        let m = &params.matrix_world;
+                        camera.matrix = Matrix4::new(
+                            m[0],  m[1],  m[2],  m[3],   // column 0
+                            m[4],  m[5],  m[6],  m[7],   // column 1
+                            m[8],  m[9],  m[10], m[11],  // column 2
+                            m[12], m[13], m[14], m[15],  // column 3
+                        );
+                        let fov_rad = params.fov_deg * PI / 180.0;
+                        camera.method = ProjectionMethod::perspective(Rad(fov_rad));
+                        camera.near_clip = params.near;
+                        camera.far_clip = params.far;
+                        serde_json::json!({ "success": true })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+
+            // ── Queries ─────────────────────────────────────────────
             "get_state" => {
                 let s = self.state.borrow();
                 let ids: Vec<String> = s.objects.iter().map(|o| o.id.to_string()).collect();
                 let names: HashMap<String, String> = s.objects.iter().map(|o| (o.id.to_string(), o.name.clone())).collect();
+                let camera = &s.scene.studio_config().camera;
+                let cam_matrix: Vec<f64> = (0..4).flat_map(|c| (0..4).map(move |r| camera.matrix[c][r])).collect();
+                let fov_deg = match camera.method {
+                    ProjectionMethod::Perspective { fov } => fov.0 * 180.0 / PI,
+                    _ => 45.0,
+                };
                 serde_json::json!({
                     "ready": true,
                     "objectCount": ids.len(),
@@ -2656,6 +2700,12 @@ impl SceneController {
                         InteractionMode::Idle => "idle",
                         InteractionMode::Selected { .. } => "selected",
                         InteractionMode::Dragging { .. } => "dragging",
+                    },
+                    "camera": {
+                        "matrixWorld": cam_matrix,
+                        "fovDeg": fov_deg,
+                        "near": camera.near_clip,
+                        "far": camera.far_clip,
                     },
                 })
             }

@@ -109,8 +109,10 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
 });
 
 // ─── Gizmo: canvas click-to-select + drag-to-translate ──────────
+// Skipped when <cad-viewport> manages interaction (ADR-0013 Passive WASM).
 
 (function setupGizmo() {
+    if (document.querySelector('cad-viewport')) return; // cad-viewport owns interaction
     const canvas = document.getElementById('cad-canvas');
     if (!canvas) return;
 

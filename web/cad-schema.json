@@ -544,6 +544,46 @@
       "readonly": false,
       "returns": "selectedId"
     },
+    "set_camera": {
+      "description": "Set camera from JS (matrixWorld + projection)",
+      "ephemeral": true,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "far": {
+            "default": 100.0,
+            "format": "double",
+            "type": "number"
+          },
+          "fovDeg": {
+            "default": 45.0,
+            "description": "Vertical field-of-view in degrees (perspective only)",
+            "format": "double",
+            "type": "number"
+          },
+          "matrixWorld": {
+            "description": "16 floats: column-major 4×4 camera-to-world matrix",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "near": {
+            "default": 0.01,
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "matrixWorld"
+        ],
+        "title": "SetCameraParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "success"
+    },
     "set_color": {
       "description": "Set object color (RGBA)",
       "ephemeral": false,

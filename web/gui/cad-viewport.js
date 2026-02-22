@@ -1,0 +1,341 @@
+/**
+ * <cad-viewport> — Lit Web Component: the "Conductor" of the 3D engine (ADR-0013).
+ *
+ * Architecture (Passive WASM):
+ *   JS owns the camera (Three.js OrbitControls) → pushes matrix to WASM each frame
+ *   WASM just renders with the camera it receives — no event loop in Rust
+ *
+ * Data flow:
+ *   Datastar signal → data-attr:scene-state="$sceneState" → Lit @property → updated()
+ *   OrbitControls → camera.matrixWorld → cadCommand('set_camera') → WASM renders
+ *
+ * Gizmo traffic controller:
+ *   On gizmo drag start → controls.enabled = false (lock orbit)
+ *   On gizmo drag end   → controls.enabled = true  (unlock orbit)
+ */
+import { LitElement, html, css } from './vendor/lit.js';
+import * as THREE from './vendor/three.js';
+import { OrbitControls } from './vendor/three-orbit-controls.js';
+
+export class CadViewport extends LitElement {
+  static properties = {
+    /** Scene state from Datastar via data-attr:scene-state="$sceneState" */
+    sceneState: { type: Object, attribute: 'scene-state' },
+  };
+
+  static styles = css`
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+  `;
+
+  /**
+   * Light DOM — intentional, not a mistake.
+   * WebGPU requires the <canvas> in the main document tree for requestAdapter()
+   * and getContext('webgpu'). Shadow DOM isolation would break WASM rendering.
+   */
+  createRenderRoot() {
+    return this;
+  }
+
+  constructor() {
+    super();
+    this.sceneState = {};
+
+    // Three.js camera — JS owns this, pushes to WASM each frame
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+    this.camera.position.set(1.5, 1.5, 1.5);
+    this.camera.lookAt(0, 0, 0);
+    this.controls = null;
+    this.rafId = null;
+
+    // Gizmo traffic controller state
+    this._isDraggingGizmo = false;
+    this._prevNdc = [0, 0];
+
+    // Camera dirty check — skip cadCommand if unchanged
+    this._lastMatrix = null;
+
+    // Camera animation (zoom-to-fit)
+    this._targetCamPos = new THREE.Vector3();
+    this._targetLookAt = new THREE.Vector3();
+    this._isAnimating = false;
+  }
+
+  updated(changedProperties) {
+    if (changedProperties.has('sceneState') && this.sceneState) {
+      // Future: react to Datastar-driven state changes
+      // e.g. highlight selected object, toggle grid, etc.
+    }
+  }
+
+  async firstUpdated() {
+    const canvas = this.querySelector('#cad-canvas');
+    if (!canvas) return;
+
+    // Check WebGPU support
+    if (!navigator.gpu) {
+      const msg = 'WebGPU not supported. Use Chrome, Edge, or Safari 17+.';
+      console.error(msg);
+      if (window.showFeedbackSignal) window.showFeedbackSignal(msg, true);
+      return;
+    }
+
+    // Initialize WASM — __wasmInit and __SceneController set by index.html <script>
+    if (window.__wasmInit) {
+      try {
+        await window.__wasmInit();
+        const controller = await new window.__SceneController('cad-canvas');
+        controller.run();
+        window.sceneController = controller;
+        console.log('[cad-viewport] WASM SceneController ready');
+        if (window.reconcile) window.reconcile({});
+      } catch (err) {
+        console.error('[cad-viewport] WASM init failed:', err);
+      }
+    }
+
+    // Setup OrbitControls on the canvas
+    this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.1;
+
+    // Gizmo + pick interaction
+    this._setupInteraction(canvas);
+
+    // Resize observer — update camera aspect ratio
+    this._resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width === 0 || height === 0) continue;
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+      }
+    });
+    this._resizeObserver.observe(this);
+
+    // Sync initial camera from WASM (if Rust has a default camera)
+    this._syncFromWasm();
+
+    // Start the render loop
+    this._startLoop();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._resizeObserver) this._resizeObserver.disconnect();
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────
+
+  /** Convert mouse event to NDC [-1,1] coordinates */
+  _toNdc(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (2 * (e.clientX - rect.left) / rect.width) - 1;
+    const y = 1 - (2 * (e.clientY - rect.top) / rect.height);
+    return [x, y];
+  }
+
+  // ── Gizmo Traffic Controller ─────────────────────────────────────
+
+  _setupInteraction(canvas) {
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !window.sceneController) return;
+      const [ndcX, ndcY] = this._toNdc(e, canvas);
+
+      // Boolean pick-B mode: skip gizmo
+      const r = window._ds?.root;
+      const pickingB = r?.boolSelA && !r?.boolSelB;
+
+      // Try gizmo hit first (only if something is selected and not picking B)
+      if (!pickingB && window.sceneController.get_interaction_mode() === 'selected') {
+        const axis = window.sceneController.begin_gizmo_drag(ndcX, ndcY);
+        if (axis) {
+          this._isDraggingGizmo = true;
+          this.controls.enabled = false; // LOCK orbit during gizmo drag
+          this._prevNdc = [ndcX, ndcY];
+          canvas.style.cursor = 'grabbing';
+          canvas.setPointerCapture(e.pointerId);
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      // Standard pick + select
+      const result = window.cadCommand('pick_at', { ndcX, ndcY }, { ephemeral: true });
+      window.cadCommand('select', { id: (result && result.pickedId) || '' }, { ephemeral: true });
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (!this._isDraggingGizmo || !window.sceneController) return;
+      const [ndcX, ndcY] = this._toNdc(e, canvas);
+
+      // Push latest camera to WASM before gizmo calc (ray parity)
+      this._syncCameraToWasm();
+
+      window.sceneController.update_gizmo_drag(ndcX, ndcY, this._prevNdc[0], this._prevNdc[1]);
+      this._prevNdc = [ndcX, ndcY];
+      e.stopPropagation();
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+      if (!this._isDraggingGizmo || !window.sceneController) return;
+      this._isDraggingGizmo = false;
+      this.controls.enabled = true; // UNLOCK orbit
+      canvas.style.cursor = '';
+      canvas.releasePointerCapture(e.pointerId);
+
+      const result = window.sceneController.end_gizmo_drag();
+      if (result && result.objectId && window.cadDocManager?.handle) {
+        window.cadDocManager.record('translate', {
+          objectId: result.objectId,
+          dx: result.dx, dy: result.dy, dz: result.dz,
+        });
+      }
+      if (window.reconcile) window.reconcile({});
+      e.stopPropagation();
+    });
+
+    // Escape: cancel gizmo or deselect
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (this._isDraggingGizmo && window.sceneController) {
+          this._isDraggingGizmo = false;
+          this.controls.enabled = true;
+          canvas.style.cursor = '';
+          window.sceneController.cancel_gizmo_drag();
+        } else if (window.sceneController) {
+          window.cadCommand('deselect', {}, { ephemeral: true });
+        }
+        e.preventDefault();
+      }
+    });
+  }
+
+  // ── Camera Sync ──────────────────────────────────────────────────
+
+  /** Read initial camera from WASM's get_state (one-time bootstrap) */
+  _syncFromWasm() {
+    if (!window.cadCommand || !window.sceneController) {
+      setTimeout(() => this._syncFromWasm(), 100);
+      return;
+    }
+    const state = window.cadCommand('get_state', {}, { ephemeral: true, skipAutomerge: true });
+    if (state && state.camera) {
+      const c = state.camera;
+      this.camera.matrixWorld.fromArray(c.matrixWorld);
+      this.camera.matrixWorld.decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
+      this.camera.fov = c.fovDeg;
+      this.camera.near = c.near;
+      this.camera.far = c.far;
+      this.camera.updateProjectionMatrix();
+      if (this.controls) {
+        // Set OrbitControls target to the origin (default look-at)
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+      }
+    }
+  }
+
+  /** Push Three.js camera to WASM — skips if unchanged (dirty check) */
+  _syncCameraToWasm() {
+    if (!window.cadCommand) return;
+    this.camera.updateMatrixWorld();
+    const matrix = this.camera.matrixWorld.elements; // column-major Float32Array
+
+    // Dirty check: skip if matrix hasn't changed
+    if (this._lastMatrix) {
+      let changed = false;
+      for (let i = 0; i < 16; i++) {
+        if (Math.abs(this._lastMatrix[i] - matrix[i]) > 1e-6) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return;
+    }
+    this._lastMatrix = Array.from(matrix);
+
+    window.cadCommand('set_camera', {
+      matrixWorld: this._lastMatrix,
+      fovDeg: this.camera.fov,
+      near: this.camera.near,
+      far: this.camera.far,
+    }, { ephemeral: true, skipAutomerge: true });
+  }
+
+  // ── Render Loop ──────────────────────────────────────────────────
+
+  _startLoop() {
+    const loop = () => {
+      // Camera animation (zoom-to-fit)
+      if (this._isAnimating) {
+        const t = 0.1;
+        this.camera.position.lerp(this._targetCamPos, t);
+        this.controls.target.lerp(this._targetLookAt, t);
+        if (this.camera.position.distanceTo(this._targetCamPos) < 0.01 &&
+            this.controls.target.distanceTo(this._targetLookAt) < 0.01) {
+          this._isAnimating = false;
+        }
+      }
+
+      // Update OrbitControls (damping) when not gizmo-dragging
+      if (this.controls && this.controls.enabled) {
+        this.controls.update();
+      }
+
+      // Push camera to WASM
+      this._syncCameraToWasm();
+
+      this.rafId = requestAnimationFrame(loop);
+    };
+    this.rafId = requestAnimationFrame(loop);
+  }
+
+  // ── Public API ───────────────────────────────────────────────────
+
+  /**
+   * Zoom camera to focus on an object or the entire scene.
+   * @param {string|null} objectId - Object to focus, or null for extents
+   */
+  zoomTo(objectId = null) {
+    if (!window.cadCommand) return;
+    const res = window.cadCommand('get_state', {}, { ephemeral: true, skipAutomerge: true });
+    if (!res) return;
+
+    // For now, zoom to scene center with a reasonable distance
+    const targetLookAt = new THREE.Vector3(0, 0, 0);
+    const currentDir = new THREE.Vector3()
+      .subVectors(this.camera.position, this.controls.target)
+      .normalize();
+    if (currentDir.lengthSq() < 0.01) currentDir.set(1, 1, 1).normalize();
+
+    const dist = 3.0; // Default distance
+    const targetCamPos = new THREE.Vector3()
+      .copy(targetLookAt)
+      .add(currentDir.multiplyScalar(dist));
+
+    this._targetCamPos.copy(targetCamPos);
+    this._targetLookAt.copy(targetLookAt);
+    this._isAnimating = true;
+  }
+
+  // ── Template ─────────────────────────────────────────────────────
+
+  render() {
+    return html`<canvas id="cad-canvas" data-testid="cad-canvas"></canvas>`;
+  }
+}
+
+customElements.define('cad-viewport', CadViewport);
