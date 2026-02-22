@@ -1,7 +1,7 @@
 # ADR-0013: Lit + Three.js + Passive WASM Architecture
 
 ## Status
-**In Progress** — Epic 1 complete. Patterns validated via [datastar-lit-examples](https://github.com/Yacobolo/datastar-lit-examples), `<cad-viewport>` Lit component working in production.
+**Implemented** — All 3 epics complete. Patterns validated via [datastar-lit-examples](https://github.com/Yacobolo/datastar-lit-examples), `<cad-viewport>` Lit component + `set_camera` WASM command working in production.
 
 ## Context
 
@@ -120,12 +120,12 @@ For Three.js overlays (glTF, MVT), see ADR-0014 and ADR-0015.
 - [x] 1.2: Rewrite `cad-viewport.js` with Lit patterns + Datastar `data-attr` bridge
 - [x] 1.3: Wire into `index.html` — `<cad-viewport data-attr:selected-id="$selectedId" ...>`
 
-### Epic 2: WASM Camera Command
-- [ ] 2.1: Add `SetCameraParams` to `commands.rs`
-- [ ] 2.2: Handle `set_camera` in `wasm_app.rs` (update camera from JS matrix)
-- [ ] 2.3: Return camera state in `get_state` (matrix, fov, near, far)
+### Epic 2: WASM Camera Command ✅
+- [x] 2.1: Add `SetCameraParams` to `commands.rs` (matrixWorld + fovDeg + near + far)
+- [x] 2.2: Handle `set_camera` in `wasm_app.rs` — sets `camera_external = true`, guards mouse events
+- [x] 2.3: Return camera state in `get_state` (matrix, fov, near, far)
 
-### Epic 3: Testing & Verification
-- [ ] 3.1: MCP `cad_set_camera` tool works (AI can control viewport)
+### Epic 3: Testing & Verification ✅
+- [x] 3.1: MCP `cad_set_camera` tool works (AI can control viewport)
 - [x] 3.2: Existing e2e tests pass with new viewport
 - [x] 3.3: Gizmo drag + orbit + zoom all work
