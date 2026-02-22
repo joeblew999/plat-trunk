@@ -26,12 +26,36 @@ Override: `CAD_URL=https://cad.ubuntusoftware.net` forces a specific target.
 **After pushing a branch with a PR**: CI deploys a preview at `pr-{N}-truck-cad.gedw99.workers.dev` with full MCP at `/mcp`. If you stop the local dev server, the bridge auto-falls back to the PR preview.
 
 ## Deploy Workflow (Versioned)
+
+**IMPORTANT**: Deploy does NOT auto-promote. Upload first, verify, then promote.
+
 ```sh
-task truck:gui:deploy          # Build + upload + tag (does NOT promote)
-task truck:deploy:promote      # Promote to production when ready
-task truck:deploy:rollback     # Instant rollback
+# Step 1: Build + upload (creates preview URL, no traffic change)
+task truck:gui:deploy
+# Output tells you the preview URL: https://v0-5-0-truck-cad.gedw99.workers.dev
+
+# Step 2: Verify the preview works
+curl -sf https://v0-5-0-truck-cad.gedw99.workers.dev/api/health
+# Should return {"version":"0.5.0"}
+
+# Step 3: Only when verified, promote to production
+task truck:deploy:promote
+
+# Something wrong? Instant rollback
+task truck:deploy:rollback
+```
+
+**Other commands:**
+```sh
 task truck:deploy:list         # Show all versions + PR previews with URLs
-task truck:deploy:preview PR_NUMBER=42  # Upload PR preview
+task truck:deploy:status       # Current deployment + traffic split
+task truck:deploy:preview PR_NUMBER=42  # Upload PR preview (CI does this automatically)
+```
+
+**Version bumping** (before deploy):
+```sh
+task truck:version:bump -- 0.6.0   # Bumps Rust + schema + commit + git tag
+task truck:gui:deploy               # Then deploy the new version
 ```
 
 ## ADR Index
