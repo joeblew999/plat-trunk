@@ -24,7 +24,7 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: oven-sh/setup-bun@v2
 
