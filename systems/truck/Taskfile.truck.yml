@@ -522,7 +522,7 @@ tasks:
     deps: ["gui:build", "deploy:setup"]
     cmds:
       - task: deploy:versions:json
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}" --preview-alias "v{{.CAD_VERSION_SLUG}}"
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}"
 
   "deploy:versions:json":
     desc: Generate versions.json for GUI version picker (releases + PR previews)
@@ -571,18 +571,15 @@ tasks:
   "deploy:canary":
     desc: Deploy with gradual traffic split (interactive)
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions deploy --env=""
-
+      - cd {{.WORKER_DIR}} && bun x wrangler versions deploy
   "deploy:rollback":
     desc: Roll back to previous version
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler rollback --env=""
-
+      - cd {{.WORKER_DIR}} && bun x wrangler rollback
   "deploy:versions":
     desc: List recent versions (tags, dates, authors)
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions list --env=""
-
+      - cd {{.WORKER_DIR}} && bun x wrangler versions list
   "deploy:list":
     desc: Show all preview URLs (versions + PR previews)
     dir: "{{.ROOT_DIR}}/systems/truck/worker"
@@ -618,8 +615,7 @@ tasks:
   "deploy:status":
     desc: Show current deployment (versions + traffic split)
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler deployments list --env=""
-
+      - cd {{.WORKER_DIR}} && bun x wrangler deployments list
   "deploy:preview":
     desc: "Upload preview version with alias (pr-{N}-truck-cad.gedw99.workers.dev)"
     deps: ["gui:build", "deploy:setup"]
