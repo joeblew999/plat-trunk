@@ -142,18 +142,18 @@ task truck:deploy:tag          # Create git tag + GitHub release
 
 **All deploy commands:**
 ```sh
-# Branch testing (separate Worker, production untouched)
-task truck:deploy:preview      # Deploy to truck-cad-preview.gedw99.workers.dev
-task truck:deploy:preview:down # Tear down preview
+# PR preview (per-PR alias on main Worker — no separate Worker needed)
+task truck:deploy:preview PR_NUMBER=42  # Upload preview → pr-42-truck-cad.gedw99.workers.dev
 
 # Production (versioned, tagged with schema version from cad-schema.json)
-task truck:gui:deploy          # Build + upload + deploy + tag (standard path)
-task truck:deploy:upload       # Upload version only (no traffic change)
+task truck:gui:deploy          # Build + upload + tag (does NOT promote)
 task truck:deploy:promote      # Deploy latest upload to 100% traffic
 task truck:deploy:tag          # Create git tag + GitHub release (idempotent)
+task truck:deploy:upload       # Upload version only (no traffic change)
 task truck:deploy:canary       # Deploy with gradual traffic split (interactive)
 task truck:deploy:rollback     # Roll back to previous version (instant)
-task truck:deploy:versions     # List recent versions with tags
+task truck:deploy:list         # Show all versions + PR previews with URLs
+task truck:deploy:versions     # List recent versions (raw wrangler output)
 task truck:deploy:status       # Show current deployment and traffic split
 task deploy                    # Deploy Worker + docs
 
@@ -173,8 +173,8 @@ curl -sf https://cad.ubuntusoftware.net/api/cad/schema   # full schema with vers
 **CI pipeline** (`.github/workflows/ci.yml`):
 - All branches: `task truck:ci` (build + test)
 - Push to main: `task truck:deploy:upload` (tagged version, manual promote)
-- PR opened: `task truck:deploy:preview` (separate Worker)
-- PR closed: `task truck:deploy:preview:down` (cleanup)
+- PR opened: `task truck:deploy:preview PR_NUMBER={N}` (per-PR preview alias, sticky comment)
+- PR previews are versions on the same Worker — no cleanup needed
 
 ## MCP Architecture
 
@@ -182,15 +182,19 @@ curl -sf https://cad.ubuntusoftware.net/api/cad/schema   # full schema with vers
 Handles `initialize`, `tools/list`, `tools/call` — dispatches to the same `waitForCommand()` pipeline as REST. Includes `cad_health` and `cad_schema` meta-tools. 29 tools total (27 CAD commands + 2 meta).
 
 **Bridge** (`scripts/mcp-bridge.ts`): pure stdio ↔ HTTP proxy. Adds:
+- **Auto-routing**: tries localhost first, falls back to PR preview URL if local server is down
 - Retry with exponential backoff (6 attempts, 1s→32s) — survives server restarts
 - Schema version polling (every 30s) → sends `tools/list_changed` notification — **hot-reload without client restart**
 
-Works identically for dev and production — just change `CAD_URL`:
+URL resolution (no `CAD_URL` set):
+1. `localhost:8788` — if dev server is running (quick health check)
+2. `pr-{N}-truck-cad.gedw99.workers.dev` — if current branch has an open PR
+3. `localhost:8788` — fallback (retry waits for server to start)
 
 | Mode | Config | Hot-reload |
 |------|--------|------------|
-| **Dev** | `CAD_URL=http://localhost:8788` (default) | Version polling + retry |
-| **Production** | `CAD_URL=https://cad.ubuntusoftware.net` | Version polling on deploy |
+| **Auto** | No config needed — detects local or PR preview | Version polling + retry |
+| **Explicit** | `CAD_URL=https://cad.ubuntusoftware.net` | Version polling on deploy |
 | **Direct HTTP** | `"type": "http"` → `/mcp` (no bridge needed) | Manual restart only |
 
 Setup: `task truck:mcp:setup` writes `.gemini/settings.json`, `.cursor/mcp.json`
@@ -264,6 +268,6 @@ See `docs/adr/README.md` for the full index. Key decisions:
 |-----|---------|
 | `https://cad.ubuntusoftware.net` | Production (custom domain, promoted version) |
 | `https://truck-cad.gedw99.workers.dev` | Production (workers.dev alias) |
-| `https://<version-id>-truck-cad.gedw99.workers.dev` | Per-version preview (from `deploy:upload`) |
-| `https://truck-cad-preview.gedw99.workers.dev` | Branch preview (from `deploy:preview`) |
+| `https://v0-5-0-truck-cad.gedw99.workers.dev` | Per-version preview (from `deploy:upload`) |
+| `https://pr-1-truck-cad.gedw99.workers.dev` | Per-PR preview (from CI `deploy:preview`) |
 | `http://localhost:8788` | Local dev server (`task up` or `task truck:gui:serve`) |
