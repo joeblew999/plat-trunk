@@ -522,7 +522,7 @@ tasks:
     deps: ["gui:build", "deploy:setup"]
     cmds:
       - task: deploy:versions:json
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}"
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}" --preview-alias "v{{.CAD_VERSION_SLUG}}"
 
   "deploy:versions:json":
     desc: Generate versions.json for GUI version picker (releases + PR previews)
@@ -622,7 +622,7 @@ tasks:
     vars:
       PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}} — v{{.CAD_VERSION}}" --preview-alias "pr-{{.PR_NUMBER}}"
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}} — v{{.CAD_VERSION}}" --preview-alias "pr-{{.PR_NUMBER}}"
       - |
         echo ""
         echo 'Preview: https://pr-{{.PR_NUMBER}}-truck-cad.gedw99.workers.dev'
