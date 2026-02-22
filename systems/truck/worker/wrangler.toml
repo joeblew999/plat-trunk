@@ -32,10 +32,6 @@ ip = "0.0.0.0"
 port = 8788
 local_protocol = "http"
 
-# Preview environment — branch testing without touching production
-# Deploys to: truck-cad-preview.gedw99.workers.dev
-# Usage: task truck:deploy:preview
-[env.preview]
-name = "truck-cad-preview"
-workers_dev = true
-routes = []
+# PR previews use --preview-alias on the main Worker (not a separate env).
+# Example: pr-42-truck-cad.gedw99.workers.dev
+# See: task truck:deploy:preview PR_NUMBER=42

@@ -525,29 +525,37 @@ tasks:
       - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}" --preview-alias "v{{.CAD_VERSION_SLUG}}"
 
   "deploy:versions:json":
-    desc: Generate versions.json for GUI version picker
+    desc: Generate versions.json for GUI version picker (releases + PR previews)
     dir: "{{.ROOT_DIR}}/systems/truck/worker"
     cmds:
       - |
         bun x wrangler versions list --env="" 2>&1 | \
           awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print tag, ts}' | \
-          sort -t. -k1,1n -k2,2n -k3,3n -u | \
           bun -e "
             const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
-            const versions = [...new Map(lines.map(l => {
+            const releases = [];
+            const previews = [];
+            for (const l of lines) {
               const [tag, ts] = l.split(' ');
-              const ver = tag.replace('v','');
-              const slug = ver.replaceAll('.','-');
-              return [ver, { version: ver, tag, date: ts, url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' }];
-            })).values()].reverse();
-            const current = '{{.CAD_VERSION}}';
-            if (!versions.find(v => v.version === current)) {
-              const slug = current.replaceAll('.','-');
-              versions.unshift({ version: current, tag: 'v'+current, date: new Date().toISOString(), url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
+              if (tag.startsWith('pr-')) {
+                previews.push({ label: 'PR #' + tag.replace('pr-',''), tag, date: ts, url: 'https://' + tag + '-truck-cad.gedw99.workers.dev' });
+              } else if (tag.match(/^v\d/)) {
+                const ver = tag.replace('v','');
+                const slug = ver.replaceAll('.','-');
+                releases.push({ version: ver, tag, date: ts, url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
+              }
             }
-            const out = { production: 'https://cad.ubuntusoftware.net', versions };
+            // Dedupe releases by version, keep latest
+            const deduped = [...new Map(releases.map(r => [r.version, r])).values()];
+            deduped.sort((a,b) => b.version.localeCompare(a.version, undefined, {numeric:true}));
+            const current = '{{.CAD_VERSION}}';
+            if (!deduped.find(v => v.version === current)) {
+              const slug = current.replaceAll('.','-');
+              deduped.unshift({ version: current, tag: 'v'+current, date: new Date().toISOString(), url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
+            }
+            const out = { production: 'https://cad.ubuntusoftware.net', versions: deduped, previews };
             require('fs').writeFileSync('{{.ROOT_DIR}}/web/gui/versions.json', JSON.stringify(out, null, 2) + '\n');
-            console.log('versions.json: ' + versions.length + ' versions');
+            console.log('versions.json: ' + deduped.length + ' versions, ' + previews.length + ' PR previews');
           "
     silent: true
 
@@ -576,20 +584,34 @@ tasks:
       - cd {{.WORKER_DIR}} && bun x wrangler versions list --env=""
 
   "deploy:list":
-    desc: Show tagged versions with preview URLs
+    desc: Show all preview URLs (versions + PR previews)
     dir: "{{.ROOT_DIR}}/systems/truck/worker"
     cmds:
       - |
-        echo "=== Tagged Versions ==="
-        echo ""
-        bun x wrangler versions list --env="" 2>&1 | \
+        VERSIONS=$(bun x wrangler versions list --env="" 2>&1 | \
           awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print id, ts, tag}' | \
-          sort -k2 -r | while read VID TS TAG; do
-            SLUG=$(echo "$TAG" | sed 's/^v//' | tr '.' '-')
+          sort -k2 -r)
+
+        echo "=== Release Versions ==="
+        echo ""
+        echo "$VERSIONS" | grep "^.* .* v[0-9]" | while read VID TS TAG; do
+          SLUG=$(echo "$TAG" | sed 's/^v//' | tr '.' '-')
+          echo "  $TAG  ($TS)"
+          echo "    https://v${SLUG}-truck-cad.gedw99.workers.dev"
+          echo ""
+        done
+
+        PR_LINES=$(echo "$VERSIONS" | grep "^.* .* pr-" || true)
+        if [ -n "$PR_LINES" ]; then
+          echo "=== PR Previews ==="
+          echo ""
+          echo "$PR_LINES" | while read VID TS TAG; do
             echo "  $TAG  ($TS)"
-            echo "    https://v${SLUG}-truck-cad.gedw99.workers.dev"
+            echo "    https://${TAG}-truck-cad.gedw99.workers.dev"
             echo ""
           done
+        fi
+
         echo "Production:  https://cad.ubuntusoftware.net"
         echo "Dashboard:   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments"
 
@@ -599,19 +621,16 @@ tasks:
       - cd {{.WORKER_DIR}} && bun x wrangler deployments list --env=""
 
   "deploy:preview":
-    desc: "Deploy branch to preview (truck-cad-preview.gedw99.workers.dev)"
+    desc: "Upload preview version with alias (pr-{N}-truck-cad.gedw99.workers.dev)"
     deps: ["gui:build", "deploy:setup"]
+    vars:
+      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler deploy --env preview
+      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --env="" --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}} — v{{.CAD_VERSION}}" --preview-alias "pr-{{.PR_NUMBER}}"
       - |
         echo ""
-        echo "Preview live at: https://truck-cad-preview.gedw99.workers.dev"
-        echo "Production untouched: https://cad.ubuntusoftware.net"
-
-  "deploy:preview:down":
-    desc: Tear down preview deployment
-    cmds:
-      - cd {{.WORKER_DIR}} && bun install --silent && bun x wrangler delete --env preview --force
+        echo 'Preview: https://pr-{{.PR_NUMBER}}-truck-cad.gedw99.workers.dev'
+        echo 'Production untouched: https://cad.ubuntusoftware.net'
 
   "deploy:full":
     desc: Deploy Worker + publish docs to R2

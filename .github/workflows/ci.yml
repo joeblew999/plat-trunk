@@ -46,28 +46,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # PR: deploy preview (separate Worker, production untouched)
+      # PR: upload preview version with per-PR alias (pr-42-truck-cad.gedw99.workers.dev)
       - if: github.event_name == 'pull_request'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task truck:deploy:preview
+            task truck:deploy:preview PR_NUMBER=${{ github.event.pull_request.number }}
           else
             echo "Skipping preview deploy — CLOUDFLARE_API_TOKEN not set"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-  # Tear down preview when PR is closed/merged
-  preview-cleanup:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: go-task/setup-task@v1
-
-      - uses: oven-sh/setup-bun@v2
-
-      - run: task truck:deploy:preview:down
+      # Post preview URL as PR comment
+      - if: github.event_name == 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
+        uses: marocchino/sticky-pull-request-comment@v2
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: placeholder
+        with:
+          header: preview-url
+          message: |
+            ### Preview Deployment
+
+            | | URL |
+            |--|--|
+            | Preview | https://pr-${{ github.event.pull_request.number }}-truck-cad.gedw99.workers.dev |
+            | Production | https://cad.ubuntusoftware.net |
+
+            Built from ${{ github.sha }} — [Compare versions side-by-side](https://cad.ubuntusoftware.net)

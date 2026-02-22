@@ -475,16 +475,24 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             }
             if (menu && manifest.versions && manifest.versions.length > 0) {
                 menu.style.display = '';
-                menu.innerHTML = manifest.versions.map(v => {
+                let html = '<li class="menu-title">Releases</li>' +
+                    manifest.versions.map(v => {
                     const isCurrent = v.version === current;
                     return '<li>' +
                         '<a href="' + v.url + '" ' + (isCurrent ? '' : 'target="_blank"') + ' class="' + (isCurrent ? 'active font-bold' : '') + '">' +
                         'v' + v.version + (isCurrent ? ' (current)' : '') +
                         '</a></li>';
-                }).join('') +
-                '<li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>' +
-                '<li><a href="' + (manifest.production || 'https://cad.ubuntusoftware.net') + '" target="_blank">Production</a></li>' +
-                '<li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>';
+                }).join('');
+                if (manifest.previews && manifest.previews.length > 0) {
+                    html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">PR Previews</li>' +
+                        manifest.previews.map(p =>
+                            '<li><a href="' + p.url + '" target="_blank">' + p.label + '</a></li>'
+                        ).join('');
+                }
+                html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>' +
+                    '<li><a href="' + (manifest.production || 'https://cad.ubuntusoftware.net') + '" target="_blank">Production</a></li>' +
+                    '<li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>';
+                menu.innerHTML = html;
             }
         });
 
