@@ -64,7 +64,8 @@
     sketchActive: false, sketchInfo: 'No active sketch',
     sketchPlane: 'xy', sketchPtX: 0, sketchPtY: 0,
     sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
-    sketchConType: '', sketchConVal: 1, sketchConVal2: 0
+    sketchConType: '', sketchConVal: 1, sketchConVal2: 0,
+    statusMode: ''
 }"
 data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
@@ -89,7 +90,19 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H11a5 5 0 00-5 5v0a5 5 0 005 5h10"/><path d="M17 6l4 4-4 4"/></svg>
             </button>
             <span class="tb-sep"></span>
-            <span id="mode-indicator" class="text-xs opacity-40"></span>
+            <!-- Control Plane -->
+            <div class="join" data-testid="mode-toggle">
+                <button data-testid="mode-local" class="btn btn-ghost btn-xs join-item"
+                        data-on:click="window.cadCommand('set_mode', {mode: 'local'})"
+                        data-class="{'btn-active': $statusMode === 'Local'}">Local</button>
+                <button data-testid="mode-online" class="btn btn-ghost btn-xs join-item"
+                        data-on:click="window.cadCommand('set_mode', {mode: 'online'})"
+                        data-class="{'btn-active': $statusMode === 'Online'}">Online</button>
+            </div>
+            <button data-testid="get-status" class="btn btn-ghost btn-xs opacity-40" title="Get system status"
+                    data-on:click="window.cadCommand('get_status').then(r => alert(JSON.stringify(r, null, 2)))">Status</button>
+            <button data-testid="clear-data" class="btn btn-ghost btn-xs text-error opacity-60 hover:opacity-100" title="Wipe all local data"
+                    data-on:click="window.cadCommand('clear_data')">Wipe</button>
             <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
         </div>
     </header>
@@ -459,10 +472,12 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         ]).then(([health, manifest]) => {
             var badge = document.getElementById('versionBadge');
             var menu = document.getElementById('versionMenu');
+            var isLocalHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
             var current = health.version || '?';
+            var label = isLocalHost ? 'local' : 'v' + current;
             if (badge) {
-                badge.textContent = 'v' + current;
-                badge.title = 'v' + current + ' — click to switch versions';
+                badge.textContent = label;
+                badge.title = (isLocalHost ? 'Local dev' : 'v' + current) + ' — click to switch versions';
             }
             if (menu && manifest.versions && manifest.versions.length > 0) {
                 menu.style.display = '';
@@ -480,7 +495,9 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                             return '<li><a href="' + p.url + '" target="_blank">' + p.label + '</a></li>';
                         }).join('');
                 }
+                var isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
                 html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>' +
+                    '<li><a href="http://localhost:8788" ' + (isLocal ? 'class="active font-bold"' : '') + '>Local Dev' + (isLocal ? ' (current)' : '') + '</a></li>' +
                     '<li><a href="' + (manifest.production || 'https://cad.ubuntusoftware.net') + '" target="_blank">Production</a></li>' +
                     '<li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>';
                 menu.innerHTML = html;

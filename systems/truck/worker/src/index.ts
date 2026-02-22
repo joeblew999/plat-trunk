@@ -29,6 +29,12 @@ interface ModuleSchema {
     ephemeral: boolean;
     readonly: boolean;
   }>;
+  controlPlane?: Record<string, {
+    description: string;
+    layer: string;
+    params: { properties?: Record<string, any>; required?: string[]; type?: string };
+    returns: string;
+  }>;
 }
 
 const CommandQueued = z.object({
@@ -368,6 +374,23 @@ function buildMcpTools(schema: ModuleSchema) {
         required: def.params?.required || []
       }
     });
+  }
+  // Control plane commands (JS-layer, dispatched to browser via SSE)
+  if (schema.controlPlane) {
+    for (const [name, def] of Object.entries(schema.controlPlane)) {
+      tools.push({
+        name: `cad_${name}`,
+        description: `[Control Plane] ${def.description}`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            ...(def.params?.properties || {}),
+            modelId: { type: 'string', description: "Target model ID (defaults to 'default')" }
+          },
+          required: def.params?.required || []
+        }
+      });
+    }
   }
   // Meta-tools
   tools.push(

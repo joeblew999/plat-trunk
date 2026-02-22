@@ -703,6 +703,96 @@
       "returns": "success"
     }
   },
+  "controlPlane": {
+    "clear_data": {
+      "description": "Wipe all local data (IndexedDB, localStorage). Requires user confirmation in GUI. Cannot be undone.",
+      "layer": "js",
+      "params": {
+        "properties": {},
+        "type": "object"
+      },
+      "returns": "success"
+    },
+    "create_model": {
+      "description": "Create a new document, reset the scene",
+      "layer": "js",
+      "params": {
+        "properties": {
+          "name": {
+            "description": "Optional model name",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "returns": "modelId"
+    },
+    "get_status": {
+      "description": "Get system status: mode, sync state, object count",
+      "layer": "js",
+      "params": {
+        "properties": {},
+        "type": "object"
+      },
+      "returns": "status"
+    },
+    "redo": {
+      "description": "Redo the last undone operation",
+      "layer": "js",
+      "params": {
+        "properties": {},
+        "type": "object"
+      },
+      "returns": "success"
+    },
+    "set_automerge": {
+      "description": "Enable or disable Automerge sync",
+      "layer": "js",
+      "params": {
+        "properties": {
+          "enabled": {
+            "description": "Whether Automerge sync is enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "returns": "success"
+    },
+    "set_mode": {
+      "description": "Switch between local (offline) and online (Worker relay) mode",
+      "layer": "js",
+      "params": {
+        "properties": {
+          "mode": {
+            "description": "Target mode",
+            "enum": [
+              "local",
+              "online"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "returns": "mode"
+    },
+    "undo": {
+      "description": "Undo the last operation",
+      "layer": "js",
+      "params": {
+        "properties": {},
+        "type": "object"
+      },
+      "returns": "success"
+    }
+  },
   "module": "cad",
   "version": "0.3.0"
 }

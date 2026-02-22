@@ -244,10 +244,75 @@ pub fn build_schema() -> serde_json::Value {
         }));
     }
 
+    // Control plane commands — handled in JS (state.js), not WASM.
+    // Included in schema so MCP agents and tests can discover and call them.
+    let control_plane = serde_json::json!({
+        "undo": {
+            "description": "Undo the last operation",
+            "layer": "js",
+            "params": { "type": "object", "properties": {} },
+            "returns": "success"
+        },
+        "redo": {
+            "description": "Redo the last undone operation",
+            "layer": "js",
+            "params": { "type": "object", "properties": {} },
+            "returns": "success"
+        },
+        "get_status": {
+            "description": "Get system status: mode, sync state, object count",
+            "layer": "js",
+            "params": { "type": "object", "properties": {} },
+            "returns": "status"
+        },
+        "set_mode": {
+            "description": "Switch between local (offline) and online (Worker relay) mode",
+            "layer": "js",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "mode": { "type": "string", "enum": ["local", "online"], "description": "Target mode" }
+                },
+                "required": ["mode"]
+            },
+            "returns": "mode"
+        },
+        "create_model": {
+            "description": "Create a new document, reset the scene",
+            "layer": "js",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Optional model name" }
+                }
+            },
+            "returns": "modelId"
+        },
+        "set_automerge": {
+            "description": "Enable or disable Automerge sync",
+            "layer": "js",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean", "description": "Whether Automerge sync is enabled" }
+                },
+                "required": ["enabled"]
+            },
+            "returns": "success"
+        },
+        "clear_data": {
+            "description": "Wipe all local data (IndexedDB, localStorage). Requires user confirmation in GUI. Cannot be undone.",
+            "layer": "js",
+            "params": { "type": "object", "properties": {} },
+            "returns": "success"
+        }
+    });
+
     serde_json::json!({
         "module": "cad",
         "version": "0.3.0",
         "commands": cmd_map,
+        "controlPlane": control_plane,
     })
 }
 

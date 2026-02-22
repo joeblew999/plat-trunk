@@ -63,6 +63,7 @@ Every piece of state the system manages becomes a **command type** in `cad-schem
 | Toggle Mode | `cadCommand('set_mode', {mode: 'online'})` | `cad_set_mode({mode: 'online'})` |
 | Click "New" document | `cadCommand('create_model', {name})` | `cad_create_model({name})` |
 | Check sync status | `cadCommand('get_status')` | `cad_get_status()` |
+| Wipe local data | `cadCommand('clear_data')` | `cad_clear_data()` |
 
 **All of these go through the same dispatch, return the same JSON shape, hit the same `reconcile()`, and are tested the same way.** The GUI, the AI, and the test harness are interchangeable callers.
 
@@ -94,13 +95,15 @@ These are added to `cad-schema.json` with `layer: "js"` to distinguish them from
 | `get_status` | — | `{mode, automergeReady, objectCount}` | JS | Get complete system status |
 | `set_mode` | `{mode: 'local'\|'online'}` | `{mode}` | JS | Switch mode at runtime |
 | `create_model` | `{name?}` | `{success, modelId}` | JS | Creates new Automerge doc, resets scene |
+| `set_automerge` | `{enabled}` | `{success}` | JS | Enable/disable Automerge sync |
+| `clear_data` | — | `{success}` | JS | Wipe all local data (IndexedDB, localStorage). Prompts confirmation in GUI. |
 
 ### Dispatch Routing
 
 `cadCommand()` in `state.js` routes by category:
 
 ```javascript
-const JS_COMMANDS = new Set(['undo', 'redo', 'get_status', 'set_mode', 'create_model']);
+const JS_COMMANDS = new Set(['undo', 'redo', 'get_status', 'set_mode', 'create_model', 'set_automerge', 'clear_data']);
 
 async function cadCommand(type, params = {}, opts = {}) {
   // ... check guards ...
