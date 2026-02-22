@@ -474,9 +474,13 @@ tasks:
           BODY=$(cat <<NOTES
         ## Live URLs
 
-        - **Production**: https://cad.ubuntusoftware.net
-        - **API Health**: https://cad.ubuntusoftware.net/api/health
-        - **API Schema**: https://cad.ubuntusoftware.net/api/cad/schema
+        | Endpoint | URL |
+        |----------|-----|
+        | Production | https://cad.ubuntusoftware.net |
+        | API Health | https://cad.ubuntusoftware.net/api/health |
+        | API Schema | https://cad.ubuntusoftware.net/api/cad/schema |
+        | OpenAPI Spec | https://cad.ubuntusoftware.net/api/doc |
+        | MCP (StreamableHTTP) | https://cad.ubuntusoftware.net/mcp |
 
         ## Verify
         \`\`\`sh
