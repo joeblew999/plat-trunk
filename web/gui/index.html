@@ -72,6 +72,11 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <header class="app-header">
         <div class="flex items-center gap-2">
             <span class="logo">CAD</span>
+            <div class="dropdown dropdown-bottom">
+                <div id="versionBadge" tabindex="0" role="button"
+                     class="badge badge-sm badge-outline opacity-40 hover:opacity-80 cursor-pointer font-mono">...</div>
+                <ul id="versionMenu" tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-50 w-64 p-2 shadow-xl text-xs" style="display:none"></ul>
+            </div>
             <span id="docInfo" class="text-xs opacity-50 truncate max-w-40 cursor-pointer" title="Click to copy doc URL">Untitled</span>
         </div>
         <div class="flex items-center gap-1">
@@ -446,6 +451,41 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             s.src = 'worker-relay.js?v=' + (window.__cbv || Date.now());
             document.body.appendChild(s);
         }
+
+        // Version picker — show current version, dropdown lists all available
+        Promise.all([
+            fetch('/api/health').then(r => r.json()).catch(() => ({})),
+            fetch('/versions.json').then(r => r.json()).catch(() => ({ versions: [] }))
+        ]).then(([health, manifest]) => {
+            var badge = document.getElementById('versionBadge');
+            var menu = document.getElementById('versionMenu');
+            var current = health.version || '?';
+            if (badge) {
+                badge.textContent = 'v' + current;
+                badge.title = 'v' + current + ' — click to switch versions';
+            }
+            if (menu && manifest.versions && manifest.versions.length > 0) {
+                menu.style.display = '';
+                var html = '<li class="menu-title">Releases</li>' +
+                    manifest.versions.map(function(v) {
+                    var isCurrent = v.version === current;
+                    return '<li>' +
+                        '<a href="' + v.url + '" ' + (isCurrent ? '' : 'target="_blank"') + ' class="' + (isCurrent ? 'active font-bold' : '') + '">' +
+                        'v' + v.version + (isCurrent ? ' (current)' : '') +
+                        '</a></li>';
+                }).join('');
+                if (manifest.previews && manifest.previews.length > 0) {
+                    html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">PR Previews</li>' +
+                        manifest.previews.map(function(p) {
+                            return '<li><a href="' + p.url + '" target="_blank">' + p.label + '</a></li>';
+                        }).join('');
+                }
+                html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>' +
+                    '<li><a href="' + (manifest.production || 'https://cad.ubuntusoftware.net') + '" target="_blank">Production</a></li>' +
+                    '<li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>';
+                menu.innerHTML = html;
+            }
+        });
     </script>
 </body>
 </html>
