@@ -397,8 +397,8 @@ tasks:
     deps: ["deps:clone:truck"]
     cmds:
       - cd {{.TRUCK_SRC_DIR}} && cargo check
-      # Exclude truck-platform (needs GPU/Vulkan drivers not available in CI)
-      - cd {{.TRUCK_SRC_DIR}} && cargo test --workspace --exclude truck-platform
+      # Exclude GPU-dependent crates (need Vulkan drivers not available in CI)
+      - cd {{.TRUCK_SRC_DIR}} && cargo test --workspace --exclude truck-platform --exclude truck-rendimpl
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/web/gui/pkg-browser-renderer
 
