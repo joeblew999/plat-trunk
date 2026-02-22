@@ -19,7 +19,7 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0004](0004-hybrid-semantic-bim.md) | Hybrid Semantic BIM | **In Progress** |
-| [0011](0011-control-plane.md) | Control Plane — State Management as API | **In Progress** |
+| [0011](0011-control-plane.md) | Control Plane — State Management as API | **Implemented** |
 | [0012](0012-ai-surface.md) | AI Surface — AI Discovery | **In Progress** |
 | [0013](0013-lit-threejs.md) | Lit + Three.js + Passive WASM Interaction | **Proposed** |
 | [0014](0014-mvt.md) | Mapbox Vector Tiles (MVT) for Urban Context | **Proposed** |

@@ -302,6 +302,41 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 <option value="">Load example...</option>
             </select>
         </div>
+
+        <!-- AI / MCP -->
+        <h3>AI / MCP</h3>
+        <div class="space-y-1" data-testid="mcp-section">
+            <div class="text-xs opacity-60 mb-1">Connect your AI agent to this CAD system</div>
+            <div class="flex gap-1 items-center">
+                <code class="text-[10px] bg-base-300 px-1 py-0.5 rounded flex-1 truncate cursor-pointer"
+                      data-testid="mcp-url"
+                      title="Click to copy MCP endpoint URL"
+                      onclick="navigator.clipboard.writeText(location.origin + '/mcp').then(() => this.textContent = 'Copied!').then(() => setTimeout(() => this.textContent = location.origin + '/mcp', 1500))">
+                </code>
+            </div>
+            <details class="collapse collapse-arrow bg-base-200 rounded-box" data-testid="mcp-setup">
+                <summary class="collapse-title text-xs font-medium min-h-0 py-1 px-2">Setup snippets</summary>
+                <div class="collapse-content text-[10px] space-y-2 px-2 pb-2">
+                    <div>
+                        <div class="font-bold opacity-70">Claude Code</div>
+                        <code class="block bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-claude">claude mcp add --transport http truck-cad <span class="mcp-origin"></span>/mcp</code>
+                    </div>
+                    <div>
+                        <div class="font-bold opacity-70">Cursor / VS Code</div>
+                        <pre class="bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-cursor">{ "mcpServers": { "truck-cad": { "type": "http", "url": "<span class="mcp-origin"></span>/mcp" } } }</pre>
+                    </div>
+                    <div>
+                        <div class="font-bold opacity-70">Any MCP client</div>
+                        <code class="block bg-base-300 p-1 rounded break-all" data-testid="mcp-generic">POST <span class="mcp-origin"></span>/mcp</code>
+                    </div>
+                    <div class="flex gap-1 mt-1">
+                        <a href="/llms.txt" target="_blank" class="link link-xs link-primary">llms.txt</a>
+                        <a href="/.well-known/mcp/server-card.json" target="_blank" class="link link-xs link-primary">server-card</a>
+                        <a href="/api/cad/schema" target="_blank" class="link link-xs link-primary">schema</a>
+                    </div>
+                </div>
+            </details>
+        </div>
     </aside>
 
     <!-- ═══════════════════ VIEWPORT ═══════════════════ -->
@@ -434,6 +469,11 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 if (modeEl) modeEl.textContent = 'Online';
                 if (indicatorEl) indicatorEl.textContent = 'Online';
             }
+
+            // MCP section: populate origin URL
+            var mcpUrl = document.querySelector('[data-testid="mcp-url"]');
+            if (mcpUrl) mcpUrl.textContent = location.origin + '/mcp';
+            document.querySelectorAll('.mcp-origin').forEach(function(el) { el.textContent = location.origin; });
 
             // Init Automerge
             retries = 0;

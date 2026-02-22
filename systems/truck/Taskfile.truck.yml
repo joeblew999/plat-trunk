@@ -193,6 +193,7 @@ tasks:
     deps: ["wasm:build-browser"]
     cmds:
       - task: gui:schema
+      - cp {{.ROOT_DIR}}/CONTEXT.md {{.ROOT_DIR}}/web/gui/CONTEXT.md
 
   "mcp:bootstrap":
     desc: "Bootstrap all MCP components: schema, deps, configs"
@@ -529,7 +530,7 @@ tasks:
     dir: "{{.ROOT_DIR}}/systems/truck/worker"
     cmds:
       - |
-        bun x wrangler versions list --env="" 2>&1 | \
+        bun x wrangler versions list 2>&1 | \
           awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print tag, ts}' | \
           bun -e "
             const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
@@ -564,9 +565,9 @@ tasks:
     cmds:
       - |
         cd {{.WORKER_DIR}}
-        LATEST=$(bun x wrangler versions list --env="" 2>&1 | grep "Version ID:" | tail -1 | awk '{print $NF}')
-        echo "Deploying $LATEST to 100%..."
-        bun x wrangler versions deploy "$LATEST@100" --env="" --yes
+        LATEST=$(bun x wrangler versions list 2>&1 | grep "Version ID:" | head -1 | awk '{print $NF}')
+        echo "Promoting $LATEST to 100%..."
+        bun x wrangler versions deploy "$LATEST@100%" --yes
 
   "deploy:canary":
     desc: Deploy with gradual traffic split (interactive)
@@ -585,7 +586,7 @@ tasks:
     dir: "{{.ROOT_DIR}}/systems/truck/worker"
     cmds:
       - |
-        VERSIONS=$(bun x wrangler versions list --env="" 2>&1 | \
+        VERSIONS=$(bun x wrangler versions list 2>&1 | \
           awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print id, ts, tag}' | \
           sort -k2 -r)
 

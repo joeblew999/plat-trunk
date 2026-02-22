@@ -481,13 +481,33 @@ app.post('/mcp', async (c) => {
 app.get('/mcp', (c) => c.body(null, 405));
 app.delete('/mcp', (c) => c.body(null, 405));
 
-// Serve CONTEXT.md as /llms.txt (single source of truth for AI discovery)
+// Serve CONTEXT.md as /llms.txt (single source of truth for AI discovery — ADR-0012)
 app.get('/llms.txt', async (c) => {
   try {
     const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/CONTEXT.md', c.req.url)));
     if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
   } catch {}
-  return c.text('See https://github.com/joeblew999/plat-trunk/blob/main/CONTEXT.md', 302);
+  return c.redirect('https://raw.githubusercontent.com/joeblew999/plat-trunk/main/CONTEXT.md');
+});
+
+// MCP Server Card — machine-readable discovery (draft spec, .well-known/mcp)
+app.get('/.well-known/mcp/server-card.json', (c) => {
+  const s = cadSchema as ModuleSchema;
+  const tools = buildMcpTools(s);
+  const baseUrl = new URL(c.req.url).origin;
+  return c.json({
+    version: '1.0',
+    protocolVersion: '2025-03-26',
+    serverInfo: { name: 'truck-cad', title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
+    description: 'Professional 3D CAD system. B-Rep kernel (truck), WebGPU rendering, Automerge collaboration. 29 MCP tools for modeling, transforms, booleans, sketch, import/export, and control plane.',
+    iconUrl: `${baseUrl}/favicon.svg`,
+    documentationUrl: `${baseUrl}/llms.txt`,
+    transport: { type: 'http', endpoint: '/mcp' },
+    capabilities: { tools: true },
+    authentication: { schemes: [] },
+    tools: tools.map(t => t.name),
+    instructions: `Connect with: claude mcp add --transport http truck-cad ${baseUrl}/mcp`
+  }, 200, { 'cache-control': 'public, max-age=3600' });
 });
 
 // SPA catch-all: serve index.html for /model/* paths
