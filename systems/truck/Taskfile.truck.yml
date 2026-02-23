@@ -53,6 +53,7 @@ tasks:
       - test -f {{.TRUCK_SRC_DIR}}/Cargo.toml
     cmds:
       - mkdir -p {{.SRC_DIR}}
+      - rm -rf {{.TRUCK_SRC_DIR}}
       - git clone https://{{.TRUCK_FORK}}.git {{.TRUCK_SRC_DIR}}
       - cd {{.TRUCK_SRC_DIR}} && git remote add upstream https://{{.TRUCK_UPSTREAM}}.git || true
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
