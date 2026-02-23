@@ -104,15 +104,22 @@ pub fn make_torus(major_r: f64, minor_r: f64) -> Solid {
 }
 
 // ---------------------------------------------------------------------------
-// WASM application (only compiled for wasm32 target)
+// WASM application — rendering vs headless (ADR-0018 Phase 0.5)
 // ---------------------------------------------------------------------------
 
-#[cfg(target_arch = "wasm32")]
+// Full rendering app (browser): wasm32 + rendering feature
+#[cfg(all(target_arch = "wasm32", feature = "rendering"))]
 mod wasm_app;
 
-// Re-export WASM types at crate root so wasm_bindgen can find them
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "rendering"))]
 pub use wasm_app::SceneController;
+
+// Headless geometry engine (CF Worker): wasm32, no rendering
+#[cfg(all(target_arch = "wasm32", not(feature = "rendering")))]
+mod headless;
+
+#[cfg(all(target_arch = "wasm32", not(feature = "rendering")))]
+pub use headless::HeadlessController;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 

@@ -4,7 +4,7 @@ We will adopt the "Code Mode" pattern for our Model Context Protocol (MCP) imple
 
 ## Status
 
-**Proposed** — Phase 0 (WASM-in-Worker feasibility) **PASSED**.
+**Proposed** — Phase 0 **PASSED**, Phase 0.5 **PASSED**.
 
 ## Key Architectural Insight: One Crate, Two Targets
 
@@ -61,33 +61,46 @@ wasm-bindgen `--target bundler` output needs a manual `WebAssembly.instantiate()
 
 ---
 
-## Phase 0.5: Headless Build of truck-webgpu-gui (Do Next)
+## Phase 0.5: Headless Build of truck-webgpu-gui — PASSED
 
-Now that WASM-in-Worker is proven, the real next step is building our own crate without rendering.
+Our own crate compiled without rendering deps, deployed to Worker, geometry verified.
 
-### The Work
+### What We Did
 
-1. **Add feature flag** to `crates/truck-webgpu-gui/Cargo.toml`:
+1. **Added `rendering` feature flag** to `crates/truck-webgpu-gui/Cargo.toml`:
    ```toml
    [features]
-   default = ["rendering"]
-   rendering = ["truck-platform", "truck-rendimpl", "wgpu", "winit", "web-sys"]
+   default = ["rendering", "mvt"]
+   rendering = ["dep:truck-platform", "dep:truck-rendimpl", "dep:wgpu", "dep:winit", "dep:web-sys"]
    ```
 
-2. **Gate rendering code** with `#[cfg(feature = "rendering")]`:
-   - `SceneController::new()` (needs wgpu::Device) — rendering only
-   - `solid_to_instances()` — rendering only
-   - `reconcile_scene()` — rendering only
-   - `execute()` command dispatch — **keep** (geometry), gate rendering side-effects
+2. **Gated rendering code** — `mod wasm_app` compiled only with `rendering` feature. Created `mod headless` (compiled without) containing `HeadlessController` with same `execute()` dispatch, same command params, no rendering deps. Both modules in `lib.rs`:
+   ```rust
+   #[cfg(all(target_arch = "wasm32", feature = "rendering"))]
+   mod wasm_app;
+   #[cfg(all(target_arch = "wasm32", not(feature = "rendering")))]
+   mod headless;
+   ```
 
-3. **Build headless WASM**:
+3. **Built headless WASM**:
    ```sh
-   wasm-pack build --target bundler --no-default-features crates/truck-webgpu-gui
+   wasm-pack build --target bundler --no-default-features  # from crate dir
    ```
 
-4. **Replace truck-js in Worker** with the headless build. Same `truck-wasm.ts` lazy init pattern.
+4. **Replaced truck-js** in Worker with headless build. Updated `truck-wasm.ts` to dynamically collect glue imports (no fragile manual listing).
 
-5. **Validate**: Same `/api/test-wasm` endpoint, but calling `execute("add_cube", {...})` instead of truck-js primitives.
+5. **Validated** via `/api/test-wasm` calling `execute("add_cube", {"size": 1.0})`.
+
+### Results
+
+| Metric | Result | Status |
+|--------|--------|--------|
+| Headless WASM size | **2.5 MB** | **PASS** (under 3 MB free limit) |
+| Cold init | **1ms** | **PASS** |
+| Warm init | **0ms** | **PASS** |
+| `execute("add_cube", ...)` | Valid objectId + objectCount=1 | **PASS** |
+| Rendering build (default features) | Still compiles | **PASS** |
+| MCP `cad_wasm_health` tool | Works via JSON-RPC | **PASS** |
 
 ### What This Gives Us
 
@@ -117,10 +130,10 @@ Our current MCP implementation exposes 29 granular tools (ADR-010). This works w
 | Capability | Status | Notes |
 |------------|--------|-------|
 | WASM kernel in browser | **Working** | `truck-webgpu-gui`: geometry (CPU) + WebGPU rendering (GPU) |
-| WASM in CF Worker | **Proven** | Phase 0 passed with truck-js; Phase 0.5 upgrades to headless build |
+| WASM in CF Worker | **Proven** | Phase 0 (truck-js) + Phase 0.5 (headless truck-webgpu-gui) both passed |
 | Worker (Hono/Zod) | **Working** | Stateless proxy, SSE command relay, 29 MCP tools |
 | MCP bridge | **Working** | stdio ↔ HTTP proxy with retry + hot-reload |
-| Feature-flagged headless build | **Not started** | Phase 0.5 — next step |
+| Feature-flagged headless build | **Done** | Phase 0.5 — HeadlessController with execute() dispatch |
 | Server-side state (Durable Objects) | **Not started** | Automerge state lives in browser only |
 | Workers AI integration | **Not started** | No `/api/chat` route, no model calls |
 
@@ -355,7 +368,7 @@ The only non-DRY artifact is two WASM binaries compiled from the same source. Th
 | Phase | Deliverable | Effort | Dependencies |
 |-------|-------------|--------|--------------|
 | **0** | **WASM-in-Worker feasibility (truck-js)** | **Done** | **PASSED — PR #2** |
-| **0.5** | **Feature-flag truck-webgpu-gui, build headless WASM, deploy to Worker** | **Medium** | **Phase 0 pass** |
+| **0.5** | **Feature-flag truck-webgpu-gui, build headless WASM, deploy to Worker** | **Done** | **PASSED** |
 | 1a | `cad_execute` tool with runtime SDK generation + `TransactionRecord` | Small | Existing `buildMcpTools` |
 | 1b | Browser-side sandbox + transaction context via SSE | Medium | Phase 1a |
 | 1c | Security (timeout, rate limit, sandbox) | Small | Phase 1b |
@@ -382,3 +395,11 @@ Note: Stage 2a (SDK bridging layer) from the previous version of this ADR is **e
 *   [ADR-003: Automerge Collaboration](./done/0003-automerge-collaboration.md) — State management and transaction model.
 *   [ADR-005: Schema-Driven Unified API](./done/0005-schema-driven-unified-api.md) — Rust → JSON schema pipeline.
 *   [ADR-013: Lit + Three.js Integration](./0013-lit-threejs.md) — Passive WASM, JS-owned camera.
+
+
+EXTRA !! 
+
+I REALLY THINK YOU NEED to git clone  https://github.com/cloudflare/mcp its a reference for what we are doing ? 
+
+
+truck_webgpu_gui_bg.js is huge . is this generated ? i hope so .. 

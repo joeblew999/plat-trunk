@@ -8,20 +8,20 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "0.2.106"
-wgpu = "27.0.1"
-winit = "0.30.12"
-web-sys = { version = "0.3.83", features = ["HtmlCanvasElement", "Window", "Document", "Element"] }
 console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
 log = "0.4.29"
 wasm-bindgen-futures = "0.4.42"
 js-sys = "0.3.83"
 
-# Truck rendering stack (Scene, Camera, Lights, PBR shaders, InstanceCreator)
-truck-platform = { version = "0.6.0", path = "../../.src/truck/truck-platform" }
-truck-rendimpl = { version = "0.6.0", path = "../../.src/truck/truck-rendimpl" }
+# Rendering stack — optional, gated behind `rendering` feature (ADR-0018 Phase 0.5)
+wgpu = { version = "27.0.1", optional = true }
+winit = { version = "0.30.12", optional = true }
+web-sys = { version = "0.3.83", features = ["HtmlCanvasElement", "Window", "Document", "Element"], optional = true }
+truck-platform = { version = "0.6.0", path = "../../.src/truck/truck-platform", optional = true }
+truck-rendimpl = { version = "0.6.0", path = "../../.src/truck/truck-rendimpl", optional = true }
 
-# Truck CAD kernel (modeling primitives, tessellation, booleans)
+# Truck CAD kernel (modeling primitives, tessellation, booleans) — always compiled
 truck-modeling = { version = "0.6.0", path = "../../.src/truck/truck-modeling" }
 truck-meshalgo = { version = "0.4.0", path = "../../.src/truck/truck-meshalgo" }
 truck-polymesh = { version = "0.6.0", path = "../../.src/truck/truck-polymesh" }
@@ -63,7 +63,8 @@ name = "generate-schema"
 path = "src/bin/generate_schema.rs"
 
 [features]
-default = ["mvt"]
+default = ["rendering", "mvt"]
+rendering = ["dep:truck-platform", "dep:truck-rendimpl", "dep:wgpu", "dep:winit", "dep:web-sys"]
 webgl = ["wgpu/webgl", "truck-platform/webgl", "truck-rendimpl/webgl"]
 mvt = ["dep:geozero", "dep:earcutr", "dep:bytes", "dep:prost"]
 gltf = ["dep:gltf"]

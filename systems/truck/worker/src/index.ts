@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import cadSchema from '../../../../web/cad-schema.json';
-import { initTruckWasm } from './truck-wasm';
+import { initHeadlessWasm } from './truck-wasm';
 
 type Bindings = {
   MY_VAR: string;
@@ -344,36 +344,34 @@ api.openapi(createRoute({
 }), (c) => c.json({ status: 'ok', service: 'truck-cad', version: (cadSchema as ModuleSchema).version }));
 
 // =========================================================================
-// Phase 0: truck-js WASM feasibility test (ADR-0018)
+// Phase 0.5: Headless truck-webgpu-gui WASM test (ADR-0018)
 // =========================================================================
 
 async function runWasmHealthCheck() {
   const start = Date.now();
-  const truck = await initTruckWasm();
+  const wasm = await initHeadlessWasm();
   const initMs = Date.now() - start;
+
   const geoStart = Date.now();
-  const v = truck.vertex(0, 0, 0);
-  const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
-  const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
-  const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
-  const solidObj = solid.into_solid()!;
-  const polygon = solidObj.to_polygon(0.01);
-  const buffer = polygon.to_buffer();
+  const ctrl = new wasm.HeadlessController();
+  const cubeResult = JSON.parse(ctrl.execute('add_cube', '{"size": 1.0}'));
+  const stateResult = JSON.parse(ctrl.execute('get_state', '{}'));
+  const geoMs = Date.now() - geoStart;
+
   return {
     ok: true as const,
     headless: true,
-    engine: 'truck-js 0.2.0',
-    vertices: buffer.vertex_buffer().length,
-    indices: buffer.index_buffer().length,
-    triangles: buffer.index_buffer().length / 3,
+    engine: 'truck-webgpu-gui headless 0.1.0',
+    objectId: cubeResult.objectId,
+    objectCount: stateResult.objectCount,
     initMs,
-    geoMs: Date.now() - geoStart,
+    geoMs,
     totalMs: Date.now() - start,
   };
 }
 
 api.openapi(createRoute({
-  method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test truck-js WASM in Worker',
+  method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM geometry in Worker',
   responses: { 200: { description: 'WASM test result' } }
 }), async (c) => {
   try {

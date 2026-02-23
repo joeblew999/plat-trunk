@@ -1,5 +1,8 @@
 /**
- * truck-js WASM loader for Cloudflare Workers (ADR-0018 Phase 0)
+ * Headless truck-webgpu-gui WASM loader for Cloudflare Workers (ADR-0018 Phase 0.5)
+ *
+ * Loads our own crate (truck-webgpu-gui) compiled without the `rendering` feature.
+ * Same execute() dispatch as the browser build, but no wgpu/winit/web-sys deps.
  *
  * Problem: wasm-bindgen --target bundler generates `import * as wasm from "./file.wasm"`
  * which expects bundler-style WASM instantiation. Wrangler imports .wasm as
@@ -9,32 +12,34 @@
  */
 
 // Wrangler imports .wasm files as WebAssembly.Module
-import wasmModule from '../pkg/truck_js_bg.wasm';
-import * as bg from '../pkg/truck_js_bg.js';
+import wasmModule from '../pkg/truck_webgpu_gui_bg.wasm';
+// @ts-expect-error — no .d.ts for the bg.js glue (generated code)
+import * as bg from '../pkg/truck_webgpu_gui_bg.js';
 
 let initialized = false;
 
-export async function initTruckWasm(): Promise<typeof bg> {
+export async function initHeadlessWasm(): Promise<typeof bg> {
   if (initialized) return bg;
 
-  // Collect the JS functions that WASM imports from the glue code
-  const imports = {
-    './truck_js_bg.js': {
-      __wbg___wbindgen_string_get_72fb696202c56729: bg.__wbg___wbindgen_string_get_72fb696202c56729,
-      __wbg___wbindgen_throw_be289d5034ed271b: bg.__wbg___wbindgen_throw_be289d5034ed271b,
-      __wbg_error_3c7d958458bf649b: bg.__wbg_error_3c7d958458bf649b,
-      __wbindgen_cast_0000000000000001: bg.__wbindgen_cast_0000000000000001,
-      __wbindgen_init_externref_table: bg.__wbindgen_init_externref_table,
+  // Collect all glue functions the WASM module needs.
+  // WebAssembly.instantiate ignores extras, so we can pass all bg exports.
+  const glueImports: WebAssembly.ModuleImports = {};
+  for (const [key, value] of Object.entries(bg)) {
+    if (typeof value === 'function') {
+      glueImports[key] = value as WebAssembly.ImportValue;
     }
+  }
+
+  const imports: WebAssembly.Imports = {
+    './truck_webgpu_gui_bg.js': glueImports,
   };
 
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   bg.__wbg_set_wasm(instance.exports);
-  // @ts-expect-error — __wbindgen_start exists on the WASM exports
-  (instance.exports.__wbindgen_start as Function)();
+  (instance.exports as unknown as { __wbindgen_start: () => void }).__wbindgen_start();
   initialized = true;
   return bg;
 }
 
-// Re-export types for convenience
-export type { AbstractShape, Edge, Face, Shell, Solid, Vertex, Wire, PolygonMesh, PolygonBuffer } from '../pkg/truck_js.js';
+// Re-export the HeadlessController type
+export type { HeadlessController } from '../pkg/truck_webgpu_gui.js';
