@@ -435,7 +435,7 @@ function buildMcpTools(schema: ModuleSchema) {
   tools.push(
     { name: 'cad_health', description: 'Check if the CAD server and browser are connected', inputSchema: { type: 'object', properties: {} } },
     { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_wasm_health', description: 'Test headless truck-js WASM geometry kernel in Worker (ADR-0018 Phase 0)', inputSchema: { type: 'object', properties: {} } }
+    { name: 'cad_wasm_health', description: 'Test headless truck-webgpu-gui WASM geometry kernel in Worker (ADR-0018 Phase 0.5)', inputSchema: { type: 'object', properties: {} } }
   );
   return tools;
 }

@@ -26,6 +26,7 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0015](0015-gltf-ingestion.md) | glTF/GLB Asset Ingestion | **Proposed** |
 | [0017](0017-versioned-deployments.md) | Versioned Deployments via Cloudflare Workers | **Implemented** |
 | [0018](0018-code-mode-mcp.md) | Code Mode MCP for Efficient API Interaction | **Proposed** |
+| [0019](0019-gui-unification.md) | GUI Unification — Single Dispatch, Single Pattern | **Proposed** |
 
 ## Future Roadmap
 

@@ -587,369 +587,424 @@ impl HeadlessController {
         }
     }
 
-    // ── Universal dispatcher ────────────────────────────────
+    // ── Domain dispatchers (ADR-0019: domain-organized dispatch) ──
 
-    pub fn execute(&mut self, cmd_type: &str, params_json: &str) -> String {
-        let p: serde_json::Value = serde_json::from_str(params_json).unwrap_or(serde_json::json!({}));
-
-        let result: serde_json::Value = match cmd_type {
-            // ── Primitives ──────────────────────────────────────────
+    fn dispatch_geometry(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
+        match cmd {
             "add_cube" => {
                 let params: AddCubeParams = serde_json::from_value(p).unwrap_or(AddCubeParams { size: 1.0 });
-                let id = self.add_cube(params.size);
-                serde_json::json!({ "objectId": id })
+                Some(serde_json::json!({ "objectId": self.add_cube(params.size) }))
             }
             "add_sphere" => {
                 let params: AddSphereParams = serde_json::from_value(p).unwrap_or(AddSphereParams { radius: 1.0 });
-                let id = self.add_sphere(params.radius);
-                serde_json::json!({ "objectId": id })
+                Some(serde_json::json!({ "objectId": self.add_sphere(params.radius) }))
             }
             "add_cylinder" => {
                 let params: AddCylinderParams = serde_json::from_value(p).unwrap_or(AddCylinderParams { radius: 0.5, height: 1.0 });
-                let id = self.add_cylinder(params.radius, params.height);
-                serde_json::json!({ "objectId": id })
+                Some(serde_json::json!({ "objectId": self.add_cylinder(params.radius, params.height) }))
             }
             "add_torus" => {
                 let params: AddTorusParams = serde_json::from_value(p).unwrap_or(AddTorusParams { major_radius: 1.0, minor_radius: 0.3 });
-                let id = self.add_torus(params.major_radius, params.minor_radius);
-                serde_json::json!({ "objectId": id })
+                Some(serde_json::json!({ "objectId": self.add_torus(params.major_radius, params.minor_radius) }))
+            }
+            "translate" => Some(match serde_json::from_value::<TranslateParams>(p) {
+                Ok(params) => serde_json::json!({ "success": self.translate_object(&params.object_id, params.dx, params.dy, params.dz) }),
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "rotate" => Some(match serde_json::from_value::<RotateParams>(p) {
+                Ok(params) => serde_json::json!({ "success": self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg) }),
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "scale" => Some(match serde_json::from_value::<ScaleParams>(p) {
+                Ok(params) => serde_json::json!({ "success": self.scale_object(&params.object_id, params.sx, params.sy, params.sz) }),
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "duplicate" => Some(match serde_json::from_value::<ObjectIdParam>(p) {
+                Ok(params) => {
+                    let id = self.duplicate_object(&params.object_id);
+                    if id.is_empty() { serde_json::json!({ "error": "Duplicate failed" }) }
+                    else { serde_json::json!({ "objectId": id }) }
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            _ => None,
+        }
+    }
+
+    fn dispatch_booleans(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
+        match cmd {
+            "boolean_union" => Some(match serde_json::from_value::<BooleanParams>(p) {
+                Ok(params) => {
+                    let id = self.boolean_union(&params.id_a, &params.id_b);
+                    if id.is_empty() { serde_json::json!({ "error": "Union failed" }) }
+                    else { serde_json::json!({ "objectId": id }) }
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "boolean_subtract" => Some(match serde_json::from_value::<BooleanParams>(p) {
+                Ok(params) => {
+                    let id = self.boolean_subtract(&params.id_a, &params.id_b);
+                    if id.is_empty() { serde_json::json!({ "error": "Subtract failed" }) }
+                    else { serde_json::json!({ "objectId": id }) }
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "boolean_intersect" => Some(match serde_json::from_value::<BooleanParams>(p) {
+                Ok(params) => {
+                    let id = self.boolean_intersect(&params.id_a, &params.id_b);
+                    if id.is_empty() { serde_json::json!({ "error": "Intersect failed" }) }
+                    else { serde_json::json!({ "objectId": id }) }
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "clash_detect" => Some(match serde_json::from_value::<BooleanParams>(p) {
+                Ok(params) => serde_json::json!({ "clash": self.clash_detect(&params.id_a, &params.id_b) }),
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            _ => None,
+        }
+    }
+
+    fn dispatch_sketch(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
+        use crate::sketch::{Sketch, SketchPlane, SketchConstraintKind};
+
+        match cmd {
+            "begin_sketch" => Some(match serde_json::from_value::<BeginSketchParams>(p) {
+                Ok(params) => {
+                    let plane = match params.plane.as_str() {
+                        "xz" => SketchPlane::XZ,
+                        "yz" => SketchPlane::YZ,
+                        _ => SketchPlane::XY,
+                    };
+                    let sketch = Sketch::new(plane);
+                    let id = sketch.id.to_string();
+                    self.active_sketch = Some(sketch);
+                    serde_json::json!({ "sketchId": id })
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+
+            "sketch_add_point" => Some(match serde_json::from_value::<SketchAddPointParams>(p) {
+                Ok(params) => match self.active_sketch.as_mut() {
+                    Some(sketch) => {
+                        let id = sketch.add_point(params.x, params.y);
+                        serde_json::json!({ "pointId": id.to_string() })
+                    }
+                    None => serde_json::json!({ "error": "No active sketch" }),
+                },
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+
+            "sketch_add_edge" => Some(match serde_json::from_value::<SketchAddEdgeParams>(p) {
+                Ok(params) => match self.active_sketch.as_mut() {
+                    Some(sketch) => {
+                        let p0 = match uuid::Uuid::parse_str(&params.p0_id) {
+                            Ok(u) => u, Err(_) => return Some(serde_json::json!({ "error": "Invalid p0Id" })),
+                        };
+                        let p1 = match uuid::Uuid::parse_str(&params.p1_id) {
+                            Ok(u) => u, Err(_) => return Some(serde_json::json!({ "error": "Invalid p1Id" })),
+                        };
+                        let id = sketch.add_edge(p0, p1);
+                        serde_json::json!({ "edgeId": id.to_string() })
+                    }
+                    None => serde_json::json!({ "error": "No active sketch" }),
+                },
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+
+            "sketch_add_constraint" => Some(match serde_json::from_value::<SketchAddConstraintParams>(p) {
+                Ok(params) => match self.active_sketch.as_mut() {
+                    Some(sketch) => {
+                        let cp: serde_json::Value = match serde_json::from_str(&params.params) {
+                            Ok(v) => v,
+                            Err(e) => return Some(serde_json::json!({ "error": format!("Invalid constraint params: {}", e) })),
+                        };
+                        let kind = match crate::commands::sketch::parse_constraint_kind(&params.constraint_type, &cp) {
+                            Ok(k) => k,
+                            Err(e) => return Some(serde_json::json!({ "error": e })),
+                        };
+                        let id = sketch.add_constraint(kind);
+                        serde_json::json!({ "constraintId": id.to_string() })
+                    }
+                    None => serde_json::json!({ "error": "No active sketch" }),
+                },
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+
+            "sketch_solve" => Some(match &self.active_sketch {
+                Some(sketch) => match crate::sketch::solve_sketch(sketch) {
+                    Ok(solved) => {
+                        let result: Vec<serde_json::Value> = solved.positions.iter()
+                            .map(|(id, x, y)| serde_json::json!({ "id": id.to_string(), "x": x, "y": y }))
+                            .collect();
+                        serde_json::json!({ "solved": result })
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Solve failed: {}", e) }),
+                },
+                None => serde_json::json!({ "error": "No active sketch" }),
+            }),
+
+            "sketch_cancel" => {
+                self.active_sketch = None;
+                Some(serde_json::json!({ "success": true }))
             }
 
-            // ── Transforms ──────────────────────────────────────────
-            "translate" => {
-                match serde_json::from_value::<TranslateParams>(p) {
-                    Ok(params) => {
-                        let ok = self.translate_object(&params.object_id, params.dx, params.dy, params.dz);
-                        serde_json::json!({ "success": ok })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "rotate" => {
-                match serde_json::from_value::<RotateParams>(p) {
-                    Ok(params) => {
-                        let ok = self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg);
-                        serde_json::json!({ "success": ok })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "scale" => {
-                match serde_json::from_value::<ScaleParams>(p) {
-                    Ok(params) => {
-                        let ok = self.scale_object(&params.object_id, params.sx, params.sy, params.sz);
-                        serde_json::json!({ "success": ok })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "duplicate" => {
-                match serde_json::from_value::<ObjectIdParam>(p) {
-                    Ok(params) => {
-                        let id = self.duplicate_object(&params.object_id);
-                        if id.is_empty() { serde_json::json!({ "error": "Duplicate failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
+            "sketch_export" => Some(match &self.active_sketch {
+                Some(sketch) => match serde_json::to_string(sketch) {
+                    Ok(json) => serde_json::json!({ "sketchJson": json }),
+                    Err(e) => serde_json::json!({ "error": format!("Export failed: {}", e) }),
+                },
+                None => serde_json::json!({ "error": "No active sketch" }),
+            }),
 
-            // ── Booleans ────────────────────────────────────────────
-            "boolean_union" => {
-                match serde_json::from_value::<BooleanParams>(p) {
-                    Ok(params) => {
-                        let id = self.boolean_union(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Union failed" }) }
+            "sketch_extrude" => Some(match serde_json::from_value::<SketchExtrudeParams>(p) {
+                Ok(params) => {
+                    if params.sketch_json.is_empty() || params.height <= 0.0 {
+                        serde_json::json!({ "error": "Missing sketchJson or height" })
+                    } else {
+                        self.sketch_import_inner(&params.sketch_json);
+                        let id = self.sketch_extrude_inner(params.height);
+                        if id.is_empty() { serde_json::json!({ "error": "Extrude failed" }) }
                         else { serde_json::json!({ "objectId": id }) }
                     }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
-            }
-            "boolean_subtract" => {
-                match serde_json::from_value::<BooleanParams>(p) {
-                    Ok(params) => {
-                        let id = self.boolean_subtract(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Subtract failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "boolean_intersect" => {
-                match serde_json::from_value::<BooleanParams>(p) {
-                    Ok(params) => {
-                        let id = self.boolean_intersect(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Intersect failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            _ => None,
+        }
+    }
 
-            // ── Scene ───────────────────────────────────────────────
-            "delete" => {
-                match serde_json::from_value::<ObjectIdParam>(p) {
-                    Ok(params) => {
-                        self.delete_object(&params.object_id);
-                        serde_json::json!({ "success": true })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "clear" => {
-                self.clear_scene();
-                serde_json::json!({ "success": true })
-            }
-            "export_scene" => {
-                serde_json::json!({ "scene": self.export_scene() })
-            }
+    fn dispatch_scene(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
+        match cmd {
+            "delete" => Some(match serde_json::from_value::<ObjectIdParam>(p) {
+                Ok(params) => { self.delete_object(&params.object_id); serde_json::json!({ "success": true }) }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "clear" => { self.clear_scene(); Some(serde_json::json!({ "success": true })) }
+            "export_scene" => Some(serde_json::json!({ "scene": self.export_scene() })),
             "export_step" => {
                 let step = self.export_step();
-                if step.is_empty() { serde_json::json!({ "error": "Export failed" }) }
-                else { serde_json::json!({ "step": step }) }
+                Some(if step.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                     else { serde_json::json!({ "step": step }) })
             }
             "export_obj" => {
                 let obj = self.export_obj();
-                if obj.is_empty() { serde_json::json!({ "error": "Export failed" }) }
-                else { serde_json::json!({ "obj": obj }) }
+                Some(if obj.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                     else { serde_json::json!({ "obj": obj }) })
             }
             "export_stl" => {
                 let stl = self.export_stl();
-                if stl.is_empty() { serde_json::json!({ "error": "Export failed" }) }
-                else { serde_json::json!({ "stl": stl }) }
+                Some(if stl.is_empty() { serde_json::json!({ "error": "Export failed" }) }
+                     else { serde_json::json!({ "stl": stl }) })
             }
-            "clash_detect" => {
-                match serde_json::from_value::<BooleanParams>(p) {
-                    Ok(params) => {
-                        let clash = self.clash_detect(&params.id_a, &params.id_b);
-                        serde_json::json!({ "clash": clash })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "import_scene" => {
-                match serde_json::from_value::<ImportSceneParams>(p) {
-                    Ok(params) => {
-                        let ok = self.import_scene(&params.json);
-                        serde_json::json!({ "success": ok })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
-            "import_ifc" => {
-                match serde_json::from_value::<ImportIfcParams>(p) {
-                    Ok(params) => {
-                        log!("headless: import_ifc data length={}", params.data.len());
-                        let index = ifc::build_entity_index(&params.data);
-                        let ids: Vec<u32> = index.keys().cloned().collect();
-                        let mut decoder = ifc::EntityDecoder::with_index(&params.data, index);
-                        let router = ifc_lite_geometry::router::GeometryRouter::new();
-
-                        let mut count = 0;
-                        let mut entity_to_uuid = HashMap::new();
-                        let mut hierarchy_map: HashMap<u32, BimNodeJson> = HashMap::new();
-
-                        for &id in &ids {
-                            if let Ok(entity) = decoder.decode_by_id(id) {
-                                let type_name: &str = entity.ifc_type.as_str();
-                                let is_spatial = matches!(entity.ifc_type,
-                                    ifc::IfcType::IfcProject | ifc::IfcType::IfcSite | ifc::IfcType::IfcBuilding | ifc::IfcType::IfcBuildingStorey);
-
-                                if is_spatial || ifc::generated::has_geometry_by_name(type_name) {
-                                    let mut object_id = None;
-
-                                    if ifc::generated::has_geometry_by_name(type_name) {
-                                        if let Ok(ifc_mesh) = router.process_element(&entity, &mut decoder) {
-                                            if !ifc_mesh.positions.is_empty() && !ifc_mesh.indices.is_empty() {
-                                                let mut positions = Vec::new();
-                                                for i in (0..ifc_mesh.positions.len()).step_by(3) {
-                                                    positions.push(Point3::new(
-                                                        ifc_mesh.positions[i] as f64,
-                                                        ifc_mesh.positions[i+1] as f64,
-                                                        ifc_mesh.positions[i+2] as f64
-                                                    ));
-                                                }
-                                                let mut faces_vec = Vec::new();
-                                                for i in (0..ifc_mesh.indices.len()).step_by(3) {
-                                                    let i0 = ifc_mesh.indices[i] as usize;
-                                                    let i1 = ifc_mesh.indices[i+1] as usize;
-                                                    let i2 = ifc_mesh.indices[i+2] as usize;
-                                                    faces_vec.push(vec![
-                                                        StandardVertex { pos: i0, uv: None, nor: None },
-                                                        StandardVertex { pos: i1, uv: None, nor: None },
-                                                        StandardVertex { pos: i2, uv: None, nor: None },
-                                                    ]);
-                                                }
-                                                let poly = PolygonMesh::new(
-                                                    StandardAttributes { positions, ..Default::default() },
-                                                    Faces::from_iter(faces_vec)
-                                                );
-                                                let bim = BimMetadata {
-                                                    ifc_type: type_name.to_string(),
-                                                    global_id: entity.get_string(0).unwrap_or("").to_string(),
-                                                    properties: HashMap::new(),
-                                                };
-                                                let uuid = self.add_mesh(poly, type_name, Some(bim));
-                                                entity_to_uuid.insert(id, uuid.clone());
-                                                object_id = Some(uuid);
-                                                count += 1;
-                                            }
-                                        }
+            "import_scene" => Some(match serde_json::from_value::<ImportSceneParams>(p) {
+                Ok(params) => serde_json::json!({ "success": self.import_scene(&params.json) }),
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "import_step" => Some(match serde_json::from_value::<ImportStepParams>(p) {
+                Ok(params) => {
+                    log!("headless: import_step data length={}", params.data.len());
+                    use truck_stepio::r#in::*;
+                    match Table::from_step(&params.data) {
+                        Some(table) => {
+                            let mut count = 0;
+                            for step_solid in table.manifold_solid_brep.values() {
+                                if let Ok(csolid) = table.to_compressed_solid(step_solid) {
+                                    for cshell in csolid.boundaries {
+                                        let pre = cshell.robust_triangulation(0.01).to_polygon();
+                                        let bdd = pre.bounding_box();
+                                        let mesh = cshell.robust_triangulation(bdd.diameter() * 0.001).to_polygon();
+                                        self.add_mesh(mesh, "STEP Mesh", None);
+                                        count += 1;
                                     }
-
-                                    hierarchy_map.insert(id, BimNodeJson {
-                                        entity_id: id,
-                                        global_id: entity.get_string(0).unwrap_or("").to_string(),
-                                        ifc_type: type_name.to_string(),
-                                        name: entity.get_string(2).unwrap_or(type_name).to_string(),
-                                        object_id,
-                                        children: Vec::new(),
-                                    });
                                 }
                             }
+                            log!("headless: Imported {} meshes from STEP", count);
+                            serde_json::json!({ "success": true, "meshCount": count })
                         }
-
-                        // Second pass: relationships
-                        for &id in &ids {
-                            if let Ok(entity) = decoder.decode_by_id(id) {
-                                match entity.ifc_type {
-                                    ifc::IfcType::IfcRelAggregates => {
-                                        if let Some(parent_id) = entity.get_ref(4) {
-                                            if let Some(children) = entity.get_list(5) {
-                                                for child_attr in children {
-                                                    if let Some(child_id) = child_attr.as_entity_ref() {
-                                                        if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
-                                                            parent_node.children.push(child_id);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    ifc::IfcType::IfcRelContainedInSpatialStructure => {
-                                        if let Some(parent_id) = entity.get_ref(5) {
-                                            if let Some(children) = entity.get_list(4) {
-                                                for child_attr in children {
-                                                    if let Some(child_id) = child_attr.as_entity_ref() {
-                                                        if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
-                                                            parent_node.children.push(child_id);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
+                        None => {
+                            error!("headless: STEP parse failed");
+                            serde_json::json!({ "error": "STEP parse failed" })
                         }
-
-                        log!("headless: Imported {} entities from IFC", count);
-                        let nodes: Vec<BimNodeJson> = hierarchy_map.into_values().collect();
-                        serde_json::json!({ "success": true, "meshCount": count, "hierarchy": nodes })
                     }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
-            }
-            "import_step" => {
-                match serde_json::from_value::<ImportStepParams>(p) {
-                    Ok(params) => {
-                        log!("headless: import_step data length={}", params.data.len());
-                        use truck_stepio::r#in::*;
-                        match Table::from_step(&params.data) {
-                            Some(table) => {
-                                let mut count = 0;
-                                for step_solid in table.manifold_solid_brep.values() {
-                                    if let Ok(csolid) = table.to_compressed_solid(step_solid) {
-                                        for cshell in csolid.boundaries {
-                                            let pre = cshell.robust_triangulation(0.01).to_polygon();
-                                            let bdd = pre.bounding_box();
-                                            let mesh = cshell.robust_triangulation(bdd.diameter() * 0.001).to_polygon();
-                                            self.add_mesh(mesh, "STEP Mesh", None);
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "import_ifc" => Some(match serde_json::from_value::<ImportIfcParams>(p) {
+                Ok(params) => {
+                    log!("headless: import_ifc data length={}", params.data.len());
+                    let index = ifc::build_entity_index(&params.data);
+                    let ids: Vec<u32> = index.keys().cloned().collect();
+                    let mut decoder = ifc::EntityDecoder::with_index(&params.data, index);
+                    let router = ifc_lite_geometry::router::GeometryRouter::new();
+
+                    let mut count = 0;
+                    let mut entity_to_uuid = HashMap::new();
+                    let mut hierarchy_map: HashMap<u32, BimNodeJson> = HashMap::new();
+
+                    for &id in &ids {
+                        if let Ok(entity) = decoder.decode_by_id(id) {
+                            let type_name: &str = entity.ifc_type.as_str();
+                            let is_spatial = matches!(entity.ifc_type,
+                                ifc::IfcType::IfcProject | ifc::IfcType::IfcSite | ifc::IfcType::IfcBuilding | ifc::IfcType::IfcBuildingStorey);
+
+                            if is_spatial || ifc::generated::has_geometry_by_name(type_name) {
+                                let mut object_id = None;
+
+                                if ifc::generated::has_geometry_by_name(type_name) {
+                                    if let Ok(ifc_mesh) = router.process_element(&entity, &mut decoder) {
+                                        if !ifc_mesh.positions.is_empty() && !ifc_mesh.indices.is_empty() {
+                                            let mut positions = Vec::new();
+                                            for i in (0..ifc_mesh.positions.len()).step_by(3) {
+                                                positions.push(Point3::new(
+                                                    ifc_mesh.positions[i] as f64,
+                                                    ifc_mesh.positions[i+1] as f64,
+                                                    ifc_mesh.positions[i+2] as f64
+                                                ));
+                                            }
+                                            let mut faces_vec = Vec::new();
+                                            for i in (0..ifc_mesh.indices.len()).step_by(3) {
+                                                let i0 = ifc_mesh.indices[i] as usize;
+                                                let i1 = ifc_mesh.indices[i+1] as usize;
+                                                let i2 = ifc_mesh.indices[i+2] as usize;
+                                                faces_vec.push(vec![
+                                                    StandardVertex { pos: i0, uv: None, nor: None },
+                                                    StandardVertex { pos: i1, uv: None, nor: None },
+                                                    StandardVertex { pos: i2, uv: None, nor: None },
+                                                ]);
+                                            }
+                                            let poly = PolygonMesh::new(
+                                                StandardAttributes { positions, ..Default::default() },
+                                                Faces::from_iter(faces_vec)
+                                            );
+                                            let bim = BimMetadata {
+                                                ifc_type: type_name.to_string(),
+                                                global_id: entity.get_string(0).unwrap_or("").to_string(),
+                                                properties: HashMap::new(),
+                                            };
+                                            let uuid = self.add_mesh(poly, type_name, Some(bim));
+                                            entity_to_uuid.insert(id, uuid.clone());
+                                            object_id = Some(uuid);
                                             count += 1;
                                         }
                                     }
                                 }
-                                log!("headless: Imported {} meshes from STEP", count);
-                                serde_json::json!({ "success": true, "meshCount": count })
-                            }
-                            None => {
-                                error!("headless: STEP parse failed");
-                                serde_json::json!({ "error": "STEP parse failed" })
+
+                                hierarchy_map.insert(id, BimNodeJson {
+                                    entity_id: id,
+                                    global_id: entity.get_string(0).unwrap_or("").to_string(),
+                                    ifc_type: type_name.to_string(),
+                                    name: entity.get_string(2).unwrap_or(type_name).to_string(),
+                                    object_id,
+                                    children: Vec::new(),
+                                });
                             }
                         }
                     }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
 
-            // ── Sketch ──────────────────────────────────────────────
-            "sketch_extrude" => {
-                match serde_json::from_value::<SketchExtrudeParams>(p) {
-                    Ok(params) => {
-                        if params.sketch_json.is_empty() || params.height <= 0.0 {
-                            serde_json::json!({ "error": "Missing sketchJson or height" })
-                        } else {
-                            self.sketch_import_inner(&params.sketch_json);
-                            let id = self.sketch_extrude_inner(params.height);
-                            if id.is_empty() { serde_json::json!({ "error": "Extrude failed" }) }
-                            else { serde_json::json!({ "objectId": id }) }
+                    // Second pass: relationships
+                    for &id in &ids {
+                        if let Ok(entity) = decoder.decode_by_id(id) {
+                            match entity.ifc_type {
+                                ifc::IfcType::IfcRelAggregates => {
+                                    if let Some(parent_id) = entity.get_ref(4) {
+                                        if let Some(children) = entity.get_list(5) {
+                                            for child_attr in children {
+                                                if let Some(child_id) = child_attr.as_entity_ref() {
+                                                    if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
+                                                        parent_node.children.push(child_id);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                ifc::IfcType::IfcRelContainedInSpatialStructure => {
+                                    if let Some(parent_id) = entity.get_ref(5) {
+                                        if let Some(children) = entity.get_list(4) {
+                                            for child_attr in children {
+                                                if let Some(child_id) = child_attr.as_entity_ref() {
+                                                    if let Some(parent_node) = hierarchy_map.get_mut(&parent_id) {
+                                                        parent_node.children.push(child_id);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                }
-            }
 
-            // ── Queries ─────────────────────────────────────────────
+                    log!("headless: Imported {} entities from IFC", count);
+                    let nodes: Vec<BimNodeJson> = hierarchy_map.into_values().collect();
+                    serde_json::json!({ "success": true, "meshCount": count, "hierarchy": nodes })
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            _ => None,
+        }
+    }
+
+    fn dispatch_style(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
+        match cmd {
             "get_state" => {
                 let ids: Vec<String> = self.objects.iter().map(|o| o.id.to_string()).collect();
                 let names: HashMap<String, String> = self.objects.iter().map(|o| (o.id.to_string(), o.name.clone())).collect();
-                serde_json::json!({
+                Some(serde_json::json!({
                     "ready": true,
                     "headless": true,
                     "objectCount": ids.len(),
                     "objectIds": ids,
                     "objectNames": names,
-                })
+                }))
             }
-            "rename" => {
-                match serde_json::from_value::<RenameParams>(p) {
-                    Ok(params) => {
-                        let idx = match self.id_to_index.get(&params.object_id) {
-                            Some(&i) => i,
-                            None => return serde_json::json!({"error":"not found"}).to_string(),
-                        };
-                        self.objects[idx].name = params.name;
-                        serde_json::json!({ "success": true })
-                    }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            "rename" => Some(match serde_json::from_value::<RenameParams>(p) {
+                Ok(params) => {
+                    let idx = match self.id_to_index.get(&params.object_id) {
+                        Some(&i) => i,
+                        None => return Some(serde_json::json!({"error":"not found"})),
+                    };
+                    self.objects[idx].name = params.name;
+                    serde_json::json!({ "success": true })
                 }
-            }
-            "get_bim_metadata" => {
-                match serde_json::from_value::<ObjectIdParam>(p) {
-                    Ok(params) => {
-                        let json = self.get_bim_metadata(&params.object_id);
-                        if json.is_empty() { serde_json::json!({ "bim": null }) }
-                        else {
-                            match serde_json::from_str::<serde_json::Value>(&json) {
-                                Ok(v) => serde_json::json!({ "bim": v }),
-                                Err(_) => serde_json::json!({ "error": "Parse error" }),
-                            }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            "get_bim_metadata" => Some(match serde_json::from_value::<ObjectIdParam>(p) {
+                Ok(params) => {
+                    let json = self.get_bim_metadata(&params.object_id);
+                    if json.is_empty() { serde_json::json!({ "bim": null }) }
+                    else {
+                        match serde_json::from_str::<serde_json::Value>(&json) {
+                            Ok(v) => serde_json::json!({ "bim": v }),
+                            Err(_) => serde_json::json!({ "error": "Parse error" }),
                         }
                     }
-                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
-            }
-
-            // ── Rendering-only commands (not available headless) ─────
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
+            // Rendering-only commands (not available headless)
             "select_at" | "pick_at" | "select" | "deselect" |
             "set_camera" | "set_style" | "set_color" | "get_object_style" |
             "pick_mesh_stats" => {
-                serde_json::json!({ "error": format!("Command '{}' requires rendering (not available in headless mode)", cmd_type) })
+                Some(serde_json::json!({ "error": format!("Command '{}' requires rendering (not available in headless mode)", cmd) }))
             }
+            _ => None,
+        }
+    }
 
-            _ => serde_json::json!({ "error": format!("Unknown command: {}", cmd_type) }),
-        };
+    // ── Universal dispatcher (ADR-0019: domain-routed) ──────
+
+    pub fn execute(&mut self, cmd_type: &str, params_json: &str) -> String {
+        let p: serde_json::Value = serde_json::from_str(params_json).unwrap_or(serde_json::json!({}));
+
+        let result = self.dispatch_geometry(cmd_type, p.clone())
+            .or_else(|| self.dispatch_booleans(cmd_type, p.clone()))
+            .or_else(|| self.dispatch_sketch(cmd_type, p.clone()))
+            .or_else(|| self.dispatch_scene(cmd_type, p.clone()))
+            .or_else(|| self.dispatch_style(cmd_type, p))
+            .unwrap_or_else(|| serde_json::json!({ "error": format!("Unknown command: {}", cmd_type) }));
 
         serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
     }

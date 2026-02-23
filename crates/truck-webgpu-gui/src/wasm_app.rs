@@ -629,10 +629,6 @@ fn plane_str(p: crate::sketch::SketchPlane) -> &'static str {
     }
 }
 
-fn parse_uuid_field(params: &serde_json::Value, field: &str) -> Option<uuid::Uuid> {
-    params[field].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok())
-}
-
 fn next_name(s: &mut SharedState, kind: &str) -> String {
     let counter = s.name_counters.entry(kind.to_string()).or_insert(0);
     *counter += 1;
@@ -1886,8 +1882,6 @@ impl SceneController {
     /// Returns constraint UUID (empty if error).
     #[wasm_bindgen]
     pub fn sketch_add_constraint(&self, constraint_type: &str, params: &str) -> String {
-        use crate::sketch::SketchConstraintKind;
-
         let mut s = self.state.borrow_mut();
         let sketch = match s.active_sketch.as_mut() {
             Some(sk) => sk,
@@ -1899,99 +1893,9 @@ impl SceneController {
             Err(e) => { error!("WASM: invalid constraint params: {}", e); return String::new(); }
         };
 
-        let kind = match constraint_type {
-            "fixed" => {
-                let point_id = parse_uuid_field(&params, "point_id");
-                let x = params["x"].as_f64().unwrap_or(0.0);
-                let y = params["y"].as_f64().unwrap_or(0.0);
-                match point_id {
-                    Some(id) => SketchConstraintKind::Fixed { point_id: id, x, y },
-                    None => { error!("WASM: fixed constraint missing point_id"); return String::new(); }
-                }
-            }
-            "horizontal" => {
-                match parse_uuid_field(&params, "edge_id") {
-                    Some(id) => SketchConstraintKind::Horizontal { edge_id: id },
-                    None => { error!("WASM: horizontal constraint missing edge_id"); return String::new(); }
-                }
-            }
-            "vertical" => {
-                match parse_uuid_field(&params, "edge_id") {
-                    Some(id) => SketchConstraintKind::Vertical { edge_id: id },
-                    None => { error!("WASM: vertical constraint missing edge_id"); return String::new(); }
-                }
-            }
-            "distance" => {
-                let p0 = parse_uuid_field(&params, "p0_id");
-                let p1 = parse_uuid_field(&params, "p1_id");
-                let value = params["value"].as_f64().unwrap_or(1.0);
-                match (p0, p1) {
-                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::Distance { p0_id, p1_id, value },
-                    _ => { error!("WASM: distance constraint missing p0_id/p1_id"); return String::new(); }
-                }
-            }
-            "horizontal_distance" => {
-                let p0 = parse_uuid_field(&params, "p0_id");
-                let p1 = parse_uuid_field(&params, "p1_id");
-                let value = params["value"].as_f64().unwrap_or(1.0);
-                match (p0, p1) {
-                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::HorizontalDistance { p0_id, p1_id, value },
-                    _ => { error!("WASM: horizontal_distance missing p0_id/p1_id"); return String::new(); }
-                }
-            }
-            "vertical_distance" => {
-                let p0 = parse_uuid_field(&params, "p0_id");
-                let p1 = parse_uuid_field(&params, "p1_id");
-                let value = params["value"].as_f64().unwrap_or(1.0);
-                match (p0, p1) {
-                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::VerticalDistance { p0_id, p1_id, value },
-                    _ => { error!("WASM: vertical_distance missing p0_id/p1_id"); return String::new(); }
-                }
-            }
-            "coincident" => {
-                let p0 = parse_uuid_field(&params, "p0_id");
-                let p1 = parse_uuid_field(&params, "p1_id");
-                match (p0, p1) {
-                    (Some(p0_id), Some(p1_id)) => SketchConstraintKind::Coincident { p0_id, p1_id },
-                    _ => { error!("WASM: coincident missing p0_id/p1_id"); return String::new(); }
-                }
-            }
-            "parallel" => {
-                let e0 = parse_uuid_field(&params, "edge0_id");
-                let e1 = parse_uuid_field(&params, "edge1_id");
-                match (e0, e1) {
-                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::Parallel { edge0_id, edge1_id },
-                    _ => { error!("WASM: parallel missing edge0_id/edge1_id"); return String::new(); }
-                }
-            }
-            "perpendicular" => {
-                let e0 = parse_uuid_field(&params, "edge0_id");
-                let e1 = parse_uuid_field(&params, "edge1_id");
-                match (e0, e1) {
-                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::Perpendicular { edge0_id, edge1_id },
-                    _ => { error!("WASM: perpendicular missing edge0_id/edge1_id"); return String::new(); }
-                }
-            }
-            "equal_length" => {
-                let e0 = parse_uuid_field(&params, "edge0_id");
-                let e1 = parse_uuid_field(&params, "edge1_id");
-                match (e0, e1) {
-                    (Some(edge0_id), Some(edge1_id)) => SketchConstraintKind::EqualLength { edge0_id, edge1_id },
-                    _ => { error!("WASM: equal_length missing edge0_id/edge1_id"); return String::new(); }
-                }
-            }
-            "midpoint" => {
-                let edge = parse_uuid_field(&params, "edge_id");
-                let point = parse_uuid_field(&params, "point_id");
-                match (edge, point) {
-                    (Some(edge_id), Some(point_id)) => SketchConstraintKind::Midpoint { edge_id, point_id },
-                    _ => { error!("WASM: midpoint missing edge_id/point_id"); return String::new(); }
-                }
-            }
-            _ => {
-                error!("WASM: unknown constraint type: {}", constraint_type);
-                return String::new();
-            }
+        let kind = match crate::commands::sketch::parse_constraint_kind(constraint_type, &params) {
+            Ok(k) => k,
+            Err(e) => { error!("WASM: {}", e); return String::new(); }
         };
 
         sketch.add_constraint(kind).to_string()
@@ -2632,6 +2536,66 @@ impl SceneController {
             }
 
             // ── Sketch ──────────────────────────────────────────────
+            "begin_sketch" => {
+                match serde_json::from_value::<BeginSketchParams>(p) {
+                    Ok(params) => {
+                        let id = self.begin_sketch(&params.plane);
+                        if id.is_empty() { serde_json::json!({ "error": "begin_sketch failed" }) }
+                        else { serde_json::json!({ "sketchId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "sketch_add_point" => {
+                match serde_json::from_value::<SketchAddPointParams>(p) {
+                    Ok(params) => {
+                        let id = self.sketch_add_point(params.x, params.y);
+                        if id.is_empty() { serde_json::json!({ "error": "No active sketch" }) }
+                        else { serde_json::json!({ "pointId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "sketch_add_edge" => {
+                match serde_json::from_value::<SketchAddEdgeParams>(p) {
+                    Ok(params) => {
+                        let id = self.sketch_add_edge(&params.p0_id, &params.p1_id);
+                        if id.is_empty() { serde_json::json!({ "error": "Failed to add edge" }) }
+                        else { serde_json::json!({ "edgeId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "sketch_add_constraint" => {
+                match serde_json::from_value::<SketchAddConstraintParams>(p) {
+                    Ok(params) => {
+                        let id = self.sketch_add_constraint(&params.constraint_type, &params.params);
+                        if id.is_empty() { serde_json::json!({ "error": "Failed to add constraint" }) }
+                        else { serde_json::json!({ "constraintId": id }) }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "sketch_solve" => {
+                let result = self.sketch_solve();
+                if result.is_empty() {
+                    serde_json::json!({ "error": "Solve failed" })
+                } else {
+                    match serde_json::from_str::<serde_json::Value>(&result) {
+                        Ok(solved) => serde_json::json!({ "solved": solved }),
+                        Err(_) => serde_json::json!({ "error": "Solve parse error" }),
+                    }
+                }
+            }
+            "sketch_cancel" => {
+                self.sketch_cancel();
+                serde_json::json!({ "success": true })
+            }
+            "sketch_export" => {
+                let json = self.sketch_export();
+                if json.is_empty() { serde_json::json!({ "error": "No active sketch" }) }
+                else { serde_json::json!({ "sketchJson": json }) }
+            }
             "sketch_extrude" => {
                 match serde_json::from_value::<SketchExtrudeParams>(p) {
                     Ok(params) => {

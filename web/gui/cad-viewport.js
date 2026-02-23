@@ -106,6 +106,10 @@ export class CadViewport extends LitElement {
         const controller = await new window.__SceneController('cad-canvas');
         controller.run();
         window.sceneController = controller;
+        // Register with Module Router (ADR-0019) — the single WASM gate
+        if (window.moduleRouter) {
+          window.moduleRouter.register('core', controller);
+        }
         console.log('[cad-viewport] WASM SceneController ready');
         if (window.reconcile) window.reconcile({});
       } catch (err) {
@@ -181,8 +185,8 @@ export class CadViewport extends LitElement {
       }
 
       // Standard pick + select
-      const result = window.cadCommand('pick_at', { ndcX, ndcY }, { ephemeral: true });
-      window.cadCommand('select', { id: (result && result.pickedId) || '' }, { ephemeral: true });
+      const result = window.cadCommand('pick_at', { ndcX, ndcY }, { record: false, broadcast: false });
+      window.cadCommand('select', { id: (result && result.pickedId) || '' }, { record: false, broadcast: false });
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -224,7 +228,7 @@ export class CadViewport extends LitElement {
           canvas.style.cursor = '';
           window.sceneController.cancel_gizmo_drag();
         } else if (window.sceneController) {
-          window.cadCommand('deselect', {}, { ephemeral: true });
+          window.cadCommand('deselect', {}, { record: false, broadcast: false });
         }
         e.preventDefault();
       }
@@ -239,7 +243,7 @@ export class CadViewport extends LitElement {
       setTimeout(() => this._syncFromWasm(), 100);
       return;
     }
-    const state = window.cadCommand('get_state', {}, { ephemeral: true, skipAutomerge: true });
+    const state = window.cadCommand('get_state', {}, { record: false, broadcast: false });
     if (state && state.camera) {
       const c = state.camera;
       this.camera.matrixWorld.fromArray(c.matrixWorld);
@@ -280,7 +284,7 @@ export class CadViewport extends LitElement {
       fovDeg: this.camera.fov,
       near: this.camera.near,
       far: this.camera.far,
-    }, { ephemeral: true, skipAutomerge: true });
+    }, { record: false, broadcast: false });
   }
 
   // ── Render Loop ──────────────────────────────────────────────────
@@ -319,7 +323,7 @@ export class CadViewport extends LitElement {
    */
   zoomTo(objectId = null) {
     if (!window.cadCommand) return;
-    const res = window.cadCommand('get_state', {}, { ephemeral: true, skipAutomerge: true });
+    const res = window.cadCommand('get_state', {}, { record: false, broadcast: false });
     if (!res) return;
 
     // For now, zoom to scene center with a reasonable distance

@@ -1,4 +1,4 @@
-import { executeWasm, reconcile } from './state.js';
+import { cadCommand, reconcile, moduleRouter } from './state.js';
 
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
 // Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
@@ -269,10 +269,10 @@ class CadDocumentManager {
     }
 
     /** Replay all enabled ops to rebuild the scene from scratch.
-     *  Only used by undo/redo and remote sync — not every command. */
+     *  Only used by undo/redo and remote sync — not every command.
+     *  All WASM ops go through cadCommand with reconcile:false for batching (ADR-0019 Phase 3). */
     async _replayScene() {
-        const ctrl = this._ctrl();
-        if (!ctrl || this._replayInProgress) return;
+        if (!moduleRouter.ready || this._replayInProgress) return;
 
         this._replayInProgress = true;
         const doc = this.handle.doc();
@@ -281,6 +281,7 @@ class CadDocumentManager {
             return;
         }
 
+        const REPLAY = { record: false, broadcast: false, reconcile: false, source: 'replay' };
         const prevSelectedId = window._ds?.root?.selectedId ?? null;
 
         // Find nearest valid snapshot checkpoint
@@ -294,25 +295,25 @@ class CadDocumentManager {
                 }
             }
             if (snapshotValid) {
-                ctrl.import_scene(doc.snapshotJson);
+                cadCommand('import_scene', { json: doc.snapshotJson }, REPLAY);
                 startIndex = doc.snapshotAtOpIndex;
             } else {
-                ctrl.clear_scene();
+                cadCommand('clear', {}, REPLAY);
             }
         } else {
-            ctrl.clear_scene();
+            cadCommand('clear', {}, REPLAY);
         }
 
-        // Replay enabled ops from startIndex using shared executeWasm()
+        // Replay each enabled op through cadCommand (no per-op reconcile)
         for (let i = startIndex; i < doc.operations.length; i++) {
             if (doc.operations[i].enabled) {
                 const op = doc.operations[i];
-                executeWasm(ctrl, op.type, op.params);
+                cadCommand(op.type, op.params, REPLAY);
             }
         }
 
         // Restore selection via Datastar signals
-        const ids = ctrl.object_ids();
+        const ids = moduleRouter.query('objectIds');
         const ds = window._ds;
         let newSel = null;
         if (prevSelectedId && ids.includes(prevSelectedId)) {
@@ -322,7 +323,7 @@ class CadDocumentManager {
         }
         if (ds?.root) ds.root.selectedId = newSel;
 
-        // Reconcile pushes WASM state → Datastar signals → DOM (includes loadStyle + object list)
+        // Single reconcile at the end — WASM state → Datastar signals → DOM
         reconcile({ selectedId: newSel });
         this._renderTimeline();
         this._replayInProgress = false;

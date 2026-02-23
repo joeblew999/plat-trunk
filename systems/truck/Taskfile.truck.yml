@@ -142,10 +142,10 @@ tasks:
   # --- WASM ---
 
   "wasm:build":
-    desc: Compile truck-js WASM (for Worker)
-    deps: ["deps:clone", "deps:wasm-pack"]
+    desc: Compile headless truck-webgpu-gui WASM (for Worker, no rendering)
+    deps: ["deps:wasm-pack"]
     cmds:
-      - cd {{.TRUCK_SRC_DIR}}/truck-js && wasm-pack build --target bundler --out-dir {{.ROOT_DIR}}/systems/truck/worker/pkg
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target bundler --no-default-features --out-dir {{.ROOT_DIR}}/systems/truck/worker/pkg
 
   "wasm:build-browser":
     desc: Compile truck-webgpu-gui WASM (for browser)
@@ -161,9 +161,9 @@ tasks:
       - watchexec -w {{.ROOT_DIR}}/crates/truck-webgpu-gui/src -e rs -- "task truck:gui:build"
 
   "watch:worker":
-    desc: Watch and rebuild worker WASM
+    desc: Watch and rebuild headless worker WASM
     cmds:
-      - watchexec -w {{.TRUCK_SRC_DIR}}/truck-js/src -e rs -- "task truck:wasm:build"
+      - watchexec -w {{.ROOT_DIR}}/crates/truck-webgpu-gui/src -e rs -- "task truck:wasm:build"
 
   "watch:all":
     desc: Watch everything (requires process-compose or multiple terminals)
@@ -433,7 +433,7 @@ tasks:
         done
 
   # --- Version Management ---
-  # Source of truth: commands.rs → build_schema() → cad-schema.json → CAD_VERSION
+  # Source of truth: commands/mod.rs → build_schema() → cad-schema.json → CAD_VERSION
   # Flow: version:bump → gui:deploy (upload + promote + tag)
 
   "version:bump":
@@ -443,11 +443,11 @@ tasks:
         msg: "Usage: task truck:version:bump -- 0.4.0"
     cmds:
       - |
-        sed -i '' 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "{{.CLI_ARGS}}"/' {{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands.rs
+        sed -i '' 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "{{.CLI_ARGS}}"/' {{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands/mod.rs
       - task: gui:schema
       - |
         cd {{.ROOT_DIR}}
-        git add crates/truck-webgpu-gui/src/commands.rs web/cad-schema.json
+        git add crates/truck-webgpu-gui/src/commands/mod.rs web/cad-schema.json
         git commit -m "release: v{{.CLI_ARGS}}"
         git tag "v{{.CLI_ARGS}}"
         echo ""
