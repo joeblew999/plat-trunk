@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — fixes implemented, remaining improvements identified.
+**Implemented** — all fixes verified via Playwright fuzz testing.
 
 ## Problem
 
@@ -100,14 +100,31 @@ This ensures `duplicate` (which passes `objectId` as "source to copy") won't hav
 5. Kernel creates object with fresh UUID → `execute()` renames it to the stored `_replayId`
 6. Result: same objects, same UUIDs, same names after every replay cycle
 
-## Remaining Improvements
+### Fix 4: Debounce change listener (`history.js`)
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| **Debounce change listener** | Medium | `history.js` `doc.on('change')` fires on every Automerge mutation — should debounce for batch ops |
-| **Multiple snapshot checkpoints** | Medium | Currently keeps only latest checkpoint; keeping 2-3 would allow faster partial replay |
-| **Undo dispatch in state.js** | Low | `handleJsCommand('undo')` calls `mgr.handle.undo()` — should call `mgr.undo()` (the CadDocumentManager method that does replay) |
-| **Timeline DOM cleanup** | Low | Timeline panel creates DOM nodes but doesn't remove stale ones on replay |
+Remote Automerge mutations fired `_replayScene()` on every change event. Batch ops from a remote peer would trigger N replays. Now debounced with 100ms quiet period:
+
+```js
+clearTimeout(debounceTimer);
+debounceTimer = setTimeout(() => { this._replayScene(); }, 100);
+```
+
+### Fix 5: Undo dispatch — `mgr.undo()` not `mgr.handle.undo()` (`state.js`)
+
+`handleJsCommand('undo')` was calling `mgr.handle.undo()` (Automerge DocHandle-level undo — reverts the last `change()` call) instead of `mgr.undo()` (the CadDocumentManager method that toggles `enabled` flags and replays the scene). Same for redo. Fixed to call the correct methods.
+
+### Fix 6: Multiple snapshot checkpoints (`history.js`)
+
+Replaced single `snapshotJson`/`snapshotAtOpIndex` with a `snapshots[]` array (max 3 entries). During replay, the nearest valid checkpoint is found by searching newest→oldest. Schema change:
+
+```js
+// Old: { snapshotJson, snapshotAtOpIndex }
+// New: { snapshots: [{ json, atOpIndex }, ...] }  // max 3
+```
+
+### Timeline DOM cleanup — already handled
+
+`_renderTimeline()` uses `strip.innerHTML = ...` which replaces all children. No stale nodes.
 
 ## Files
 

@@ -28,7 +28,7 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0018](0018-code-mode-mcp.md) | Code Mode MCP for Efficient API Interaction | **Proposed** |
 | [0019](0019-gui-unification.md) | GUI Unification — Single Dispatch, Single Pattern | **Proposed** |
 | [0020](0020-mcp-session-reliability.md) | MCP Session Reliability — Startup, Health, Self-Healing | **Proposed** |
-| [0021](0021-automerge-replay-integrity.md) | Automerge Replay Integrity — Undo/Redo Fixes | **In Progress** |
+| [0021](0021-automerge-replay-integrity.md) | Automerge Replay Integrity — Undo/Redo Fixes | **Implemented** |
 
 ## Future Roadmap
 

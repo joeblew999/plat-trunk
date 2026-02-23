@@ -5,7 +5,7 @@ import { cadCommand, reconcile, moduleRouter } from './state.js';
 // cadCommand() always executes WASM directly; this records ops after the fact.
 //
 // Document schema:
-//   { name, createdAt, operations: CadOperation[], snapshotJson?, snapshotAtOpIndex? }
+//   { name, createdAt, operations: CadOperation[], snapshots?: [{json, atOpIndex}] }
 //
 // Each CadOperation:
 //   { id, type, params, enabled, timestamp, actorId, groupId? }
@@ -147,12 +147,17 @@ class CadDocumentManager {
                 d.bimHierarchy = meta.hierarchy;
             }
 
-            // Periodic snapshot for fast replay
+            // Periodic snapshot for fast replay (keep last 3 checkpoints)
             if (d.operations.length % SNAPSHOT_INTERVAL === 0) {
                 const ctrl = this._ctrl();
                 if (ctrl) {
-                    d.snapshotJson = ctrl.export_scene();
-                    d.snapshotAtOpIndex = d.operations.length;
+                    if (!d.snapshots) d.snapshots = [];
+                    d.snapshots.push({
+                        json: ctrl.export_scene(),
+                        atOpIndex: d.operations.length,
+                    });
+                    // Keep only the last 3
+                    while (d.snapshots.length > 3) d.snapshots.splice(0, 1);
                 }
             }
         });
@@ -284,23 +289,26 @@ class CadDocumentManager {
         const REPLAY = { record: false, broadcast: false, reconcile: false, source: 'replay' };
         const prevSelectedId = window._ds?.root?.selectedId ?? null;
 
-        // Find nearest valid snapshot checkpoint
+        // Find nearest valid snapshot checkpoint (search newest → oldest)
         let startIndex = 0;
-        if (doc.snapshotJson && doc.snapshotAtOpIndex) {
-            let snapshotValid = true;
-            for (let i = 0; i < doc.snapshotAtOpIndex && i < doc.operations.length; i++) {
-                if (!doc.operations[i].enabled) {
-                    snapshotValid = false;
-                    break;
-                }
+        let snapshotUsed = false;
+        const snaps = doc.snapshots || [];
+        for (let s = snaps.length - 1; s >= 0; s--) {
+            const snap = snaps[s];
+            if (!snap.json || !snap.atOpIndex) continue;
+            // Valid if all ops before the snapshot are enabled
+            let valid = true;
+            for (let i = 0; i < snap.atOpIndex && i < doc.operations.length; i++) {
+                if (!doc.operations[i].enabled) { valid = false; break; }
             }
-            if (snapshotValid) {
-                cadCommand('import_scene', { json: doc.snapshotJson }, REPLAY);
-                startIndex = doc.snapshotAtOpIndex;
-            } else {
-                cadCommand('clear', {}, REPLAY);
+            if (valid) {
+                cadCommand('import_scene', { json: snap.json }, REPLAY);
+                startIndex = snap.atOpIndex;
+                snapshotUsed = true;
+                break;
             }
-        } else {
+        }
+        if (!snapshotUsed) {
             cadCommand('clear', {}, REPLAY);
         }
 
@@ -329,17 +337,21 @@ class CadDocumentManager {
         this._replayInProgress = false;
     }
 
-    /** Listen for remote changes via Automerge and replay scene. */
+    /** Listen for remote changes via Automerge and replay scene.
+     *  Debounced — multiple rapid mutations (batch ops from a remote peer)
+     *  collapse into a single replay after 100ms of quiet. */
     _listenForChanges() {
         if (!this.handle) return;
+        let debounceTimer = null;
         this.handle.on('change', () => {
             if (this._replayInProgress || this._suppressChangeReplay) return;
 
-            console.log('[Automerge] Remote change detected, replaying scene...');
-            setTimeout(() => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                console.log('[Automerge] Remote change detected, replaying scene...');
                 this._replayScene();
                 this._localOpCount = this._getDocOpCount();
-            }, 0);
+            }, 100);
         });
     }
 

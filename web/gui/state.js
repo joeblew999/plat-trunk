@@ -179,14 +179,14 @@ async function handleJsCommand(type, params) {
   switch (type) {
     case 'undo':
       if (mgr && mgr.canUndo) {
-        mgr.handle.undo();
+        mgr.undo();
         return { success: true };
       }
       return { error: 'Nothing to undo' };
-      
+
     case 'redo':
       if (mgr && mgr.canRedo) {
-        mgr.handle.redo();
+        mgr.redo();
         return { success: true };
       }
       return { error: 'Nothing to redo' };
