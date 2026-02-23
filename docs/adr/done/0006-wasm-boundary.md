@@ -2,7 +2,7 @@
 
 ## Status
 
-**Superseded**. Originally proposed kkrpc as the JS ↔ WASM boundary layer. In practice, direct `wasm-bindgen` calls proved sufficient for a single-module architecture. kkrpc was never integrated.
+**Superseded** for single-module. Originally proposed kkrpc as the JS ↔ WASM boundary layer. Direct `wasm-bindgen` + `execute()` proved sufficient for one module. However, multi-module WASM composition is now planned (see [ADR-0018 WASM Modularity](../0018-code-mode-mcp.md#wasm-modularity--multi-module-composition)) — the `execute(cmd, params_json)` interface becomes the module boundary contract, with MCP as the unifying dispatch layer across modules.
 
 ## Original Proposal: kkrpc
 

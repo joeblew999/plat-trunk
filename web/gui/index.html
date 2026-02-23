@@ -161,7 +161,11 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <!-- ═══════════════════ LEFT PANEL: OUTLINER ═══════════════════ -->
     <aside class="app-outliner" data-testid="outliner">
         <h3 data-section="scene">Scene</h3>
-        <div id="objectList" data-testid="object-list" class="text-xs">loading...</div>
+        <cad-outliner data-testid="object-list" class="text-xs block"
+            data-attr:object-ids="JSON.stringify($litState.objectIds || [])"
+            data-attr:selected-id="$selectedId"
+            data-attr:bool-sel-a="$boolSelA"
+            data-attr:bool-sel-b="$boolSelB"></cad-outliner>
 
         <!-- Boolean selection info -->
         <div class="text-xs" data-text="$boolLabel"
@@ -433,23 +437,35 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         </button>
     </div>
 
+    <!-- ═══════════════════ LIVE SIGNALS DEBUG PANEL ═══════════════════ -->
+    <!-- Datastar auto-populates this hidden element with current signal state -->
+    <pre data-json-signals style="display:none"></pre>
+    <!-- Debug panel — collapsible sidebar showing all Datastar signals in real-time -->
+    <live-signals collapsed></live-signals>
+
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <!-- All module imports use ?v= cache-busting (Safari aggressively caches WASM/JS) -->
     <script type="module">
         const v = window.__cbv;
+
+        // 0. Register <live-signals> debug panel
+        await import('./live-signals.js?v=' + v);
 
         // 1. Export WASM modules as globals (cad-viewport does the actual init)
         const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js?v=' + v);
         window.__wasmInit = wasm.default;
         window.__SceneController = wasm.SceneController;
 
-        // 2. Register <cad-viewport> custom element
+        // 2. Register custom elements
         await import('./cad-viewport.js?v=' + v);
+        await import('./cad-outliner.js?v=' + v);
 
-        // 3. Load state, history, UI modules
+        // 3. Load state, history, UI, keyboard, sketch modules
         await import('./state.js?v=' + v);
         await import('./history.js?v=' + v);
         await import('./ui.js?v=' + v);
+        await import('./keyboard.js?v=' + v);
+        await import('./sketch.js?v=' + v);
 
         // 4. Post-WASM-init: wait for sceneController, then mode indicator + Automerge
         let retries = 0;
@@ -493,12 +509,6 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 }
             }
         }
-    </script>
-    <script>
-        // sketch.js is not a module — needs manual cache-busting
-        var sk = document.createElement('script');
-        sk.src = 'sketch.js?v=' + (window.__cbv || Date.now());
-        document.body.appendChild(sk);
     </script>
     <script>
         if (!window.__cadLocalMode) {

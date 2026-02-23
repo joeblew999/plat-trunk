@@ -1,8 +1,12 @@
 // sketch.js — Sketch controller: points, edges, constraints, extrude.
+// ALL sketch operations go through cadCommand (ADR-0019 Phase 4).
+// ES module (ADR-0019 Phase 5).
 
-const ctrl = () => window.sceneController;
+import { cadCommand, reconcile, showFeedback } from './state.js';
+
+const cmd = (type, params = {}) => cadCommand(type, params, { record: false, broadcast: false });
 const ds = () => window._ds;
-const fb = (msg, err) => window.showFeedbackSignal?.(msg, err);
+const fb = (msg, err) => showFeedback(msg, err);
 
 let points = [];
 let edges = [];
@@ -57,15 +61,14 @@ function reset() {
     }
 }
 
-window.__sketch = {
+const sketch = {
     get isActive() { return ds()?.root?.sketchActive ?? false; },
 
-    begin() {
-        if (!ctrl()) return;
+    async begin() {
         const d = ds();
         const plane = d?.root?.sketchPlane || 'xy';
-        const id = ctrl().begin_sketch(plane);
-        if (id) {
+        const result = await cmd('begin_sketch', { plane });
+        if (result?.sketchId) {
             points = []; edges = []; constraints = [];
             d.beginBatch(); d.root.sketchActive = true; d.endBatch();
             syncInfo();
@@ -73,26 +76,34 @@ window.__sketch = {
         }
     },
 
-    addPoint() {
-        if (!ctrl() || !this.isActive) return;
+    async addPoint() {
+        if (!this.isActive) return;
         const d = ds();
         const x = parseFloat(d.root.sketchPtX) || 0;
         const y = parseFloat(d.root.sketchPtY) || 0;
-        const id = ctrl().sketch_add_point(x, y);
-        if (id) { points.push({ id, x, y }); syncInfo(); rebuildSelects(); fb(`Point at (${x}, ${y})`, false); }
+        const result = await cmd('sketch_add_point', { x, y });
+        if (result?.pointId) {
+            points.push({ id: result.pointId, x, y });
+            syncInfo(); rebuildSelects();
+            fb(`Point at (${x}, ${y})`, false);
+        }
     },
 
-    addEdge() {
-        if (!ctrl() || !this.isActive) return;
+    async addEdge() {
+        if (!this.isActive) return;
         const p0Id = document.getElementById('sketchEdgeP0')?.value;
         const p1Id = document.getElementById('sketchEdgeP1')?.value;
         if (!p0Id || !p1Id || p0Id === p1Id) { fb('Select two different points', true); return; }
-        const id = ctrl().sketch_add_edge(p0Id, p1Id);
-        if (id) { edges.push({ id, p0Id, p1Id }); syncInfo(); rebuildSelects(); fb('Edge added', false); }
+        const result = await cmd('sketch_add_edge', { p0Id, p1Id });
+        if (result?.edgeId) {
+            edges.push({ id: result.edgeId, p0Id, p1Id });
+            syncInfo(); rebuildSelects();
+            fb('Edge added', false);
+        }
     },
 
-    addConstraint() {
-        if (!ctrl() || !this.isActive) return;
+    async addConstraint() {
+        if (!this.isActive) return;
         const d = ds();
         const type = d.root.sketchConType;
         if (!type) { fb('Select constraint type', true); return; }
@@ -124,73 +135,82 @@ window.__sketch = {
                 params = { edge_id: e0, point_id: p0 }; break;
             default: fb('Unknown constraint', true); return;
         }
-        const id = ctrl().sketch_add_constraint(type, JSON.stringify(params));
-        if (id) { constraints.push({ id, type, params }); syncInfo(); fb(`${type} constraint added`, false); }
+        const result = await cmd('sketch_add_constraint', { constraintType: type, params: JSON.stringify(params) });
+        if (result?.constraintId) {
+            constraints.push({ id: result.constraintId, type, params });
+            syncInfo();
+            fb(`${type} constraint added`, false);
+        }
     },
 
-    solve() {
-        if (!ctrl() || !this.isActive) return;
-        const result = ctrl().sketch_solve();
-        if (result) {
+    async solve() {
+        if (!this.isActive) return;
+        const result = await cmd('sketch_solve');
+        if (result?.solved) {
             try {
-                const solved = JSON.parse(result);
+                const solved = result.solved;
                 solved.forEach(sp => { const local = points.find(p => p.id === sp.id); if (local) { local.x = sp.x; local.y = sp.y; } });
                 rebuildSelects();
                 fb(`Solved: ${solved.map((p, i) => `P${i}(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(' ')}`, false);
             } catch { fb('Solve parse error', true); }
-        } else { fb('Solve failed', true); }
+        } else { fb(result?.error || 'Solve failed', true); }
     },
 
-    extrude() {
-        if (!ctrl() || !this.isActive) return;
+    async extrude() {
+        if (!this.isActive) return;
         if (edges.length < 3) { fb('Need at least 3 edges for closed loop', true); return; }
         const height = parseFloat(ds().root.sketchExtH) || 1;
-        const sketchJson = ctrl().sketch_export();
-        const result = window.cadCommand
-            ? window.cadCommand('sketch_extrude', { sketchJson, height })
-            : { objectId: ctrl().sketch_extrude(height) };
+        const exportResult = await cmd('sketch_export');
+        if (!exportResult?.sketchJson) { fb('Failed to export sketch', true); return; }
+        // sketch_extrude is the final commit — uses default options (record: true, broadcast: true)
+        const result = await cadCommand('sketch_extrude', { sketchJson: exportResult.sketchJson, height });
         if (result?.objectId) {
             reset();
-            if (window.reconcile) window.reconcile({ objectId: result.objectId });
+            reconcile({ objectId: result.objectId });
             fb(`Extruded! Object: ${result.objectId.slice(0, 8)}`, false);
-        } else { fb('Extrude failed (ensure edges form closed loop)', true); }
+        } else { fb(result?.error || 'Extrude failed (ensure edges form closed loop)', true); }
     },
 
-    cancel() {
-        if (!ctrl()) return;
-        ctrl().sketch_cancel();
+    async cancel() {
+        await cmd('sketch_cancel');
         reset();
         fb('Sketch cancelled', false);
     },
 
-    quickRect() {
-        if (!ctrl()) return;
+    async quickRect() {
         if (!this.isActive) {
             const d = ds();
             const plane = d?.root?.sketchPlane || 'xy';
-            if (!ctrl().begin_sketch(plane)) return;
+            const r = await cmd('begin_sketch', { plane });
+            if (!r?.sketchId) return;
             d.beginBatch(); d.root.sketchActive = true; d.endBatch();
         }
         const d = ds();
         const w = parseFloat(d.root.sketchRectW) || 2;
         const h = parseFloat(d.root.sketchRectH) || 1;
         const ids = [
-            ctrl().sketch_add_point(0, 0), ctrl().sketch_add_point(w, 0),
-            ctrl().sketch_add_point(w, h), ctrl().sketch_add_point(0, h),
+            (await cmd('sketch_add_point', { x: 0, y: 0 }))?.pointId,
+            (await cmd('sketch_add_point', { x: w, y: 0 }))?.pointId,
+            (await cmd('sketch_add_point', { x: w, y: h }))?.pointId,
+            (await cmd('sketch_add_point', { x: 0, y: h }))?.pointId,
         ];
+        if (ids.some(id => !id)) { fb('Failed to add points', true); return; }
         points.push({ id: ids[0], x: 0, y: 0 }, { id: ids[1], x: w, y: 0 },
             { id: ids[2], x: w, y: h }, { id: ids[3], x: 0, y: h });
+        const edgeIds = [];
         for (let i = 0; i < 4; i++) {
-            const eid = ctrl().sketch_add_edge(ids[i], ids[(i + 1) % 4]);
-            edges.push({ id: eid, p0Id: ids[i], p1Id: ids[(i + 1) % 4] });
+            const r = await cmd('sketch_add_edge', { p0Id: ids[i], p1Id: ids[(i + 1) % 4] });
+            if (!r?.edgeId) { fb('Failed to add edge', true); return; }
+            edgeIds.push(r.edgeId);
+            edges.push({ id: r.edgeId, p0Id: ids[i], p1Id: ids[(i + 1) % 4] });
         }
-        ctrl().sketch_add_constraint('fixed', JSON.stringify({ point_id: ids[0], x: 0, y: 0 }));
-        ctrl().sketch_add_constraint('horizontal', JSON.stringify({ edge_id: edges[0].id }));
-        ctrl().sketch_add_constraint('horizontal', JSON.stringify({ edge_id: edges[2].id }));
-        ctrl().sketch_add_constraint('vertical', JSON.stringify({ edge_id: edges[1].id }));
-        ctrl().sketch_add_constraint('vertical', JSON.stringify({ edge_id: edges[3].id }));
-        ctrl().sketch_add_constraint('distance', JSON.stringify({ p0_id: ids[0], p1_id: ids[1], value: w }));
-        ctrl().sketch_add_constraint('distance', JSON.stringify({ p0_id: ids[0], p1_id: ids[3], value: h }));
+        await cmd('sketch_add_constraint', { constraintType: 'fixed', params: JSON.stringify({ point_id: ids[0], x: 0, y: 0 }) });
+        await cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[0] }) });
+        await cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[2] }) });
+        await cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[1] }) });
+        await cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[3] }) });
+        await cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[1], value: w }) });
+        await cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[3], value: h }) });
         constraints.push({ type: 'fixed' }, { type: 'horizontal' }, { type: 'horizontal' },
             { type: 'vertical' }, { type: 'vertical' }, { type: 'distance' }, { type: 'distance' });
         syncInfo(); rebuildSelects();
@@ -198,9 +218,14 @@ window.__sketch = {
     },
 
     /** One-click: draw rectangle on plane → extrude to 3D solid */
-    quickRectExtrude() {
-        this.quickRect();
+    async quickRectExtrude() {
+        await this.quickRect();
         if (!this.isActive || edges.length < 3) return;
-        this.extrude();
+        await this.extrude();
     },
 };
+
+// Expose globally for HTML onclick handlers
+window.__sketch = sketch;
+
+export { sketch };

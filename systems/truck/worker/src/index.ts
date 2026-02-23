@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import cadSchema from '../../../../web/cad-schema.json';
+import { initHeadlessWasm } from './truck-wasm';
 
 type Bindings = {
   MY_VAR: string;
@@ -342,6 +343,44 @@ api.openapi(createRoute({
   method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
 }), (c) => c.json({ status: 'ok', service: 'truck-cad', version: (cadSchema as ModuleSchema).version }));
 
+// =========================================================================
+// Phase 0.5: Headless truck-webgpu-gui WASM test (ADR-0018)
+// =========================================================================
+
+async function runWasmHealthCheck() {
+  const start = Date.now();
+  const wasm = await initHeadlessWasm();
+  const initMs = Date.now() - start;
+
+  const geoStart = Date.now();
+  const ctrl = new wasm.HeadlessController();
+  const cubeResult = JSON.parse(ctrl.execute('add_cube', '{"size": 1.0}'));
+  const stateResult = JSON.parse(ctrl.execute('get_state', '{}'));
+  const geoMs = Date.now() - geoStart;
+
+  return {
+    ok: true as const,
+    headless: true,
+    engine: 'truck-webgpu-gui headless 0.1.0',
+    objectId: cubeResult.objectId,
+    objectCount: stateResult.objectCount,
+    initMs,
+    geoMs,
+    totalMs: Date.now() - start,
+  };
+}
+
+api.openapi(createRoute({
+  method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM geometry in Worker',
+  responses: { 200: { description: 'WASM test result' } }
+}), async (c) => {
+  try {
+    return c.json(await runWasmHealthCheck());
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message, stack: err.stack }, 500);
+  }
+});
+
 app.get('/api-docs', (c) => c.html(`<!DOCTYPE html><html><head><title>Truck CAD API</title></head><body><script id="api-reference" data-url="/api/openapi.json"></script><script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script></body></html>`));
 
 // Legacy docs routes
@@ -395,7 +434,8 @@ function buildMcpTools(schema: ModuleSchema) {
   // Meta-tools
   tools.push(
     { name: 'cad_health', description: 'Check if the CAD server and browser are connected', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } }
+    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_wasm_health', description: 'Test headless truck-webgpu-gui WASM geometry kernel in Worker (ADR-0018 Phase 0.5)', inputSchema: { type: 'object', properties: {} } }
   );
   return tools;
 }
@@ -444,6 +484,23 @@ app.post('/mcp', async (c) => {
               browserConnected: (m?.sseClientCount ?? 0) > 0
             }) }] }
           });
+          break;
+        }
+        if (name === 'cad_wasm_health') {
+          try {
+            const result = await runWasmHealthCheck();
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: JSON.stringify(result) }] }
+            });
+          } catch (err: any) {
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: JSON.stringify({
+                ok: false, headless: false, error: err.message
+              }) }] }
+            });
+          }
           break;
         }
         if (name === 'cad_schema') {

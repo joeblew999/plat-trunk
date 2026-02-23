@@ -1,17 +1,11 @@
 // state.js — ALL CAD state: dispatch commands to Rust, reconcile signals, selection, style.
 // cadCommand() is the ONLY way to change state. reconcile() is the ONLY way to sync it.
 
-// ─── Core WASM call ─────────────────────────────────────────────
+import { moduleRouter } from './core/module-router.js';
 
-function executeWasm(ctrl, type, params) {
-  try {
-    const res = ctrl.execute(type, JSON.stringify(params || {}));
-    if (!res) return { error: 'Empty response' };
-    return JSON.parse(res);
-  } catch (err) {
-    console.error(`WASM execute(${type}) failed:`, err);
-    return { error: String(err) };
-  }
+// If WASM was already initialized before state.js loaded, register now
+if (window.sceneController && !moduleRouter.ready) {
+  moduleRouter.register('core', window.sceneController);
 }
 
 // ─── Reconcile: WASM state → Datastar signals → DOM ─────────────
@@ -19,17 +13,8 @@ function executeWasm(ctrl, type, params) {
 // Called by cadCommand() after every execute(). No caller needs to remember
 // which signals to update — reconcile reads WASM and pushes to Datastar.
 
-function reconcile(result) {
-  const ctrl = window.sceneController;
-  const ds = window._ds;
-  if (!ctrl || !ds?.root) return {};
-
-  const ids = ctrl.object_ids() || [];
-  const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
-  const r = ds.root;
-
-  ds.beginBatch();
-
+// ── reconcileSignals: selection state from command result ────────
+function reconcileSignals(r, ids, result) {
   // Prune stale selections (objects may have been deleted)
   // Use '' not null — Datastar breaks reactivity for signals initialized as null
   if (r.selectedId && !ids.includes(r.selectedId)) r.selectedId = '';
@@ -55,8 +40,10 @@ function reconcile(result) {
     r.boolSelA = result.objectId;
     r.boolSelB = '';
   }
+}
 
-  // Sync computed signals
+// ── reconcileMetadata: derived/computed signals ─────────────────
+function reconcileMetadata(r, ids, mgr) {
   const a = r.boolSelA, b = r.boolSelB;
   r.objectCount = ids.length;
   r.sceneEmpty = ids.length === 0;
@@ -76,20 +63,40 @@ function reconcile(result) {
     canRedo: r.canRedo
   };
 
-  ds.endBatch();
+  return { a, b };
+}
 
+// ── reconcileView: DOM side effects (outside Datastar batch) ────
+function reconcileView(selectedId, ids) {
   // Load style and BIM metadata for selected object
-  if (r.selectedId) {
+  if (selectedId) {
     try {
-      loadStyle(r.selectedId);
-      loadBim(r.selectedId);
+      loadStyle(selectedId);
+      loadBim(selectedId);
     } catch (err) {
       console.warn('Metadata load failed:', err);
     }
   }
 
-  // Update object list DOM
-  renderObjectList(ids);
+  // Object list: <cad-outliner> renders reactively via Datastar → Lit data-attr bridge.
+  // No imperative DOM update needed (Phase 8).
+}
+
+// ── reconcile: orchestrator (backward-compatible API) ───────────
+function reconcile(result) {
+  const ds = window._ds;
+  if (!moduleRouter.ready || !ds?.root) return {};
+
+  const ids = moduleRouter.query('objectIds');
+  const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
+  const r = ds.root;
+
+  ds.beginBatch();
+  reconcileSignals(r, ids, result);
+  const { a, b } = reconcileMetadata(r, ids, mgr);
+  ds.endBatch();
+
+  reconcileView(r.selectedId, ids);
 
   return {
     ready: true, objectCount: ids.length, objectIds: ids,
@@ -101,11 +108,10 @@ function reconcile(result) {
 // ─── Style: WASM ↔ Datastar signals ─────────────────────────────
 
 function loadStyle(objectId) {
-  const ctrl = window.sceneController;
   const ds = window._ds;
-  if (!ctrl || !objectId || !ds) return;
-  // Use executeWasm (unified dispatch) — NOT cadCommand (would recurse from reconcile)
-  const result = executeWasm(ctrl, 'get_object_style', { objectId });
+  if (!moduleRouter.ready || !objectId || !ds) return;
+  // Use moduleRouter.execute — NOT cadCommand (would recurse from reconcile)
+  const result = moduleRouter.execute('get_object_style', { objectId });
   if (!result.style) return;
   try {
     const s = result.style;
@@ -120,10 +126,9 @@ function loadStyle(objectId) {
 }
 
 function loadBim(objectId) {
-  const ctrl = window.sceneController;
   const ds = window._ds;
-  if (!ctrl || !objectId || !ds) return;
-  const result = executeWasm(ctrl, 'get_bim_metadata', { objectId });
+  if (!moduleRouter.ready || !objectId || !ds) return;
+  const result = moduleRouter.execute('get_bim_metadata', { objectId });
   ds.beginBatch();
   if (result.bim) {
     ds.root.bimType = result.bim.ifc_type || '';
@@ -136,10 +141,9 @@ function loadBim(objectId) {
 }
 
 function applyStyle(commit) {
-  const ctrl = window.sceneController;
   const ds = window._ds;
   const id = ds?.root?.selectedId;
-  if (!ctrl || !id) return;
+  if (!moduleRouter.ready || !id) return;
   const hex = ds.root.propColor || '#3399ff';
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -154,59 +158,14 @@ function applyStyle(commit) {
     // Full dispatch: WASM + Automerge + reconcile
     cadCommand('set_style', { objectId: id, style });
   } else {
-    // Live preview only: WASM, no Automerge
-    executeWasm(ctrl, 'set_style', { objectId: id, style });
+    // Live preview only: WASM via moduleRouter, no Automerge
+    moduleRouter.execute('set_style', { objectId: id, style });
   }
 }
 
 // ─── Object list (outliner) ─────────────────────────────────────
 
-function renderObjectList(ids) {
-  const c = window.sceneController;
-  if (!c) return;
-  if (!ids) ids = c.object_ids() || [];
-  const el = document.getElementById('objectList');
-  if (!el) return;
-  if (ids.length === 0) {
-    el.innerHTML = '<span class="opacity-50">Scene empty</span>';
-    return;
-  }
-  const r = window._ds?.root;
-  const selA = r?.boolSelA || null;
-  const selB = r?.boolSelB || null;
-  let names = {};
-  try {
-    const state = JSON.parse(c.execute('get_state', '{}'));
-    names = state.objectNames || {};
-  } catch {}
-  const html = ids.map((id, i) => {
-    const isA = id === selA;
-    const isB = id === selB;
-    const cls = isA ? 'obj-item obj-sel-a' : isB ? 'obj-item obj-sel-b' : 'obj-item';
-    const label = isA ? 'A' : isB ? 'B' : '';
-    const name = names[id] || id.slice(0, 6);
-    return `
-      <div class="flex items-center gap-1 group">
-        <button class="${cls} flex-1" data-testid="outliner-item" data-oid="${id}" title="${id}">${i}: ${name}${label ? ' <b>' + label + '</b>' : ''}</button>
-        <button class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-50 hover:!opacity-100 p-0.5 h-auto min-h-0" 
-                data-focus-oid="${id}" title="Focus object">
-          <svg xmlns="http://www.w3.org/2000/svg" class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-        </button>
-      </div>`;
-  }).join('');
-  el.innerHTML = html;
-  el.querySelectorAll('[data-oid]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      cadCommand('select', { id: btn.dataset.oid }, { ephemeral: true });
-    });
-  });
-  el.querySelectorAll('[data-focus-oid]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      document.getElementById('viewport').zoomTo(btn.dataset.focusOid);
-    });
-  });
-}
+// renderObjectList removed — replaced by <cad-outliner> Lit component (Phase 8)
 
 // ─── Control Plane (JS Layer) ───────────────────────────────────
 
@@ -259,9 +218,9 @@ async function handleJsCommand(type, params) {
     case 'create_model':
       if (mgr) {
         await mgr.createDocument(params.name || 'Untitled');
-        // Reset scene
-        const ctrl = window.sceneController;
-        if (ctrl) ctrl.clear_scene();
+        // Reset scene via moduleRouter
+        const core = moduleRouter.core();
+        if (core) core.clear_scene();
         return { success: true, modelId: 'new' }; // simplified
       }
       return { error: 'DocManager not ready' };
@@ -280,20 +239,32 @@ async function handleJsCommand(type, params) {
 }
 
 // ─── Single entry point for all CAD operations ───────────────────
+//
+// Options contract (ADR-0019 Phase 2):
+//   record:    boolean  — Record to Automerge? (default: true)
+//   broadcast: boolean  — POST state to Worker API? (default: true)
+//   reconcile: boolean  — Run reconcile pipeline? (default: true)
+//   source:    string   — Who initiated? 'local' | 'api' | 'replay' (default: 'local')
+//   groupId:   string   — Group ID for Automerge undo grouping (optional)
 
 let _busy = false;
 async function cadCommand(type, params = {}, options = {}) {
-  const ctrl = window.sceneController;
-  if (!ctrl && !JS_COMMANDS.has(type)) return { error: 'SceneController not ready' };
-  
-  // Guard against re-entrancy for WASM commands, but allow JS commands
-  if (_busy && !options.ephemeral && !JS_COMMANDS.has(type)) return { error: 'Busy' };
-  
+  // Resolve options with defaults
+  const record    = options.record    ?? true;
+  const broadcast = options.broadcast ?? true;
+  const doReconcile = options.reconcile ?? true;
+  const source    = options.source    ?? 'local';
+
+  if (!moduleRouter.ready && !JS_COMMANDS.has(type)) return { error: 'ModuleRouter not ready' };
+
+  // Guard against re-entrancy for WASM commands that record
+  if (_busy && record && !JS_COMMANDS.has(type)) return { error: 'Busy' };
+
   if (!JS_COMMANDS.has(type)) _busy = true;
-  
+
   try {
     let result;
-    
+
     if (JS_COMMANDS.has(type)) {
       // 1. JS Control Plane Dispatch
       try {
@@ -302,61 +273,59 @@ async function cadCommand(type, params = {}, options = {}) {
         return { error: String(err) };
       }
     } else {
-      // 2. WASM Kernel Dispatch
+      // 2. WASM Kernel Dispatch via Module Router (ADR-0019)
       try {
-        result = executeWasm(ctrl, type, params);
+        result = moduleRouter.execute(type, params);
       } catch (err) {
         return { error: String(err) };
       }
     }
 
-  // Record to Automerge (skip for ephemeral commands and JS commands which handle their own state)
-  if (!options.ephemeral && !options.skipAutomerge && !JS_COMMANDS.has(type)) {
-    const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
-    if (mgr) {
-      mgr.record(type, params, { 
-        objectId: result.objectId, 
-        groupId: options.groupId,
-        hierarchy: result.hierarchy 
-      });
-    }
-  }
-
-      // Reconcile: WASM state → Datastar signals → UI
-      const state = reconcile(result);
-  
-      // Contextual feedback
-      if (type.startsWith('boolean_') && result.objectId) {
-        showFeedback('Operation success');
-      } else if (type === 'clash_detect') {
-        showFeedback(result.clash ? '💥 CLASH DETECTED!' : '✅ No clash', result.clash);
-      } else if (type === 'import_mvt' || type === 'import_step' || type === 'import_ifc') {
-        showFeedback(`Imported ${result.objectCount || ''} objects`);
-        // Auto-zoom to extents after big imports
-        setTimeout(() => {
-          const vp = document.getElementById('viewport');
-          if (vp && vp.zoomToExtents) vp.zoomToExtents();
-        }, 500);
-      } else if (result.error) {
-        showFeedback(result.error, true);
+    // Record to Automerge (skip for non-recording commands and JS commands)
+    if (record && !JS_COMMANDS.has(type)) {
+      const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
+      if (mgr) {
+        mgr.record(type, params, {
+          objectId: result.objectId,
+          groupId: options.groupId,
+          hierarchy: result.hierarchy
+        });
       }
-  
-      // Broadcast (skip for ephemeral + api-sourced)
-  
-  if (!options.ephemeral && !window.__cadLocalMode && options.source !== 'api') {
-    const mid = window.__modelId || 'default';
-    fetch(`/api/cad/${mid}/state`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...state, broadcast: true }),
-    }).catch(() => {});
-  }
-
-      return { ...result, ...state };
-    } finally {
-      _busy = false;
     }
+
+    // Reconcile: WASM state → Datastar signals → UI
+    const state = doReconcile ? reconcile(result) : {};
+
+    // Contextual feedback
+    if (type.startsWith('boolean_') && result.objectId) {
+      showFeedback('Operation success');
+    } else if (type === 'clash_detect') {
+      showFeedback(result.clash ? '💥 CLASH DETECTED!' : '✅ No clash', result.clash);
+    } else if (type === 'import_mvt' || type === 'import_step' || type === 'import_ifc') {
+      showFeedback(`Imported ${result.objectCount || ''} objects`);
+      setTimeout(() => {
+        const vp = document.getElementById('viewport');
+        if (vp && vp.zoomToExtents) vp.zoomToExtents();
+      }, 500);
+    } else if (result.error) {
+      showFeedback(result.error, true);
+    }
+
+    // Broadcast state to Worker API
+    if (broadcast && !window.__cadLocalMode && source !== 'api') {
+      const mid = window.__modelId || 'default';
+      fetch(`/api/cad/${mid}/state`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...state, broadcast: true }),
+      }).catch(() => {});
+    }
+
+    return { ...result, ...state };
+  } finally {
+    _busy = false;
   }
+}
   function showFeedback(msg, isError = false) {
   const ds = window._ds;
   if (!ds?.root) return;
@@ -379,13 +348,13 @@ function addShape(type, params) {
     const idx = result.objectIds.indexOf(result.objectId);
     if (idx > 0) {
       const size = params.size || params.radius || params.majorRadius || 1;
-      cadCommand('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { skipAutomerge: true });
+      cadCommand('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { record: false });
     }
   }
   return result;
 }
 
-export { cadCommand, executeWasm, reconcile, loadStyle, applyStyle, renderObjectList, showFeedback, addShape };
+export { cadCommand, moduleRouter, reconcile, loadStyle, applyStyle, showFeedback, addShape };
 
 // Window globals: only what's needed for inline HTML handlers and E2E tests
 window.cadCommand = cadCommand;
@@ -393,4 +362,5 @@ window.addShape = addShape;
 window.reconcile = reconcile;
 window.__applyStyle = applyStyle;
 window.__loadStyle = loadStyle;
+window.__moduleRouter = moduleRouter;
 window.showFeedbackSignal = showFeedback;
