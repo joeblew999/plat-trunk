@@ -13,6 +13,11 @@ MY OWN RUNNING NOTEES BECAUSE CLAUDE LIES SO OFTEN !! (Gemini is better)
 
 ## NEXT STEPS
 
+- [ ] **Code Mode & Edge AI Chat (HIGH PRIORITY)**: 
+    - Implement Phase 1: `@truck/sdk` generation from `cad-schema.json` + `TransactionRecord` schema.
+    - Implement Phase 2: Browser-side `execute(code)` sandbox via SSE channel.
+    - Implement Phase 3: Built-in "Design Assistant" GUI using Datastar + Workers AI (consumes `execute`).
+    - This is the primary path for user accessibility (Zero-Setup AI).
 - [ ] **BIM Integration**: Start Stage 1 of ADR-004 (IFC parsing with `ifc-lite`).
 - [ ] **Rotate/Scale Gizmos**: Implement as per Roadmap.
 - [ ] **STEP Import/Export**: Leverage `truck-stepio`.
