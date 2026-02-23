@@ -225,6 +225,29 @@ fn rebuild_id_index(s: &mut SharedState) {
     }
 }
 
+/// Rename an object's UUID in place. Used by `execute()` at the API boundary
+/// to preserve IDs during Automerge undo/redo replay. The kernel stays pure —
+/// it always generates fresh UUIDs; this post-hoc rename is the only place
+/// that knows about replay semantics.
+fn rename_object(s: &mut SharedState, old_id: &str, new_id_str: &str) {
+    let new_uuid = match Uuid::parse_str(new_id_str) {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    if let Some(&idx) = s.id_to_index.get(old_id) {
+        s.objects[idx].id = new_uuid;
+        s.id_to_index.remove(old_id);
+        s.id_to_index.insert(new_id_str.to_string(), idx);
+        // Update bounding sphere entry
+        for entry in s.bounding_spheres.iter_mut() {
+            if entry.0 == old_id {
+                entry.0 = new_id_str.to_string();
+                break;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Picking helpers
 // ---------------------------------------------------------------------------
@@ -1245,11 +1268,12 @@ impl SceneController {
         new_id
     }
 
+
     // =====================================================================
     // Boolean operations
     // =====================================================================
 
-    /// Union two objects, replacing them with the result. Returns new index.
+    /// Union two objects, replacing them with the result. Returns new UUID (empty on failure).
     /// Tries truck_shapeops::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B).
     /// Note: booleans work reliably with cubes + cylinders (tsweep geometry).
     /// Spheres/tori (rsweep/NURBS) may fail — truck-shapeops limitation.
@@ -1265,11 +1289,9 @@ impl SceneController {
         let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
         let try_union = |a: &Solid, b: &Solid| -> Option<Solid> {
-            // Try direct or() first
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 truck_shapeops::or(a, b, 0.05)
             })).ok().flatten();
-            // Fallback: De Morgan A ∪ B = ¬(¬A ∧ ¬B)
             result.or_else(|| {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut not_a = a.clone();
@@ -1281,7 +1303,6 @@ impl SceneController {
             })
         };
 
-        // Try original, then retry with perturbation to avoid coplanar face issues
         let result = try_union(&solid_a, &solid_b).or_else(|| {
             log!("WASM: union failed, retrying with perturbation to avoid coplanar faces");
             let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
@@ -1326,7 +1347,6 @@ impl SceneController {
             })).ok().flatten()
         };
 
-        // Try original, then retry with perturbation to avoid coplanar face issues
         let result = try_subtract(&solid_a, &solid_b).or_else(|| {
             log!("WASM: subtract failed, retrying with perturbation to avoid coplanar faces");
             let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
@@ -1369,7 +1389,6 @@ impl SceneController {
             })).ok().flatten()
         };
 
-        // Try original, then retry with perturbation to avoid coplanar face issues
         let result = try_intersect(&solid_a, &solid_b).or_else(|| {
             log!("WASM: intersect failed, retrying with perturbation to avoid coplanar faces");
             let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
@@ -1415,6 +1434,7 @@ impl SceneController {
         s.objects.clear();
         s.id_to_index.clear();
         s.bounding_spheres.clear();
+        s.name_counters.clear();
         s.interaction = InteractionMode::Idle;
         s.scene.clear_objects();
     }
@@ -1947,7 +1967,6 @@ impl SceneController {
             }
             Err(e) => {
                 error!("WASM: sketch_extrude failed: {}", e);
-                // Put sketch back so user can fix it
                 self.state.borrow_mut().active_sketch = Some(sketch);
                 String::new()
             }
@@ -2118,7 +2137,13 @@ impl SceneController {
     pub fn execute(&self, cmd_type: &str, params_json: &str) -> String {
         let p: serde_json::Value = serde_json::from_str(params_json).unwrap_or(serde_json::json!({}));
 
-        let result: serde_json::Value = match cmd_type {
+        // Replay ID: if Automerge replay passes a _replayId in params, we'll
+        // rename the kernel's freshly-generated UUID to match it after execution.
+        // Uses _replayId (not objectId) because objectId is the source reference
+        // for commands like duplicate/translate — not the desired result ID.
+        let replay_id = p.get("_replayId").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        let mut result: serde_json::Value = match cmd_type {
             // ── Primitives ──────────────────────────────────────────
             "add_cube" => {
                 let params: AddCubeParams = serde_json::from_value(p).unwrap_or(AddCubeParams { size: 1.0 });
@@ -2697,6 +2722,17 @@ impl SceneController {
 
             _ => serde_json::json!({ "error": format!("Unknown command: {}", cmd_type) }),
         };
+
+        // API boundary: if replay provided an objectId and the kernel created
+        // an object with a different (fresh) UUID, rename it to match.
+        if let Some(ref wanted_id) = replay_id {
+            if let Some(actual_id) = result.get("objectId").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                if actual_id != *wanted_id {
+                    rename_object(&mut self.state.borrow_mut(), &actual_id, wanted_id);
+                    result["objectId"] = serde_json::json!(wanted_id);
+                }
+            }
+        }
 
         serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
     }

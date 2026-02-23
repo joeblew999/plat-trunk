@@ -131,7 +131,7 @@ class CadDocumentManager {
         const op = {
             id: crypto.randomUUID(),
             type,
-            params: { ...params, objectId: meta.objectId || params.objectId || null },
+            params: { ...params, _replayId: meta.objectId || null },
             enabled: true,
             timestamp: Date.now(),
             actorId: this.actorId,
