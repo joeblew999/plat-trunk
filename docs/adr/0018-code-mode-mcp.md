@@ -1,62 +1,106 @@
 # [ADR-018] Code Mode MCP — Schema-Driven Script Execution
 
-We will adopt the "Code Mode" pattern for our Model Context Protocol (MCP) implementation, adding a single `cad_execute` tool that accepts TypeScript code alongside our existing granular tools. The code runs against a dynamically generated SDK, with transactional commit/rollback semantics via Automerge. Execution works in two tiers — **interactive** (browser via SSE) and **headless** (truck-js WASM in Worker) — sharing the same geometry engine.
+We will adopt the "Code Mode" pattern for our Model Context Protocol (MCP) implementation, adding a single `cad_execute` tool that accepts TypeScript code alongside our existing granular tools. The code runs against a dynamically generated SDK, with transactional commit/rollback semantics via Automerge. Execution works in two tiers — **interactive** (browser via SSE) and **headless** (feature-flagged WASM in Worker) — sharing the same Rust crate.
 
 ## Status
 
-**Proposed**
+**Proposed** — Phase 0 (WASM-in-Worker feasibility) **PASSED**.
 
-## Phase 0: Feasibility Gate (Do This First)
+## Key Architectural Insight: One Crate, Two Targets
 
-Before committing to any implementation, we validate that the truck-js WASM module loads and runs inside a Cloudflare Worker. This is a **tiny test** that answers the go/no-go question for headless execution.
+All geometry computation in `truck-webgpu-gui` is **CPU-only**. The GPU is used exclusively for rendering (truck-platform + truck-rendimpl: PBR shaders, instance buffers, depth buffer). This means we can compile our existing crate without rendering dependencies to get a headless geometry WASM — no separate crate needed.
 
-### The Test
-
-Add one import and one endpoint to the existing Worker:
-
-```typescript
-// systems/truck/worker/src/index.ts
-import * as truck from '../pkg/truck_js.js';
-
-app.get('/api/test-wasm', (c) => {
-  const start = Date.now();
-  const v = truck.vertex(0, 0, 0);
-  const e = truck.tsweep(v.upcast(), [1.0, 0.0, 0.0]);
-  const f = truck.tsweep(e, [0.0, 1.0, 0.0]);
-  const solid = truck.tsweep(f, [0.0, 0.0, 1.0]);
-  const polygon = solid.to_polygon(0.01);
-  const buffer = polygon.to_buffer();
-  return c.json({
-    ok: true,
-    vertices: buffer.vertex_buffer().length,
-    indices: buffer.index_buffer().length,
-    ms: Date.now() - start
-  });
-});
+```toml
+# crates/truck-webgpu-gui/Cargo.toml
+[features]
+default = ["rendering"]
+rendering = ["truck-platform", "truck-rendimpl", "wgpu", "winit", "web-sys"]
 ```
 
-### What We Measure
+- **Browser**: `cargo build` (default features) → geometry + rendering → full GUI WASM
+- **Worker**: `cargo build --no-default-features` → geometry only → headless WASM
 
-| Question | How | Pass Criteria |
-|----------|-----|---------------|
-| Does it deploy? | `wrangler deploy` | No bundle size errors |
-| Bundle size? | Check wrangler output | Under 10 MB (paid plan) |
-| Cold-start latency? | First request timing | Under 500ms |
-| Warm request latency? | Subsequent request timing | Under 50ms |
-| Does geometry work? | Vertex count > 0 | Returns valid mesh data |
-| Does `wasm-bindgen` work in Workers? | No runtime errors | `truck.vertex()` succeeds |
+Same Rust code. Same `execute()` dispatch. Same command params. Same `SceneController` logic (minus the rendering methods behind `#[cfg(feature = "rendering")]`). **True DRY — one source of truth.**
 
-### How We Surface It
+### Why Not truck-js?
 
-- **MCP**: Add `cad_wasm_health` tool that returns the same data — agents can verify headless is working.
-- **GUI**: Health badge in the header showing "Headless: OK" or "Headless: Unavailable."
-- **CI**: Playwright test that hits `/api/test-wasm` and asserts valid geometry output.
+The upstream truck author provides `truck-js` (`.src/truck/truck-js/`) — a separate WASM crate with low-level geometry primitives (`vertex`, `tsweep`, `and`). Phase 0 validated WASM-in-Worker using truck-js. However:
 
-### Outcomes
+- **truck-js has a different API** — low-level primitives, not our schema commands (`add_cube`, `boolean_union`, etc.)
+- **Would require an SDK bridging layer** — mapping 34 schema commands to truck-js primitives, duplicating dispatch logic
+- **Misses our extensions** — BIM (ifc-lite), sketching (kcl-ezpz), assembly, scene management, undo/redo
+- **Two WASM binaries with overlapping geometry code** — compiled from same Rust libs but separately
 
-- **Pass**: Proceed with Stage 2 (headless execution). We know truck-js runs in Workers.
-- **Fail (size)**: Need `wasm-opt -Oz` or paid plan. Retry after optimization.
-- **Fail (runtime)**: `wasm-bindgen --target bundler` may not be compatible with Workers. Try `--target nodejs` or manual WASM instantiation.
+Feature-flagging our own crate eliminates all of these problems. The headless build IS the browser build, minus rendering.
+
+---
+
+## Phase 0: WASM-in-Worker Feasibility — PASSED
+
+We validated that WASM loads and executes geometry inside a Cloudflare Worker using truck-js as a proof-of-concept. ([PR #2](https://github.com/joeblew999/plat-trunk/pull/2))
+
+### Results
+
+| Metric | Result | Pass Criteria | Status |
+|--------|--------|---------------|--------|
+| Bundle size | **2.6 MB** | Under 3 MB (free) / 10 MB (paid) | **PASS** |
+| Cold init | **1ms** | Under 500ms | **PASS** |
+| Warm request | **0ms** | Under 50ms | **PASS** |
+| Geometry works | **192 verts, 36 idx, 12 tri** | Valid mesh data | **PASS** |
+| wasm-bindgen compat | Manual `WebAssembly.instantiate()` needed | No runtime errors | **PASS** |
+
+### Key Finding
+
+wasm-bindgen `--target bundler` output needs a manual `WebAssembly.instantiate()` wrapper for Workers — the bundler-style WASM import doesn't auto-instantiate. Solved with `truck-wasm.ts` (lazy init, ~40 lines). This same pattern applies to the headless truck-webgpu-gui build.
+
+### What's Deployed
+
+- `/api/test-wasm` — REST endpoint returning geometry timing data
+- `cad_wasm_health` — MCP tool for agent verification
+- `truck-wasm.ts` — Lazy WASM init wrapper for CF Workers
+
+---
+
+## Phase 0.5: Headless Build of truck-webgpu-gui (Do Next)
+
+Now that WASM-in-Worker is proven, the real next step is building our own crate without rendering.
+
+### The Work
+
+1. **Add feature flag** to `crates/truck-webgpu-gui/Cargo.toml`:
+   ```toml
+   [features]
+   default = ["rendering"]
+   rendering = ["truck-platform", "truck-rendimpl", "wgpu", "winit", "web-sys"]
+   ```
+
+2. **Gate rendering code** with `#[cfg(feature = "rendering")]`:
+   - `SceneController::new()` (needs wgpu::Device) — rendering only
+   - `solid_to_instances()` — rendering only
+   - `reconcile_scene()` — rendering only
+   - `execute()` command dispatch — **keep** (geometry), gate rendering side-effects
+
+3. **Build headless WASM**:
+   ```sh
+   wasm-pack build --target bundler --no-default-features crates/truck-webgpu-gui
+   ```
+
+4. **Replace truck-js in Worker** with the headless build. Same `truck-wasm.ts` lazy init pattern.
+
+5. **Validate**: Same `/api/test-wasm` endpoint, but calling `execute("add_cube", {...})` instead of truck-js primitives.
+
+### What This Gives Us
+
+| Capability | truck-js (Phase 0) | Headless build (Phase 0.5) |
+|------------|---------------------|----------------------------|
+| API | Low-level (`vertex`, `tsweep`) | Schema-level (`add_cube`, `boolean_union`) |
+| Commands | ~15 primitives | All 34 commands |
+| BIM/IFC | No | Yes |
+| Sketching | No | Yes |
+| Assembly | No | Yes |
+| Scene management | No | Yes (objects, selection, undo) |
+| SDK bridging needed? | **Yes** (big effort) | **No** (same dispatch) |
+| Code shared with browser? | Different crate | **Same crate** |
 
 ---
 
@@ -68,45 +112,17 @@ Our current MCP implementation exposes 29 granular tools (ADR-010). This works w
 2. **No atomicity**: If an agent calls 5 tools sequentially and tool #3 fails, the scene is left in a partial state. There is no way to roll back.
 3. **No composability**: Agents cannot express conditional logic, loops, or variables across tool calls. Each call is independent.
 
-### The truck-js Discovery
-
-The Rust codebase contains **two separate WASM crates** that share the same geometry engine:
-
-| Crate | Purpose | GPU? | Location | Status |
-|-------|---------|------|----------|--------|
-| **truck-js** | Headless geometry kernel | **No** | `.src/truck/truck-js/` | Compiled to `worker/pkg/` (1.9 MB) |
-| **truck-webgpu-gui** | Browser renderer + SceneController | **Yes** | `crates/truck-webgpu-gui/` | Running in browser |
-
-Both depend on the same underlying Rust libraries (`truck-modeling`, `truck-shapeops`, `truck-meshalgo`, `truck-stepio`). The geometry math is written once — **DRY at the Rust level**.
-
-**truck-js** is the truck author's intended JavaScript API. It exports:
-- Primitives: `vertex()`, `line()`, `circle_arc()`, `bezier()`
-- Sweeps: `tsweep()`, `rsweep()` (extrude, revolve)
-- Transforms: `translated()`, `rotated()`, `scaled()`
-- Booleans: `and()`, `or()`, `not()`
-- Mesh: `solid.to_polygon()`, `mesh.to_buffer()`, `mesh.to_obj()`, `mesh.to_stl()`
-- STEP I/O: `Table.from_step()`, `solid.to_step()`
-- Serialization: `Solid.to_json()`, `Solid.from_json()`
-
-**truck-js has zero GPU dependencies.** Its `Cargo.toml` contains no `wgpu`, `winit`, `web-sys`, or rendering crates. It is already compiled and sitting in `systems/truck/worker/pkg/` — just not imported.
-
 ### Current Architecture Reality
 
 | Capability | Status | Notes |
 |------------|--------|-------|
-| WASM kernel in browser | **Working** | `truck-webgpu-gui`: geometry + WebGPU rendering |
-| Headless WASM kernel | **Compiled, not wired** | `truck-js`: pure geometry, in `worker/pkg/` |
+| WASM kernel in browser | **Working** | `truck-webgpu-gui`: geometry (CPU) + WebGPU rendering (GPU) |
+| WASM in CF Worker | **Proven** | Phase 0 passed with truck-js; Phase 0.5 upgrades to headless build |
 | Worker (Hono/Zod) | **Working** | Stateless proxy, SSE command relay, 29 MCP tools |
 | MCP bridge | **Working** | stdio ↔ HTTP proxy with retry + hot-reload |
-| truck-js imported in Worker | **Not started** | WASM sits in `worker/pkg/`, not imported |
+| Feature-flagged headless build | **Not started** | Phase 0.5 — next step |
 | Server-side state (Durable Objects) | **Not started** | Automerge state lives in browser only |
 | Workers AI integration | **Not started** | No `/api/chat` route, no model calls |
-
-### Relationship to ADR-0013 (Passive WASM)
-
-ADR-0013 made WASM passive: JS/Lit owns the camera, Rust just renders what it's told. But **rendering still happens in Rust WebGPU** (truck-rendimpl PBR shaders). Three.js is only used for camera controls.
-
-A future ADR could complete ADR-0013's trajectory by replacing truck-webgpu-gui's rendering with truck-js geometry + Three.js/WebGPU rendering in JS. This would give true "truck-js everywhere" — one WASM module for both browser and Worker. But that is a **major rendering rebuild** beyond Code Mode's scope. ADR-0018 does not require it.
 
 ### Why not just replace granular tools?
 
@@ -184,41 +200,45 @@ User prompt → Worker → Workers AI → generates code
 
 ---
 
-### Stage 2: Headless Execution (truck-js WASM in Worker)
+### Stage 2: Headless Execution (Headless WASM in Worker)
 
 Stage 2 enables the Worker to execute CAD code **without a browser**. Workers AI becomes an autonomous agent — generates code, executes it, persists results. The browser is a lazy renderer that catches up on connect.
 
-**Gated by Phase 0 feasibility test.** If truck-js WASM can't run in Workers, Stage 2 needs a different approach.
+**Gated by Phase 0.5** (headless build of truck-webgpu-gui).
 
-#### What Already Exists
+#### How It Works
 
-The headless WASM is compiled and sitting in the Worker directory:
+The headless WASM is the same `truck-webgpu-gui` crate compiled without the `rendering` feature. It has the same `execute()` method, the same command dispatch, the same param types. The Worker calls it directly — no SSE, no browser, no SDK bridging layer.
 
-```
-systems/truck/worker/pkg/
-├── truck_js.js           # ES module wrapper
-├── truck_js.d.ts         # TypeScript definitions (full API)
-├── truck_js_bg.js        # Bindings glue
-└── truck_js_bg.wasm      # Headless geometry kernel (1.9 MB, zero GPU)
+```typescript
+async function executeInWorker(code: string) {
+  const wasm = await initHeadlessWasm();
+  // Same execute() as browser — same commands, same params
+  const snapshot = automergeDoc.clone();
+  try {
+    const record = wasm.execute_script(code, snapshot);
+    automergeDoc.merge(record.doc);
+    return { ok: true, record };
+  } catch (err) {
+    // snapshot discarded — automatic rollback
+    return { ok: false, error: err.message };
+  }
+}
 ```
 
 #### Prerequisites
 
-**1. WASM-in-Worker validation** (Phase 0 — described above)
+**1. Phase 0.5: Headless build** (described above)
 
-*   Bundle size: 1.9 MB WASM + JS bundle. Free plan (3 MB) likely too small. **Paid plan (10 MB) required.**
-*   Adding `wasm-opt -Oz` could reduce the 1.9 MB significantly (not currently in the build).
-*   Cold-start and `wasm-bindgen` runtime compatibility must be measured.
+*   Feature-flag rendering deps in Cargo.toml
+*   Gate rendering code with `#[cfg(feature = "rendering")]`
+*   Build and deploy headless WASM to Worker
 
 **2. Server-side state (Durable Objects)**
 
 *   Automerge documents persisted in Durable Objects or R2.
 *   Worker loads, modifies, saves Automerge docs without a browser.
 *   Browser syncs from server-side state on connect — same CRDT mechanism as cross-tab sync (ADR-003).
-
-**3. SDK bridging layer**
-
-truck-js exposes low-level primitives (`vertex`, `tsweep`, `and`), while the schema SDK uses higher-level commands (`add_cube`, `boolean_union`). A TypeScript mapping layer in the Worker bridges between them. This is small, JS-only work.
 
 #### End-to-End Flow: Workers AI as Autonomous Agent
 
@@ -236,12 +256,12 @@ truck-js exposes low-level primitives (`vertex`, `tsweep`, `and`), while the sch
 │     │  Output: TypeScript code against truck.cad.*     │        │
 │     └────────────────────────┬─────────────────────────┘        │
 │                              │                                  │
-│  3. Worker executes code against truck-js WASM                  │
+│  3. Worker executes code against HEADLESS WASM                  │
 │     ┌────────────────────────▼─────────────────────────┐        │
-│     │  truck-js WASM (pure geometry, no GPU)           │        │
-│     │  • Snapshot Automerge doc from Durable Objects   │        │
-│     │  • truck.cad.add_cube() → truck-js calls         │        │
-│     │  • truck.cad.boolean_union() → truck.and()       │        │
+│     │  truck-webgpu-gui (--no-default-features)        │        │
+│     │  SAME execute() as browser — no bridging layer   │        │
+│     │  • add_cube(), boolean_union(), etc. — all work  │        │
+│     │  • Automerge snapshot → execute → commit/rollback│        │
 │     │  • Each call appends to TransactionRecord        │        │
 │     └────────────────────────┬─────────────────────────┘        │
 │                              │                                  │
@@ -255,23 +275,25 @@ truck-js exposes low-level primitives (`vertex`, `tsweep`, `and`), while the sch
         ┌──────────────────────┴──────────────────────────┐
         │ LATER: Browser connects                         │
         │  6. Automerge CRDT sync (Browser ←→ DO)        │
-        │  7. reconcile() → Three.js/WebGPU renders       │
+        │  7. reconcile() → WebGPU renders                │
         │  8. User sees the table with 4 legs             │
         └─────────────────────────────────────────────────┘
 ```
 
-Steps 1–5: zero GPU, zero browser. Steps 6–8: lazy, whenever a human opens the GUI.
+Steps 1–5: zero GPU, zero browser, same Rust code as browser. Steps 6–8: lazy rendering on connect.
 
 #### Stage 1 vs Stage 2
 
 | | Stage 1 (Browser) | Stage 2 (Headless) |
 |---|---|---|
-| Geometry WASM | truck-webgpu-gui | **truck-js** |
+| WASM crate | truck-webgpu-gui (full) | truck-webgpu-gui (**--no-default-features**) |
+| Command dispatch | `execute()` | **Same** `execute()` |
 | Rendering | Immediate (Rust WebGPU) | Lazy (on browser connect) |
 | State | Browser Automerge (in-memory) | **Durable Objects** |
 | Browser required? | **Yes** | **No** |
 | Same SDK? | Yes | Yes |
 | Same TransactionRecord? | Yes | Yes |
+| SDK bridging needed? | No | **No** |
 
 #### Tier Selection
 
@@ -279,23 +301,23 @@ Steps 1–5: zero GPU, zero browser. Steps 6–8: lazy, whenever a human opens t
 if (hasActiveSSESession()) {
   return executeViaBrowser(code);  // Stage 1: live rendering
 } else {
-  return executeInWorker(code);    // Stage 2: headless via truck-js
+  return executeInWorker(code);    // Stage 2: headless, same execute()
 }
 ```
 
 ---
 
-## Smart Modularity: Construction vs. Rendering
+## DRY Analysis
 
-The Rust codebase enforces separation at the **crate level**:
+| Layer | Browser | Worker | DRY? |
+|-------|---------|--------|------|
+| **Rust source** | `crates/truck-webgpu-gui/` | Same crate, feature-flagged | **Yes** — one source |
+| **Command dispatch** | `execute()` | Same `execute()` | **Yes** — one implementation |
+| **Schema** | `cad-schema.json` (from Rust types) | Same file | **Yes** — generated from same types |
+| **WASM binary** | Full build (~3 MB) | Headless build (smaller) | Two binaries, same source |
+| **JS glue** | `truck-wasm.ts` init pattern | Same pattern | **Yes** |
 
-1.  **truck-js** (Construction): Pure math. `truck-modeling`, `truck-shapeops`, `truck-meshalgo`. Compiles to WASM without GPU. Runs in browser or Worker.
-2.  **truck-webgpu-gui** (Construction + Rendering): Uses the same geometry libraries plus `truck-platform` + `truck-rendimpl` for WebGPU PBR rendering. Browser-only.
-3.  **Shared libraries**: Both crates call `truck_modeling::builder::*` directly. The geometry math is written once.
-
-### Future: truck-js Everywhere (Beyond ADR-0018)
-
-ADR-0013 made WASM passive (JS owns the camera). The logical conclusion is to move rendering to JS entirely — use truck-js for geometry everywhere, Three.js/WebGPU in JS for rendering. This would give one WASM module for both browser and Worker, completing the DRY vision. But it requires rebuilding the rendering pipeline (PBR materials, depth buffer sharing with MVT/glTF layers) and is a separate ADR.
+The only non-DRY artifact is two WASM binaries compiled from the same source. This is inherent to having two deployment targets (browser vs Worker). The source code, API surface, command dispatch, and schema are all shared.
 
 ## Mitigating System Instability
 
@@ -303,28 +325,28 @@ ADR-0013 made WASM passive (JS owns the camera). The logical conclusion is to mo
 2.  **Schema-Driven Stability**: SDK generated from Rust source at runtime. Prevents AI from calling deprecated functions.
 3.  **Perfect Reproducibility**: Every `execute()` produces a `TransactionRecord` — a perfect "repro script" for debugging Rust panics.
 4.  **Isolation**: Stage 1 — browser sandbox. Stage 2 — Worker isolate (per-request). Neither crashes the server or other users.
+5.  **Identical behavior**: Both tiers run the same `execute()` — if it works in browser, it works headless.
 
 ## Consequences
 
 ### Benefits
-*   **Phase 0 validates fast**: One endpoint, one deploy, immediate go/no-go for headless.
-*   **DRY geometry**: Both tiers use the same Rust geometry libraries (via different WASM crates).
+*   **Phase 0 validated**: WASM runs in Workers. Bundle fits free plan (2.6 MB). Sub-millisecond warm latency.
+*   **True DRY**: One Rust crate, feature-flagged. No SDK bridging layer. No command dispatch duplication.
 *   **Atomic Transactions**: All-or-nothing execution. No partial geometry corruption.
 *   **Isomorphic Interface**: `cad_execute`, SDK, and `TransactionRecord` identical across tiers.
 *   **Context Efficiency**: One `execute` tool + SDK replaces 29 tool schemas.
 *   **Cloudflare-Native AI** (Stage 2): Workers AI as autonomous agent — no external infrastructure.
+*   **Full feature parity**: Headless build has BIM, sketching, assembly, scene management — everything the browser has.
 
 ### Challenges
 *   **Browser Required** (Stage 1): No browser, no execution. Primary motivation for Stage 2.
-*   **Worker bundle size** (Stage 2): 1.9 MB WASM + JS. Paid plan likely required.
-*   **Cold-start latency** (Stage 2): Must be measured in Phase 0.
-*   **SDK bridging** (Stage 2): truck-js low-level API (`vertex`, `tsweep`) vs schema-level API (`add_cube`). TypeScript mapping needed.
+*   **Feature-flagging Rust code** (Phase 0.5): Requires careful `#[cfg]` gating of rendering code in truck-webgpu-gui. Moderate Rust refactoring effort.
+*   **Headless WASM size**: Unknown until built. May be larger or smaller than truck-js (1.9 MB) depending on how much non-rendering code (BIM, sketching) adds.
 *   **Durable Objects** (Stage 2): Real infrastructure work for server-side Automerge persistence.
 *   **Async Sandboxing**: `AsyncFunction` requires careful scope isolation in both tiers.
 
 ## Out of Scope (Future ADRs)
 
-*   **truck-js in browser (replacing truck-webgpu-gui rendering)**: Use truck-js for geometry + Three.js for rendering in browser. Completes ADR-0013 trajectory. Major rendering rebuild.
 *   **Macro Editor GUI**: A Lit component for writing, saving, and running scripts.
 *   **Multi-model document support**: `modelId` deferred until multi-document support exists.
 
@@ -332,23 +354,25 @@ ADR-0013 made WASM passive (JS owns the camera). The logical conclusion is to mo
 
 | Phase | Deliverable | Effort | Dependencies |
 |-------|-------------|--------|--------------|
-| **0** | **Feasibility gate: import truck-js in Worker, deploy, measure** | **Tiny** | **None — do first** |
+| **0** | **WASM-in-Worker feasibility (truck-js)** | **Done** | **PASSED — PR #2** |
+| **0.5** | **Feature-flag truck-webgpu-gui, build headless WASM, deploy to Worker** | **Medium** | **Phase 0 pass** |
 | 1a | `cad_execute` tool with runtime SDK generation + `TransactionRecord` | Small | Existing `buildMcpTools` |
 | 1b | Browser-side sandbox + transaction context via SSE | Medium | Phase 1a |
 | 1c | Security (timeout, rate limit, sandbox) | Small | Phase 1b |
 | 1d | AI Chat via Workers AI + Datastar GUI (browser-connected) | Medium | Phase 1b |
-| 2a | SDK bridging layer: schema commands → truck-js API | Small | Phase 0 pass |
-| 2b | Durable Objects: Automerge persistence server-side | Medium | Independent |
-| 2c | Headless `cad_execute` with tier selection | Small | 2a + 2b |
-| 2d | Workers AI autonomous agent (`/api/chat` headless) | Medium | 2c |
-| 2e | Shared test suite: both tiers produce identical `TransactionRecord` | Small | 2c |
+| 2a | Durable Objects: Automerge persistence server-side | Medium | Independent |
+| 2b | Headless `cad_execute` with tier selection | Small | Phase 0.5 + 2a |
+| 2c | Workers AI autonomous agent (`/api/chat` headless) | Medium | 2b |
+| 2d | Shared test suite: both tiers produce identical `TransactionRecord` | Small | 2b |
+
+Note: Stage 2a (SDK bridging layer) from the previous version of this ADR is **eliminated**. The headless build uses the same `execute()` dispatch — no bridging needed.
 
 ## References & External Context
 
 ### External
 *   [Cloudflare: Code Mode — Give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/) — Primary inspiration.
 *   [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) — Protocol standard.
-*   [Cloudflare Workers: WASM Bindings](https://developers.cloudflare.com/workers/runtime-apis/webassembly/) — WASM in Workers (Stage 2).
+*   [Cloudflare Workers: WASM Bindings](https://developers.cloudflare.com/workers/runtime-apis/webassembly/) — WASM in Workers.
 *   [Cloudflare Workers: Limits](https://developers.cloudflare.com/workers/platform/limits/) — 3 MB free / 10 MB paid.
 *   [Automerge](https://automerge.org/) — CRDT for state and transactions.
 *   [Datastar](https://data-star.dev/) — Hypermedia framework for reactive GUI.
@@ -357,4 +381,4 @@ ADR-0013 made WASM passive (JS owns the camera). The logical conclusion is to mo
 *   [ADR-010: MCP & OpenAPI Stack](./done/0010-mcp-openapi-stack.md) — Granular tool implementation this extends.
 *   [ADR-003: Automerge Collaboration](./done/0003-automerge-collaboration.md) — State management and transaction model.
 *   [ADR-005: Schema-Driven Unified API](./done/0005-schema-driven-unified-api.md) — Rust → JSON schema pipeline.
-*   [ADR-013: Lit + Three.js Integration](./0013-lit-threejs.md) — Passive WASM, JS-owned camera. Precursor to truck-js-everywhere vision.
+*   [ADR-013: Lit + Three.js Integration](./0013-lit-threejs.md) — Passive WASM, JS-owned camera.

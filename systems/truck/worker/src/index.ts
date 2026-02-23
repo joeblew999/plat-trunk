@@ -347,36 +347,37 @@ api.openapi(createRoute({
 // Phase 0: truck-js WASM feasibility test (ADR-0018)
 // =========================================================================
 
+async function runWasmHealthCheck() {
+  const start = Date.now();
+  const truck = await initTruckWasm();
+  const initMs = Date.now() - start;
+  const geoStart = Date.now();
+  const v = truck.vertex(0, 0, 0);
+  const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
+  const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
+  const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
+  const solidObj = solid.into_solid()!;
+  const polygon = solidObj.to_polygon(0.01);
+  const buffer = polygon.to_buffer();
+  return {
+    ok: true as const,
+    headless: true,
+    engine: 'truck-js 0.2.0',
+    vertices: buffer.vertex_buffer().length,
+    indices: buffer.index_buffer().length,
+    triangles: buffer.index_buffer().length / 3,
+    initMs,
+    geoMs: Date.now() - geoStart,
+    totalMs: Date.now() - start,
+  };
+}
+
 api.openapi(createRoute({
   method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test truck-js WASM in Worker',
   responses: { 200: { description: 'WASM test result' } }
 }), async (c) => {
   try {
-    const start = Date.now();
-    const truck = await initTruckWasm();
-    const initMs = Date.now() - start;
-    const geoStart = Date.now();
-    const v = truck.vertex(0, 0, 0);
-    const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
-    const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
-    const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
-    const solidObj = solid.into_solid()!;
-    const polygon = solidObj.to_polygon(0.01);
-    const buffer = polygon.to_buffer();
-    const vertices = buffer.vertex_buffer().length;
-    const indices = buffer.index_buffer().length;
-    const geoMs = Date.now() - geoStart;
-    return c.json({
-      ok: true,
-      vertices,
-      indices,
-      triangles: indices / 3,
-      initMs,
-      geoMs,
-      totalMs: Date.now() - start,
-      wasmSize: '1.9 MB',
-      engine: 'truck-js 0.2.0'
-    });
+    return c.json(await runWasmHealthCheck());
   } catch (err: any) {
     return c.json({ ok: false, error: err.message, stack: err.stack }, 500);
   }
@@ -489,25 +490,10 @@ app.post('/mcp', async (c) => {
         }
         if (name === 'cad_wasm_health') {
           try {
-            const start = Date.now();
-            const truck = await initTruckWasm();
-            const initMs = Date.now() - start;
-            const geoStart = Date.now();
-            const v = truck.vertex(0, 0, 0);
-            const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
-            const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
-            const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
-            const solidObj = solid.into_solid()!;
-            const polygon = solidObj.to_polygon(0.01);
-            const buffer = polygon.to_buffer();
+            const result = await runWasmHealthCheck();
             responses.push({
               jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: JSON.stringify({
-                ok: true, headless: true, engine: 'truck-js 0.2.0',
-                vertices: buffer.vertex_buffer().length,
-                indices: buffer.index_buffer().length,
-                initMs, geoMs: Date.now() - geoStart
-              }) }] }
+              result: { content: [{ type: 'text', text: JSON.stringify(result) }] }
             });
           } catch (err: any) {
             responses.push({
