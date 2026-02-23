@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import cadSchema from '../../../../web/cad-schema.json';
+import { initTruckWasm } from './truck-wasm';
 
 type Bindings = {
   MY_VAR: string;
@@ -342,6 +343,45 @@ api.openapi(createRoute({
   method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
 }), (c) => c.json({ status: 'ok', service: 'truck-cad', version: (cadSchema as ModuleSchema).version }));
 
+// =========================================================================
+// Phase 0: truck-js WASM feasibility test (ADR-0018)
+// =========================================================================
+
+api.openapi(createRoute({
+  method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test truck-js WASM in Worker',
+  responses: { 200: { description: 'WASM test result' } }
+}), async (c) => {
+  try {
+    const start = Date.now();
+    const truck = await initTruckWasm();
+    const initMs = Date.now() - start;
+    const geoStart = Date.now();
+    const v = truck.vertex(0, 0, 0);
+    const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
+    const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
+    const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
+    const solidObj = solid.into_solid()!;
+    const polygon = solidObj.to_polygon(0.01);
+    const buffer = polygon.to_buffer();
+    const vertices = buffer.vertex_buffer().length;
+    const indices = buffer.index_buffer().length;
+    const geoMs = Date.now() - geoStart;
+    return c.json({
+      ok: true,
+      vertices,
+      indices,
+      triangles: indices / 3,
+      initMs,
+      geoMs,
+      totalMs: Date.now() - start,
+      wasmSize: '1.9 MB',
+      engine: 'truck-js 0.2.0'
+    });
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message, stack: err.stack }, 500);
+  }
+});
+
 app.get('/api-docs', (c) => c.html(`<!DOCTYPE html><html><head><title>Truck CAD API</title></head><body><script id="api-reference" data-url="/api/openapi.json"></script><script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script></body></html>`));
 
 // Legacy docs routes
@@ -395,7 +435,8 @@ function buildMcpTools(schema: ModuleSchema) {
   // Meta-tools
   tools.push(
     { name: 'cad_health', description: 'Check if the CAD server and browser are connected', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } }
+    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_wasm_health', description: 'Test headless truck-js WASM geometry kernel in Worker (ADR-0018 Phase 0)', inputSchema: { type: 'object', properties: {} } }
   );
   return tools;
 }
@@ -444,6 +485,38 @@ app.post('/mcp', async (c) => {
               browserConnected: (m?.sseClientCount ?? 0) > 0
             }) }] }
           });
+          break;
+        }
+        if (name === 'cad_wasm_health') {
+          try {
+            const start = Date.now();
+            const truck = await initTruckWasm();
+            const initMs = Date.now() - start;
+            const geoStart = Date.now();
+            const v = truck.vertex(0, 0, 0);
+            const e = truck.tsweep(v.upcast(), new Float64Array([1.0, 0.0, 0.0]));
+            const f = truck.tsweep(e, new Float64Array([0.0, 1.0, 0.0]));
+            const solid = truck.tsweep(f, new Float64Array([0.0, 0.0, 1.0]));
+            const solidObj = solid.into_solid()!;
+            const polygon = solidObj.to_polygon(0.01);
+            const buffer = polygon.to_buffer();
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: JSON.stringify({
+                ok: true, headless: true, engine: 'truck-js 0.2.0',
+                vertices: buffer.vertex_buffer().length,
+                indices: buffer.index_buffer().length,
+                initMs, geoMs: Date.now() - geoStart
+              }) }] }
+            });
+          } catch (err: any) {
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: JSON.stringify({
+                ok: false, headless: false, error: err.message
+              }) }] }
+            });
+          }
           break;
         }
         if (name === 'cad_schema') {
