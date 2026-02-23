@@ -50,7 +50,7 @@ tasks:
   "deps:clone:truck":
     desc: Clone truck fork
     status:
-      - test -d {{.TRUCK_SRC_DIR}}
+      - test -f {{.TRUCK_SRC_DIR}}/Cargo.toml
     cmds:
       - mkdir -p {{.SRC_DIR}}
       - git clone https://{{.TRUCK_FORK}}.git {{.TRUCK_SRC_DIR}}
@@ -60,7 +60,7 @@ tasks:
   "deps:clone:ifc-lite":
     desc: Clone ifc-lite (skips LFS — large IFC test models not needed for build)
     status:
-      - test -d {{.IFC_LITE_SRC_DIR}}
+      - test -d {{.IFC_LITE_SRC_DIR}}/.git
     cmds:
       - mkdir -p {{.SRC_DIR}}
       - GIT_LFS_SKIP_SMUDGE=1 git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
@@ -68,7 +68,7 @@ tasks:
   "deps:clone:ezpz":
     desc: Clone ezpz (KittyCAD kcl-ezpz dependency)
     status:
-      - test -d {{.EZPZ_SRC_DIR}}
+      - test -d {{.EZPZ_SRC_DIR}}/.git
     cmds:
       - mkdir -p {{.SRC_DIR}}
       - git clone https://{{.EZPZ_REPO}}.git {{.EZPZ_SRC_DIR}}
