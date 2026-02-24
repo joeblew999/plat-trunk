@@ -16,6 +16,19 @@ env:
 dotenv: ['.env', '.env.local']
 
 includes:
+  # Cloudflare Workers deploy lifecycle (reusable across projects)
+  cf:
+    taskfile: ./taskfiles/Taskfile.cloudflare.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+      WORKER_DIR: '{{.PWD}}/systems/truck/worker'
+      WORKER_NAME: 'truck-cad'
+      WORKER_DOMAIN: 'gedw99.workers.dev'
+      PRODUCTION_URL: 'https://cad.ubuntusoftware.net'
+      GITHUB_REPO: 'joeblew999/plat-trunk'
+      SCHEMA_FILE: '{{.PWD}}/web/cad-schema.json'
+      OUTPUT_FILE: '{{.PWD}}/web/gui/versions.json'
+
   # Local systems
   envsubst:
     taskfile: ./systems/envsubst/Taskfile.envsubst.yml

@@ -14,7 +14,7 @@ task down           # Stop all services
 - `task truck:gui:schema` — Regenerate API schema from Rust source
 - `task truck:ci` — Full build and test check
 - `task truck:gui:deploy` — Build + upload versioned deploy (does NOT promote)
-- `task truck:deploy:promote` — Promote to production when verified
+- `task cf:promote` — Promote to production when verified
 
 ## ADR Index
 See `docs/adr/README.md`.

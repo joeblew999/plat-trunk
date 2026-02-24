@@ -287,14 +287,17 @@ tasks:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
   "gui:deploy":
-    desc: "Build + upload + git tag v{{.CAD_VERSION}} (does NOT promote — use deploy:promote when ready)"
-    deps: ["gui:build"]
+    desc: "Build + upload + git tag v{{.CAD_VERSION}} (does NOT promote — use cf:promote when ready)"
+    deps: ["gui:build", "deploy:setup"]
     cmds:
-      - task: deploy:upload
-      - task: deploy:versions:json  # Regenerate after upload to capture new versionId
+      - task: :cf:upload
+        vars:
+          APP_VERSION: '{{.CAD_VERSION}}'
+          VERSION_SLUG: '{{.CAD_VERSION_SLUG}}'
+      - task: :cf:versions:json
       - task: deploy:tag
-      - 'echo "Uploaded v{{.CAD_VERSION}} → https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev"'
-      - 'echo "To promote to production: task truck:deploy:promote"'
+      - 'echo "Uploaded v{{.CAD_VERSION}} → https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
+      - 'echo "To promote to production: task cf:promote"'
 
   # --- Tests & Docs ---
   #
@@ -519,10 +522,10 @@ tasks:
       - echo "v{{.CAD_VERSION}}"
     silent: true
 
-  # --- Deploy (versioned) ---
-  # Uses Cloudflare Workers Versions + Gradual Deployments.
-  # Schema version (cad-schema.json) is the release tag.
-  # Flow: setup → upload → canary (optional) → promote → tag → verify
+  # --- Deploy ---
+  # Generic CF tasks are in cf: include (taskfiles/Taskfile.cloudflare.yml).
+  # Truck-specific: tag (GitHub release), setup (gh secret), smoke:extra (schema + MCP).
+  # Flow: gui:deploy → cf:upload + tag → cf:smoke → cf:promote
 
   "deploy:tag":
     desc: "Create git tag v{{.CAD_VERSION}} + GitHub release (idempotent)"
@@ -549,21 +552,20 @@ tasks:
           BODY=$(cat <<NOTES
         ## Try this version
 
-        **Preview URL**: https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev
+        **Preview URL**: https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}
 
         ## All URLs
 
         | Endpoint | URL |
         |----------|-----|
-        | This version | https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev |
-        | Production | https://cad.ubuntusoftware.net |
-        | API Health | https://cad.ubuntusoftware.net/api/health |
-        | MCP | https://cad.ubuntusoftware.net/mcp |
-        | CF Dashboard | [Deployments](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
+        | This version | https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}} |
+        | Production | {{.BASE_URL}} |
+        | API Health | {{.BASE_URL}}/api/health |
+        | MCP | {{.BASE_URL}}/mcp |
 
         ## Verify
         \`\`\`sh
-        curl -sf https://v{{.CAD_VERSION_SLUG}}-truck-cad.gedw99.workers.dev/api/health
+        curl -sf https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}/api/health
         # {"version":"{{.CAD_VERSION}}"}
         \`\`\`
         NOTES
@@ -577,127 +579,31 @@ tasks:
     cmds:
       - task: :gh:secret:set:cloudflare
 
-  "deploy:upload":
-    desc: "Upload new Worker version (tagged v{{.CAD_VERSION}}, does NOT deploy)"
-    deps: ["gui:build", "deploy:setup"]
+  smoke:
+    desc: "Full smoke test (generic + truck-specific schema/MCP checks)"
     cmds:
-      - task: deploy:versions:json
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "v{{.CAD_VERSION}}" --message "v{{.CAD_VERSION}}" --preview-alias "v{{.CAD_VERSION_SLUG}}"
+      - task: :cf:smoke
+      - task: smoke:extra
 
-  "deploy:versions:json":
-    desc: Generate versions.json for GUI version picker (releases + PR previews)
-    dir: "{{.WORKER_DIR}}"
-    cmds:
-      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} CAD_VERSION={{.CAD_VERSION}} WORKER_NAME={{.WORKER_NAME}} WORKER_DOMAIN={{.WORKER_DOMAIN}} PRODUCTION_URL={{.BASE_URL}} GITHUB_REPO={{.TRUCK_RELEASE_REPO}} bun scripts/versions-json.ts
-    silent: true
-
-  "deploy:promote":
-    desc: Deploy latest uploaded version to 100% traffic
+  "smoke:extra":
+    desc: "Truck-specific smoke checks (schema + MCP)"
     cmds:
       - |
-        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} bun scripts/versions-json.ts --latest-env)
-        if [ -z "$VERSION_ID" ]; then
-          echo "ERROR: No versionId in versions.json — run 'task truck:gui:deploy' first"
-          exit 1
-        fi
-        echo "Promoting $VERSION_ID (v${VERSION}, commit ${COMMIT_SHA}) to 100%..."
-        cd {{.WORKER_DIR}} && bun x wrangler versions deploy "$VERSION_ID@100%" --yes
-
-  "deploy:smoke":
-    desc: Smoke test a deployed version (preview or production)
-    cmds:
-      - |
-        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} bun scripts/versions-json.ts --latest-env)
-        URL="${PREVIEW_URL:-https://cad.ubuntusoftware.net}"
-        echo "Smoke testing: $URL"
-        echo ""
-        # 1. Health check
-        HEALTH=$(curl -sf "$URL/api/health" 2>&1) || { echo "FAIL: /api/health unreachable"; exit 1; }
-        HEALTH_VER=$(echo "$HEALTH" | bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version||'?')")
-        echo "  health:    OK (v${HEALTH_VER})"
-        # 2. Schema check
+        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} OUTPUT_FILE={{.ROOT_DIR}}/web/gui/versions.json bun scripts/versions-json.ts --latest-env)
+        URL="${PREVIEW_URL:-{{.BASE_URL}}}"
+        echo "Truck-specific checks: $URL"
+        # Schema check
         SCHEMA=$(curl -sf "$URL/api/cad/schema" 2>&1) || { echo "FAIL: /api/cad/schema unreachable"; exit 1; }
         SCHEMA_INFO=$(echo "$SCHEMA" | bun -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.stdout.write(d.version+' '+Object.keys(d.commands).length)")
         SCHEMA_VER=$(echo "$SCHEMA_INFO" | cut -d' ' -f1)
         SCHEMA_CMDS=$(echo "$SCHEMA_INFO" | cut -d' ' -f2)
         echo "  schema:    OK (v${SCHEMA_VER}, ${SCHEMA_CMDS} commands)"
-        # 3. MCP tools/list
+        # MCP tools/list
         MCP=$(curl -sf "$URL/mcp" -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1) || { echo "FAIL: /mcp unreachable"; exit 1; }
         MCP_TOOLS=$(echo "$MCP" | bun -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).result?.tools?.length||0))")
         echo "  mcp:       OK (${MCP_TOOLS} tools)"
-        # 4. Index page
-        INDEX_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$URL/")
-        INDEX_SIZE=$(curl -sf -o /dev/null -w "%{size_download}" "$URL/")
-        echo "  index:     OK (HTTP ${INDEX_STATUS}, ${INDEX_SIZE} bytes)"
-        # 5. Version match
         echo ""
-        if [ -n "$VERSION" ] && [ "$HEALTH_VER" = "$VERSION" ]; then
-          echo "PASS: All checks passed (v${VERSION}, commit ${COMMIT_SHA:-?})"
-        elif [ -n "$VERSION" ]; then
-          echo "WARN: Version mismatch — expected v${VERSION}, got v${HEALTH_VER}"
-        else
-          echo "PASS: All checks passed (v${HEALTH_VER})"
-        fi
-
-  "deploy:canary":
-    desc: Deploy with gradual traffic split (interactive)
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions deploy
-  "deploy:rollback":
-    desc: Roll back to previous version
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler rollback
-  "deploy:versions":
-    desc: List recent versions (tags, dates, authors)
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions list
-  "deploy:list":
-    desc: Show all preview URLs (versions + PR previews)
-    dir: "{{.ROOT_DIR}}/systems/truck/worker"
-    cmds:
-      - |
-        VERSIONS=$(bun x wrangler versions list 2>&1 | \
-          awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print id, ts, tag}' | \
-          sort -k2 -r)
-
-        echo "=== Release Versions ==="
-        echo ""
-        echo "$VERSIONS" | grep "^.* .* v[0-9]" | while read VID TS TAG; do
-          SLUG=$(echo "$TAG" | sed 's/^v//' | tr '.' '-')
-          echo "  $TAG  ($TS)"
-          echo "    https://v${SLUG}-truck-cad.gedw99.workers.dev"
-          echo ""
-        done
-
-        PR_LINES=$(echo "$VERSIONS" | grep "^.* .* pr-" || true)
-        if [ -n "$PR_LINES" ]; then
-          echo "=== PR Previews ==="
-          echo ""
-          echo "$PR_LINES" | while read VID TS TAG; do
-            echo "  $TAG  ($TS)"
-            echo "    https://${TAG}-truck-cad.gedw99.workers.dev"
-            echo ""
-          done
-        fi
-
-        echo "Production:  https://cad.ubuntusoftware.net"
-        echo "Dashboard:   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments"
-
-  "deploy:status":
-    desc: Show current deployment (versions + traffic split)
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler deployments list
-  "deploy:preview":
-    desc: "Upload preview version with alias (pr-{N}-truck-cad.gedw99.workers.dev)"
-    deps: ["gui:build", "deploy:setup"]
-    vars:
-      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
-    cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}} — v{{.CAD_VERSION}}" --preview-alias "pr-{{.PR_NUMBER}}"
-      - |
-        echo ""
-        echo 'Preview: https://pr-{{.PR_NUMBER}}-truck-cad.gedw99.workers.dev'
-        echo 'Production untouched: https://cad.ubuntusoftware.net'
+        echo "PASS: Truck-specific checks passed"
 
   "deploy:full":
     desc: Deploy Worker + publish docs to R2

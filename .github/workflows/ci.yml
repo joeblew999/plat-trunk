@@ -39,7 +39,7 @@ jobs:
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task truck:deploy:upload
+            task cf:upload
           else
             echo "Skipping deploy — CLOUDFLARE_API_TOKEN not set"
           fi
@@ -50,7 +50,7 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task truck:deploy:preview PR_NUMBER=${{ github.event.pull_request.number }}
+            task cf:preview PR_NUMBER=${{ github.event.pull_request.number }}
           else
             echo "Skipping preview deploy — CLOUDFLARE_API_TOKEN not set"
           fi
