@@ -77,6 +77,9 @@ web/gui/local-mode.js
 # Copied at build time for /llms.txt serving
 web/gui/CONTEXT.md
 
+# Generated at deploy time by scripts/versions-json.ts
+web/gui/versions.json
+
 # Rust build artifacts
 target/
 Cargo.lock

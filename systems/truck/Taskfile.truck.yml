@@ -496,6 +496,8 @@ tasks:
     preconditions:
       - sh: '[ -n "{{.CLI_ARGS}}" ]'
         msg: "Usage: task truck:version:bump -- 0.4.0"
+      - sh: '! git rev-parse "v{{.CLI_ARGS}}" >/dev/null 2>&1'
+        msg: "Tag v{{.CLI_ARGS}} already exists — pick a new version"
     cmds:
       - |
         sed -i '' 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "{{.CLI_ARGS}}"/' {{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands/mod.rs
@@ -598,6 +600,42 @@ tasks:
         fi
         echo "Promoting $VERSION_ID (v${VERSION}, commit ${COMMIT_SHA}) to 100%..."
         cd {{.WORKER_DIR}} && bun x wrangler versions deploy "$VERSION_ID@100%" --yes
+
+  "deploy:smoke":
+    desc: Smoke test a deployed version (preview or production)
+    cmds:
+      - |
+        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} bun scripts/versions-json.ts --latest-env)
+        URL="${1:-${PREVIEW_URL:-https://cad.ubuntusoftware.net}}"
+        echo "Smoke testing: $URL"
+        echo ""
+        # 1. Health check
+        HEALTH=$(curl -sf "$URL/api/health" 2>&1) || { echo "FAIL: /api/health unreachable"; exit 1; }
+        HEALTH_VER=$(echo "$HEALTH" | bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version||'?')")
+        echo "  health:    OK (v${HEALTH_VER})"
+        # 2. Schema check
+        SCHEMA=$(curl -sf "$URL/api/cad/schema" 2>&1) || { echo "FAIL: /api/cad/schema unreachable"; exit 1; }
+        SCHEMA_INFO=$(echo "$SCHEMA" | bun -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.stdout.write(d.version+' '+Object.keys(d.commands).length)")
+        SCHEMA_VER=$(echo "$SCHEMA_INFO" | cut -d' ' -f1)
+        SCHEMA_CMDS=$(echo "$SCHEMA_INFO" | cut -d' ' -f2)
+        echo "  schema:    OK (v${SCHEMA_VER}, ${SCHEMA_CMDS} commands)"
+        # 3. MCP tools/list
+        MCP=$(curl -sf "$URL/mcp" -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1) || { echo "FAIL: /mcp unreachable"; exit 1; }
+        MCP_TOOLS=$(echo "$MCP" | bun -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).result?.tools?.length||0))")
+        echo "  mcp:       OK (${MCP_TOOLS} tools)"
+        # 4. Index page
+        INDEX_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$URL/")
+        INDEX_SIZE=$(curl -sf -o /dev/null -w "%{size_download}" "$URL/")
+        echo "  index:     OK (HTTP ${INDEX_STATUS}, ${INDEX_SIZE} bytes)"
+        # 5. Version match
+        echo ""
+        if [ -n "$VERSION" ] && [ "$HEALTH_VER" = "$VERSION" ]; then
+          echo "PASS: All checks passed (v${VERSION}, commit ${COMMIT_SHA:-?})"
+        elif [ -n "$VERSION" ]; then
+          echo "WARN: Version mismatch — expected v${VERSION}, got v${HEALTH_VER}"
+        else
+          echo "PASS: All checks passed (v${HEALTH_VER})"
+        fi
 
   "deploy:canary":
     desc: Deploy with gradual traffic split (interactive)
