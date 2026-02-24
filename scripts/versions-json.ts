@@ -8,9 +8,13 @@
  *   --latest-env  — Print latest version as shell variables (eval-able by deploy:promote)
  *
  * Env (set by Taskfile):
- *   WORKER_DIR  — path to systems/truck/worker (for wrangler)
- *   ROOT_DIR    — repo root
- *   CAD_VERSION — current version from cad-schema.json
+ *   WORKER_DIR      — path to worker directory (for wrangler)
+ *   ROOT_DIR        — repo root
+ *   CAD_VERSION     — current version from schema
+ *   WORKER_NAME     — Cloudflare Worker name (default: truck-cad)
+ *   WORKER_DOMAIN   — workers.dev subdomain (default: gedw99.workers.dev)
+ *   PRODUCTION_URL  — production URL (default: https://cad.ubuntusoftware.net)
+ *   GITHUB_REPO     — owner/repo for GitHub Releases link (default: joeblew999/plat-trunk)
  */
 
 import { execSync } from "child_process";
@@ -41,9 +45,20 @@ export interface Preview {
 
 export interface VersionsJson {
   production: string;
+  github: string;
   versions: Release[];
   previews: Preview[];
 }
+
+// --- Config (all project-specific values come from env, with defaults) ---
+
+const WORKER_NAME = process.env.WORKER_NAME || "truck-cad";
+const WORKER_DOMAIN = process.env.WORKER_DOMAIN || "gedw99.workers.dev";
+const PRODUCTION_URL = process.env.PRODUCTION_URL || "https://cad.ubuntusoftware.net";
+const GITHUB_REPO = process.env.GITHUB_REPO || "joeblew999/plat-trunk";
+
+/** Build a Workers preview/alias URL: https://{prefix}-{workerName}.{domain} */
+const workerUrl = (prefix: string) => `https://${prefix}-${WORKER_NAME}.${WORKER_DOMAIN}`;
 
 // --- Paths ---
 
@@ -133,7 +148,7 @@ for (const v of wranglerVersions) {
       tag: v.tag,
       date: v.created,
       versionId: v.versionId,
-      url: `https://${v.tag}-truck-cad.gedw99.workers.dev`,
+      url: workerUrl(v.tag),
     });
   } else if (/^v\d/.test(v.tag)) {
     const ver = v.tag.replace("v", "");
@@ -143,8 +158,8 @@ for (const v of wranglerVersions) {
       tag: v.tag,
       date: v.created,
       versionId: v.versionId,
-      url: `https://v${slug}-truck-cad.gedw99.workers.dev`,
-      previewUrl: `https://${v.versionId}-truck-cad.gedw99.workers.dev`,
+      url: workerUrl(`v${slug}`),
+      previewUrl: workerUrl(v.versionId),
     };
     if (ver === CAD_VERSION) {
       entry.commitSha = commitSha;
@@ -167,7 +182,7 @@ if (!deduped.find((v) => v.version === CAD_VERSION)) {
     tag: `v${CAD_VERSION}`,
     date: new Date().toISOString(),
     versionId: "",
-    url: `https://v${slug}-truck-cad.gedw99.workers.dev`,
+    url: workerUrl(`v${slug}`),
     previewUrl: "",
     commitSha,
     commitMessage,
@@ -175,6 +190,6 @@ if (!deduped.find((v) => v.version === CAD_VERSION)) {
   });
 }
 
-const out: VersionsJson = { production: "https://cad.ubuntusoftware.net", versions: deduped, previews };
+const out: VersionsJson = { production: PRODUCTION_URL, github: `https://github.com/${GITHUB_REPO}`, versions: deduped, previews };
 writeFileSync(outPath, JSON.stringify(out, null, 2) + "\n");
 console.log(`versions.json: ${deduped.length} versions, ${previews.length} PR previews`);

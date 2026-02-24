@@ -17,6 +17,8 @@ vars:
   EZPZ_SRC_DIR: '{{.SRC_DIR}}/ezpz'
   EZPZ_REPO: 'github.com/KittyCAD/ezpz'
   BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
+  WORKER_NAME: '{{.WORKER_NAME | default "truck-cad"}}'
+  WORKER_DOMAIN: '{{.WORKER_DOMAIN | default "gedw99.workers.dev"}}'
   WORKER_DIR: '{{.ROOT_DIR}}/systems/truck/worker'
   CAD_VERSION:
     sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/web/cad-schema.json','utf8')).version)"
@@ -586,7 +588,7 @@ tasks:
     desc: Generate versions.json for GUI version picker (releases + PR previews)
     dir: "{{.WORKER_DIR}}"
     cmds:
-      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} CAD_VERSION={{.CAD_VERSION}} bun scripts/versions-json.ts
+      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} CAD_VERSION={{.CAD_VERSION}} WORKER_NAME={{.WORKER_NAME}} WORKER_DOMAIN={{.WORKER_DOMAIN}} PRODUCTION_URL={{.BASE_URL}} GITHUB_REPO={{.TRUCK_RELEASE_REPO}} bun scripts/versions-json.ts
     silent: true
 
   "deploy:promote":
