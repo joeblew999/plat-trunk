@@ -69,11 +69,18 @@ export class CadVersionPicker extends LitElement {
             <li class="menu-title">Releases</li>
             ${this._versions.map(v => {
               const isCurrent = v.version === this._current;
+              const date = v.date ? new Date(v.date).toLocaleDateString() : '';
+              const meta = [date, v.commitSha ? v.commitSha.slice(0, 7) : '', v.commandCount ? v.commandCount + ' cmds' : ''].filter(Boolean).join(' · ');
               return html`<li>
                 <a href=${v.url}
                    target=${isCurrent ? '' : '_blank'}
-                   class=${isCurrent ? 'active font-bold' : ''}>
-                  v${v.version}${isCurrent ? ' (current)' : ''}
+                   class="${isCurrent ? 'active font-bold' : ''} flex justify-between items-center gap-2">
+                  <span>
+                    <span>v${v.version}${isCurrent ? ' ✓' : ''}</span>
+                    ${meta ? html`<br><span class="opacity-50" style="font-size:0.65rem">${meta}</span>` : ''}
+                  </span>
+                  ${v.previewUrl ? html`<a href=${v.previewUrl} target="_blank" title="Immutable preview URL"
+                    class="opacity-30 hover:opacity-80" @click=${(e) => e.stopPropagation()}>⧉</a>` : ''}
                 </a>
               </li>`;
             })}
