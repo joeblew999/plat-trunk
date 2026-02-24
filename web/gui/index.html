@@ -73,11 +73,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <header class="app-header">
         <div class="flex items-center gap-2">
             <span class="logo">CAD</span>
-            <div class="dropdown dropdown-bottom">
-                <div id="versionBadge" tabindex="0" role="button"
-                     class="badge badge-sm badge-outline opacity-40 hover:opacity-80 cursor-pointer font-mono">...</div>
-                <ul id="versionMenu" tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-50 w-64 p-2 shadow-xl text-xs" style="display:none"></ul>
-            </div>
+            <cad-version-picker></cad-version-picker>
             <span id="docInfo" class="text-xs opacity-50 truncate max-w-40 cursor-pointer" title="Click to copy doc URL">Untitled</span>
         </div>
         <div class="flex items-center gap-1">
@@ -448,8 +444,9 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <script type="module">
         const v = window.__cbv;
 
-        // 0. Register <live-signals> debug panel
+        // 0. Register <live-signals> debug panel + version picker (no WASM dependency)
         await import('./live-signals.js?v=' + v);
+        await import('./version-picker.js?v=' + v);
 
         // 1. Export WASM modules as globals (cad-viewport does the actual init)
         const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js?v=' + v);
@@ -517,11 +514,6 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             s.src = 'worker-relay.js?v=' + (window.__cbv || Date.now());
             document.body.appendChild(s);
         }
-
-        // Version picker — extracted to version-picker.js
-        var vp = document.createElement('script');
-        vp.src = 'version-picker.js?v=' + (window.__cbv || Date.now());
-        document.body.appendChild(vp);
     </script>
 </body>
 </html>

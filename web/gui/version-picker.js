@@ -1,61 +1,99 @@
 /**
- * Version picker — self-contained module for the GUI version dropdown.
+ * <cad-version-picker> — Lit Web Component: version badge + dropdown.
  *
- * Reads /api/health (current version) and /versions.json (all versions),
- * then populates the #versionBadge and #versionMenu elements.
+ * Self-contained: fetches /api/health and /versions.json on connect,
+ * renders a DaisyUI dropdown with all deployed versions and links.
  *
- * Usage: import in a <script type="module"> or load via <script src="version-picker.js">.
- * Expects two DOM elements: #versionBadge and #versionMenu.
+ * Usage:
+ *   <cad-version-picker></cad-version-picker>
  */
+import { LitElement, html } from './vendor/lit.js';
 
-(function initVersionPicker() {
-    var badge = document.getElementById('versionBadge');
-    var menu = document.getElementById('versionMenu');
-    if (!badge && !menu) return;
+export class CadVersionPicker extends LitElement {
+  static properties = {
+    _label: { state: true },
+    _title: { state: true },
+    _versions: { state: true },
+    _previews: { state: true },
+    _production: { state: true },
+    _current: { state: true },
+    _isLocal: { state: true },
+    _loaded: { state: true },
+  };
 
-    var isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  // Light DOM — inherits page styles (DaisyUI classes)
+  createRenderRoot() { return this; }
 
-    Promise.all([
-        fetch('/api/health').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-        fetch('/versions.json').then(function(r) { return r.json(); }).catch(function() { return { versions: [] }; })
-    ]).then(function(results) {
-        var health = results[0];
-        var manifest = results[1];
-        var current = health.version || '?';
+  constructor() {
+    super();
+    this._label = '...';
+    this._title = '';
+    this._versions = [];
+    this._previews = [];
+    this._production = 'https://cad.ubuntusoftware.net';
+    this._current = '?';
+    this._isLocal = false;
+    this._loaded = false;
+  }
 
-        // Badge label
-        if (badge) {
-            badge.textContent = isLocal ? 'local' : 'v' + current;
-            badge.title = (isLocal ? 'Local dev' : 'v' + current) + ' — click to switch versions';
-        }
+  connectedCallback() {
+    super.connectedCallback();
+    this._isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    this._fetchData();
+  }
 
-        // Dropdown menu
-        if (!menu || !manifest.versions || manifest.versions.length === 0) return;
+  async _fetchData() {
+    try {
+      const [health, manifest] = await Promise.all([
+        fetch('/api/health').then(r => r.json()).catch(() => ({})),
+        fetch('/versions.json').then(r => r.json()).catch(() => ({ versions: [] })),
+      ]);
+      this._current = health.version || '?';
+      this._label = this._isLocal ? 'local' : 'v' + this._current;
+      this._title = (this._isLocal ? 'Local dev' : 'v' + this._current) + ' — click to switch versions';
+      this._versions = manifest.versions || [];
+      this._previews = manifest.previews || [];
+      this._production = manifest.production || this._production;
+      this._loaded = true;
+    } catch { /* silent — badge stays "..." */ }
+  }
 
-        menu.style.display = '';
-        var html = '<li class="menu-title">Releases</li>';
+  render() {
+    return html`
+      <div class="dropdown dropdown-bottom">
+        <div tabindex="0" role="button"
+             class="badge badge-sm badge-outline opacity-40 hover:opacity-80 cursor-pointer font-mono"
+             title=${this._title}>${this._label}</div>
+        ${this._loaded && this._versions.length > 0 ? html`
+          <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-50 w-64 p-2 shadow-xl text-xs">
+            <li class="menu-title">Releases</li>
+            ${this._versions.map(v => {
+              const isCurrent = v.version === this._current;
+              return html`<li>
+                <a href=${v.url}
+                   target=${isCurrent ? '' : '_blank'}
+                   class=${isCurrent ? 'active font-bold' : ''}>
+                  v${v.version}${isCurrent ? ' (current)' : ''}
+                </a>
+              </li>`;
+            })}
+            ${this._previews.length > 0 ? html`
+              <li class="menu-title mt-2 pt-2 border-t border-base-300">PR Previews</li>
+              ${this._previews.map(p => html`
+                <li><a href=${p.url} target="_blank">${p.label}</a></li>
+              `)}
+            ` : ''}
+            <li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>
+            <li><a href="http://localhost:8788" class=${this._isLocal ? 'active font-bold' : ''}>
+              Local Dev${this._isLocal ? ' (current)' : ''}
+            </a></li>
+            <li><a href=${this._production} target="_blank">Production</a></li>
+            <li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>
+          </ul>
+        ` : ''}
+      </div>
+    `;
+  }
+}
 
-        html += manifest.versions.map(function(v) {
-            var isCurrent = v.version === current;
-            return '<li>' +
-                '<a href="' + v.url + '" ' + (isCurrent ? '' : 'target="_blank"') +
-                ' class="' + (isCurrent ? 'active font-bold' : '') + '">' +
-                'v' + v.version + (isCurrent ? ' (current)' : '') +
-                '</a></li>';
-        }).join('');
-
-        if (manifest.previews && manifest.previews.length > 0) {
-            html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">PR Previews</li>';
-            html += manifest.previews.map(function(p) {
-                return '<li><a href="' + p.url + '" target="_blank">' + p.label + '</a></li>';
-            }).join('');
-        }
-
-        html += '<li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>' +
-            '<li><a href="http://localhost:8788" ' + (isLocal ? 'class="active font-bold"' : '') + '>Local Dev' + (isLocal ? ' (current)' : '') + '</a></li>' +
-            '<li><a href="' + (manifest.production || 'https://cad.ubuntusoftware.net') + '" target="_blank">Production</a></li>' +
-            '<li><a href="https://github.com/joeblew999/plat-trunk/releases" target="_blank">GitHub Releases</a></li>';
-
-        menu.innerHTML = html;
-    });
-})();
+customElements.define('cad-version-picker', CadVersionPicker);
