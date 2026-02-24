@@ -219,6 +219,59 @@ tasks:
       - '{{.ROOT_DIR}}/scripts/mcp-setup.sh'
     silent: true
 
+  "mcp:doctor":
+    desc: "Diagnose MCP connectivity (Worker → endpoint → bridge → config)"
+    cmds:
+      - |
+        echo "=== MCP Doctor ==="
+        echo ""
+
+        echo "1. Worker health..."
+        if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
+          VERSION=$(curl -sf http://localhost:8788/api/health | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+          echo "   OK (v${VERSION})"
+        else
+          echo "   FAIL — run: task up"
+        fi
+        echo ""
+
+        echo "2. MCP endpoint (tools/list)..."
+        TOOLS=$(curl -sf -X POST http://localhost:8788/mcp \
+          -H 'Content-Type: application/json' \
+          -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>/dev/null \
+          | grep -o '"name"' | wc -l | tr -d ' ')
+        if [ "$TOOLS" -gt 0 ] 2>/dev/null; then
+          echo "   OK (${TOOLS} tools)"
+        else
+          echo "   FAIL — Worker running but /mcp not responding"
+        fi
+        echo ""
+
+        echo "3. .mcp.json config..."
+        if [ -f "{{.ROOT_DIR}}/.mcp.json" ]; then
+          CMD=$(cat "{{.ROOT_DIR}}/.mcp.json" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1)
+          echo "   OK — ${CMD}"
+        else
+          echo "   MISSING — run: task truck:mcp:bootstrap"
+        fi
+        echo ""
+
+        echo "4. Bridge log (last 5 lines)..."
+        if [ -f "$HOME/.cache/truck-cad/mcp-bridge.log" ]; then
+          tail -5 "$HOME/.cache/truck-cad/mcp-bridge.log" | sed 's/^/   /'
+        else
+          echo "   No log file yet (bridge hasn't run)"
+        fi
+        echo ""
+
+        echo "5. Bridge deps..."
+        if [ -f "{{.ROOT_DIR}}/scripts/node_modules/@modelcontextprotocol/sdk/package.json" ]; then
+          echo "   OK"
+        else
+          echo "   MISSING — run: task truck:mcp:bootstrap"
+        fi
+    silent: true
+
   "mcp:teardown":
     desc: Remove MCP settings (server not running)
     cmds:
@@ -528,47 +581,22 @@ tasks:
 
   "deploy:versions:json":
     desc: Generate versions.json for GUI version picker (releases + PR previews)
-    dir: "{{.ROOT_DIR}}/systems/truck/worker"
+    dir: "{{.WORKER_DIR}}"
     cmds:
-      - |
-        bun x wrangler versions list 2>&1 | \
-          awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print tag, ts}' | \
-          bun -e "
-            const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\n').filter(Boolean);
-            const releases = [];
-            const previews = [];
-            for (const l of lines) {
-              const [tag, ts] = l.split(' ');
-              if (tag.startsWith('pr-')) {
-                previews.push({ label: 'PR #' + tag.replace('pr-',''), tag, date: ts, url: 'https://' + tag + '-truck-cad.gedw99.workers.dev' });
-              } else if (tag.match(/^v\d/)) {
-                const ver = tag.replace('v','');
-                const slug = ver.replaceAll('.','-');
-                releases.push({ version: ver, tag, date: ts, url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
-              }
-            }
-            // Dedupe releases by version, keep latest
-            const deduped = [...new Map(releases.map(r => [r.version, r])).values()];
-            deduped.sort((a,b) => b.version.localeCompare(a.version, undefined, {numeric:true}));
-            const current = '{{.CAD_VERSION}}';
-            if (!deduped.find(v => v.version === current)) {
-              const slug = current.replaceAll('.','-');
-              deduped.unshift({ version: current, tag: 'v'+current, date: new Date().toISOString(), url: 'https://v' + slug + '-truck-cad.gedw99.workers.dev' });
-            }
-            const out = { production: 'https://cad.ubuntusoftware.net', versions: deduped, previews };
-            require('fs').writeFileSync('{{.ROOT_DIR}}/web/gui/versions.json', JSON.stringify(out, null, 2) + '\n');
-            console.log('versions.json: ' + deduped.length + ' versions, ' + previews.length + ' PR previews');
-          "
+      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} CAD_VERSION={{.CAD_VERSION}} bun scripts/versions-json.ts
     silent: true
 
   "deploy:promote":
     desc: Deploy latest uploaded version to 100% traffic
     cmds:
       - |
-        cd {{.WORKER_DIR}}
-        LATEST=$(bun x wrangler versions list 2>&1 | grep "Version ID:" | head -1 | awk '{print $NF}')
-        echo "Promoting $LATEST to 100%..."
-        bun x wrangler versions deploy "$LATEST@100%" --yes
+        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} bun scripts/versions-json.ts --latest-env)
+        if [ -z "$VERSION_ID" ]; then
+          echo "ERROR: No versionId in versions.json — run 'task truck:gui:deploy' first"
+          exit 1
+        fi
+        echo "Promoting $VERSION_ID (v${VERSION}, commit ${COMMIT_SHA}) to 100%..."
+        cd {{.WORKER_DIR}} && bun x wrangler versions deploy "$VERSION_ID@100%" --yes
 
   "deploy:canary":
     desc: Deploy with gradual traffic split (interactive)
