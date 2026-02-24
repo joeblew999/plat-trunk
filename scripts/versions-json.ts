@@ -24,7 +24,8 @@ export interface Release {
   tag: string;
   date: string;
   versionId: string;
-  url: string;
+  url: string;        // alias URL (e.g. v0-7-0-truck-cad...) — latest upload for this tag
+  previewUrl: string;  // immutable URL (e.g. cf3bdf37-truck-cad...) — this exact upload
   commitSha?: string;
   commitMessage?: string;
   commandCount?: number;
@@ -79,7 +80,8 @@ if (process.argv.includes("--latest-env")) {
   console.log(`COMMIT_SHA="${latest.commitSha || "?"}"`);
   console.log(`COMMIT_MSG="${(latest.commitMessage || "").replace(/"/g, '\\"')}"`);
   console.log(`COMMAND_COUNT="${latest.commandCount || 0}"`);
-  console.log(`PREVIEW_URL="${latest.url}"`);
+  console.log(`PREVIEW_URL="${latest.previewUrl || latest.url}"`);
+  console.log(`ALIAS_URL="${latest.url}"`);
   process.exit(0);
 }
 
@@ -142,6 +144,7 @@ for (const v of wranglerVersions) {
       date: v.created,
       versionId: v.versionId,
       url: `https://v${slug}-truck-cad.gedw99.workers.dev`,
+      previewUrl: `https://${v.versionId}-truck-cad.gedw99.workers.dev`,
     };
     if (ver === CAD_VERSION) {
       entry.commitSha = commitSha;
@@ -165,6 +168,7 @@ if (!deduped.find((v) => v.version === CAD_VERSION)) {
     date: new Date().toISOString(),
     versionId: "",
     url: `https://v${slug}-truck-cad.gedw99.workers.dev`,
+    previewUrl: "",
     commitSha,
     commitMessage,
     commandCount,
