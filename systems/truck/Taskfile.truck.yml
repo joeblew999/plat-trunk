@@ -606,7 +606,7 @@ tasks:
     cmds:
       - |
         eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} bun scripts/versions-json.ts --latest-env)
-        URL="${1:-${PREVIEW_URL:-https://cad.ubuntusoftware.net}}"
+        URL="${PREVIEW_URL:-https://cad.ubuntusoftware.net}"
         echo "Smoke testing: $URL"
         echo ""
         # 1. Health check
