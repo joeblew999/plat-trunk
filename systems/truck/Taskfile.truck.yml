@@ -196,7 +196,7 @@ tasks:
     deps: ["wasm:build-browser"]
     cmds:
       - task: gui:schema
-      - cp {{.ROOT_DIR}}/CONTEXT.md {{.ROOT_DIR}}/web/gui/CONTEXT.md
+      - cp {{.ROOT_DIR}}/web/llms.txt {{.ROOT_DIR}}/web/gui/llms.txt
 
   "mcp:bootstrap":
     desc: "Bootstrap all MCP components: schema, deps, configs"

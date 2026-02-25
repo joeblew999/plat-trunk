@@ -1,0 +1,41 @@
+# plat-trunk — Browser CAD on Cloudflare Workers
+
+> Browser-based B-Rep CAD on Cloudflare Workers. Rust/WASM kernel (truck), WebGPU rendering, Automerge CRDT collaboration. 29 MCP tools. No auth required.
+
+## Connect via MCP
+
+Stateless MCP endpoint (JSON-RPC over HTTP POST). 29 tools: 20 WASM CAD commands + 7 control plane + 2 meta.
+
+    POST https://cad.ubuntusoftware.net/mcp
+
+Supports `initialize`, `tools/list`, and `tools/call`. No auth required.
+
+## API Discovery
+
+| Endpoint              | Format   | Purpose                            |
+|-----------------------|----------|------------------------------------|
+| `/mcp`                | JSON-RPC | MCP tool execution                 |
+| `/api/cad/schema`     | JSON     | Full command catalog (29 tools)    |
+| `/api/openapi.json`   | OpenAPI  | HTTP API reference                 |
+| `/api/health`         | JSON     | Health check + version             |
+| `/llms.txt`           | Text     | This file                          |
+| `/llms-full.txt`      | Text     | Full context + all tool details    |
+| `/.well-known/agent.json` | JSON | A2A Agent Card                     |
+| `/.well-known/mcp/server-card.json` | JSON | MCP Server Card         |
+
+## Example: Create a cube via MCP
+
+    POST /mcp
+    {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"cad_add_cube","arguments":{"size":1.0}}}
+
+## Deployed URLs
+
+| URL                                        | Purpose                  |
+|--------------------------------------------|--------------------------|
+| https://cad.ubuntusoftware.net             | Production               |
+| https://truck-cad.gedw99.workers.dev       | Production (workers.dev) |
+| http://localhost:8788                      | Local dev server         |
+
+## Source
+
+https://github.com/joeblew999/plat-trunk

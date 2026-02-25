@@ -538,13 +538,149 @@ app.post('/mcp', async (c) => {
 app.get('/mcp', (c) => c.body(null, 405));
 app.delete('/mcp', (c) => c.body(null, 405));
 
-// Serve CONTEXT.md as /llms.txt (single source of truth for AI discovery — ADR-0012)
+// Serve llms.txt — external-facing project summary for AI discovery (ADR-0012)
 app.get('/llms.txt', async (c) => {
   try {
-    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/CONTEXT.md', c.req.url)));
+    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
     if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
   } catch {}
-  return c.redirect('https://raw.githubusercontent.com/joeblew999/plat-trunk/main/CONTEXT.md');
+  return c.redirect('https://raw.githubusercontent.com/joeblew999/plat-trunk/main/web/llms.txt');
+});
+
+// llms-full.txt — full context for LLMs: llms.txt + complete tool catalog from schema
+app.get('/llms-full.txt', async (c) => {
+  const s = cadSchema as ModuleSchema;
+  const tools = buildMcpTools(s);
+
+  // Start with llms.txt content
+  let content = '';
+  try {
+    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
+    if (asset?.ok) content = await asset.text();
+  } catch {}
+  if (!content) content = `# plat-trunk — Browser CAD on Cloudflare Workers\n\n> Browser-based B-Rep CAD on Cloudflare Workers. Rust/WASM kernel (truck), WebGPU rendering, Automerge CRDT collaboration. 29 MCP tools. No auth required.\n`;
+
+  // Append full tool catalog
+  content += `\n## Tool Catalog (${tools.length} tools)\n\n`;
+  for (const tool of tools) {
+    content += `### ${tool.name}\n\n${tool.description || 'No description.'}\n\n`;
+    if (tool.inputSchema && typeof tool.inputSchema === 'object' && 'properties' in tool.inputSchema) {
+      const props = tool.inputSchema.properties as Record<string, { type?: string; description?: string }>;
+      const keys = Object.keys(props);
+      if (keys.length > 0) {
+        content += `Parameters:\n`;
+        for (const key of keys) {
+          const p = props[key];
+          content += `- \`${key}\` (${p.type || 'any'}): ${p.description || ''}\n`;
+        }
+        content += '\n';
+      }
+    }
+  }
+
+  return new Response(content, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
+});
+
+// robots.txt — AI crawler directives (RFC 9309)
+app.get('/robots.txt', (c) => {
+  return new Response(
+`# Allow all standard crawlers and AI search bots
+User-agent: *
+Allow: /
+
+# AI training crawlers — block training, allow discovery
+User-agent: GPTBot
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /api/
+Allow: /.well-known/
+Disallow: /
+
+User-agent: anthropic-ai
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /api/
+Allow: /.well-known/
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+# AI search bots — allow (appear in AI search results)
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+`, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
+});
+
+// security.txt — vulnerability disclosure (RFC 9116)
+app.get('/.well-known/security.txt', (c) => {
+  return new Response(
+`Contact: https://github.com/joeblew999/plat-trunk/security/advisories
+Expires: 2027-01-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://cad.ubuntusoftware.net/.well-known/security.txt
+`, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
+});
+
+// A2A Agent Card — agent-to-agent discovery (Google A2A protocol)
+app.get('/.well-known/agent.json', (c) => {
+  const s = cadSchema as ModuleSchema;
+  const baseUrl = new URL(c.req.url).origin;
+  return c.json({
+    name: 'Truck CAD',
+    description: 'Browser-based B-Rep CAD system. Create and manipulate 3D solid geometry: primitives, booleans, fillet, shell, sketch-to-extrude, STEP/STL import/export. Powered by the truck kernel (Rust/WASM) on Cloudflare Workers.',
+    url: `${baseUrl}/mcp`,
+    provider: {
+      organization: 'plat-trunk',
+      url: 'https://github.com/joeblew999/plat-trunk'
+    },
+    version: s.version,
+    documentationUrl: `${baseUrl}/llms.txt`,
+    iconUrl: `${baseUrl}/favicon.svg`,
+    capabilities: {
+      streaming: false,
+      pushNotifications: false
+    },
+    authentication: {
+      schemes: ['none']
+    },
+    defaultInputModes: ['application/json'],
+    defaultOutputModes: ['application/json'],
+    skills: [
+      {
+        id: 'cad_modeling',
+        name: '3D Solid Modeling',
+        description: 'Create primitives (cube, sphere, cylinder, cone, torus), apply transforms (translate, rotate, scale), boolean operations (union, subtract, intersect), and surface ops (fillet, shell).'
+      },
+      {
+        id: 'cad_sketch',
+        name: 'Sketch & Extrude',
+        description: 'Draw 2D sketches (line, rect, triangle) on planes and extrude to 3D solids.'
+      },
+      {
+        id: 'cad_io',
+        name: 'Import/Export',
+        description: 'Import and export STEP and STL files for interop with other CAD tools.'
+      },
+      {
+        id: 'cad_control',
+        name: 'Control Plane',
+        description: 'Undo/redo, mode switching, document management, scene state queries.'
+      }
+    ]
+  }, 200, { 'cache-control': 'public, max-age=3600' });
 });
 
 // MCP Server Card — machine-readable discovery (draft spec, .well-known/mcp)

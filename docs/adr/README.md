@@ -29,6 +29,10 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0019](0019-gui-unification.md) | GUI Unification — Single Dispatch, Single Pattern | **Proposed** |
 | [0020](0020-mcp-session-reliability.md) | MCP Session Reliability — Startup, Health, Self-Healing | **Proposed** |
 | [0021](0021-automerge-replay-integrity.md) | Automerge Replay Integrity — Undo/Redo Fixes | **Implemented** |
+| [0022](0022-cf-deploy-toolkit.md) | cf-deploy — Reusable CF Workers Deploy Toolkit | **Proposed** |
+| [0023](0023-reference-frame.md) | Georeferencing — Unified Coordinate Space for CAD, MVT, and IFC | **Proposed** |
+| [0024](0024-multi-wasm-modules.md) | Multi-WASM Module Architecture | **Proposed** |
+| [0025](0025-tiered-object-scaling.md) | Content-Addressed Storage & Tiered Object Scaling | **Proposed** (Phase 0 urgent) |
 
 ## Future Roadmap
 

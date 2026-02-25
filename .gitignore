@@ -75,7 +75,7 @@ web/gui/pkg-browser-renderer/
 web/gui/local-mode.js
 
 # Copied at build time for /llms.txt serving
-web/gui/CONTEXT.md
+web/gui/llms.txt
 
 # Generated at deploy time by scripts/versions-json.ts
 web/gui/versions.json

@@ -1,0 +1,6 @@
+{
+  "dependencies": {},
+  "devDependencies": {
+    "cf-deploy": "github:joeblew999/cf-deploy"
+  }
+}

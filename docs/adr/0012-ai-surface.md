@@ -2,11 +2,11 @@
 
 ## Intent
 
-The project needs a coherent strategy for how AI assistants discover, understand, and interact with the system. Today we have multiple overlapping files (CONTEXT.md, CLAUDE.md, GEMINI.md, skills, llms.txt, MCP, schema) with no clear contract for what goes where. This ADR defines the single-source architecture so nothing drifts and nothing duplicates.
+The project needs a coherent strategy for how AI assistants discover, understand, and interact with the system. Today we have multiple overlapping files (AGENT.md, CLAUDE.md, GEMINI.md, skills, llms.txt, MCP, schema) with no clear contract for what goes where. This ADR defines the single-source architecture so nothing drifts and nothing duplicates.
 
 ## Status
 
-**In Progress** — CONTEXT.md, CLAUDE.md, GEMINI.md, MCP, and schema chain are implemented. `/llms.txt` route added. Skills and llms-full.txt for upstream deps exist.
+**In Progress** — AGENT.md, CLAUDE.md, GEMINI.md, MCP, and schema chain are implemented. `/llms.txt` route added. Skills and llms-full.txt for upstream deps exist.
 
 ## Context
 
@@ -36,16 +36,20 @@ Rust param structs (#[derive(Deserialize, JsonSchema)])
 
 This chain is fully automated. Add a command in Rust → `task truck:gui:build` → everything updates. No human touches the downstream artifacts.
 
-### Source 2: CONTEXT.md (human/AI contract)
+### Source 2: AGENT.md (human/AI contract)
 
 ```
-CONTEXT.md (hand-maintained, the WHY + HOW)
-  → CLAUDE.md    (reads CONTEXT.md + Claude-specific config)
-  → GEMINI.md    (reads CONTEXT.md + Gemini-specific config)
-  → /llms.txt    (serves CONTEXT.md at the web root)
+AGENT.md (hand-maintained, the WHY + HOW)
+  → CLAUDE.md    (reads AGENT.md)
+  → GEMINI.md    (reads AGENT.md)
+
+web/llms.txt (hand-maintained, external-facing summary)
+  → /llms.txt    (served at the web root for external AI discovery)
 ```
 
-CONTEXT.md contains what the schema cannot: architecture decisions, workflow conventions, file locations, AI agent rules, the project's purpose. It's the single place a human or AI goes to understand the project.
+AGENT.md contains what the schema cannot: architecture decisions, workflow conventions, file locations, AI agent rules, the project's purpose. It's the internal developer context for AI coding agents.
+
+`web/llms.txt` is a concise, external-facing summary for AI discovering the project via its URL — MCP connection info, API endpoints, deployed URLs. It changes rarely.
 
 ### The Full Picture
 
@@ -61,12 +65,16 @@ CONTEXT.md contains what the schema cannot: architecture decisions, workflow con
                    Worker (runtime)
 
 
-                    CONTEXT.md (hand-maintained)
-                   ╱      │       ╲
-              CLAUDE.md  GEMINI.md  /llms.txt
-                 │          │        │
-              Claude     Gemini    Any AI
-              Code       CLI       on the web
+                    AGENT.md (internal developer context)
+                   ╱      ╲
+              CLAUDE.md  GEMINI.md
+                 │          │
+              Claude     Gemini
+              Code       CLI
+
+              web/llms.txt (external-facing summary)
+                   │
+                /llms.txt → Any AI on the web
 
 
               docs/llms/*.txt (upstream, fetched)
@@ -80,11 +88,17 @@ CONTEXT.md contains what the schema cannot: architecture decisions, workflow con
 
 | File | Maintained by | Read by | Purpose |
 |------|--------------|---------|---------|
-| `CONTEXT.md` | Human + AI | All AI assistants in the repo | Project understanding (the WHY) |
-| `CLAUDE.md` | Human | Claude Code | "Read CONTEXT.md" + Claude-specific settings |
-| `GEMINI.md` | Human | Gemini CLI | "Read CONTEXT.md" + Gemini-specific settings |
+| `AGENT.md` | Human + AI | All AI assistants in the repo | Project understanding (the WHY) |
+| `CLAUDE.md` | Human | Claude Code | "Read AGENT.md" + Claude-specific settings |
+| `GEMINI.md` | Human | Gemini CLI | "Read AGENT.md" + Gemini-specific settings |
 | `cad-schema.json` | Generated from Rust | Worker, tests | Machine-readable command contract |
-| `/llms.txt` | Served from CONTEXT.md | Any AI on the web | External discovery |
+| `web/llms.txt` | Human | Any AI on the web | External-facing project summary |
+| `/llms.txt` | Served from `web/llms.txt` | Any AI on the web | External discovery (concise) |
+| `/llms-full.txt` | Dynamic (llms.txt + schema) | Any AI on the web | Full context + all tool details |
+| `/robots.txt` | Inline in worker | AI crawlers | Training vs search directives (RFC 9309) |
+| `/.well-known/security.txt` | Inline in worker | Security researchers | Vulnerability disclosure (RFC 9116) |
+| `/.well-known/agent.json` | Dynamic from schema | A2A agents | Agent-to-agent discovery (Google A2A) |
+| `/.well-known/mcp/server-card.json` | Dynamic from schema | MCP clients | MCP server discovery (SEP-1649) |
 | `/api/cad/schema` | Served from cad-schema.json | MCP clients, API consumers | Runtime tool discovery |
 | `/mcp` | Generated from schema | AI agents (Claude, Cursor, etc.) | Runtime tool execution |
 | `/api/openapi.json` | Generated from schema | API docs (Scalar UI) | HTTP API reference |
@@ -95,28 +109,28 @@ CONTEXT.md contains what the schema cannot: architecture decisions, workflow con
 
 ## Rules
 
-1. **CONTEXT.md is the single human-readable source.** CLAUDE.md and GEMINI.md must NOT duplicate content — they say "Read CONTEXT.md first" and add only tool-specific config.
+1. **AGENT.md is the single human-readable source.** CLAUDE.md and GEMINI.md must NOT duplicate content — they say "Read AGENT.md first" and add only tool-specific config.
 
 2. **cad-schema.json is the single machine-readable source.** Worker Zod, MCP tools, OpenAPI, and per-command routes are ALL generated from it. No hand-written tool registrations.
 
-3. **Never duplicate between the two sources.** CONTEXT.md describes architecture and conventions. cad-schema.json describes commands and parameters. They complement, not overlap.
+3. **Never duplicate between the two sources.** AGENT.md describes architecture and conventions. cad-schema.json describes commands and parameters. They complement, not overlap.
 
 4. **Skills are curated lenses, not copies.** `.claude/skills/automerge/SKILL.md` points into `docs/llms/automerge-llms-full.txt` with project-specific guidance. It does not copy the upstream docs.
 
-5. **`/llms.txt` serves CONTEXT.md, not a separate file.** One file, one URL, zero drift.
+5. **`/llms.txt` serves `web/llms.txt`, a concise external-facing summary.** AGENT.md is internal developer context; llms.txt is for external AI discovery (MCP connection, API endpoints, URLs).
 
-6. **Upstream docs go in `docs/llms/`.** When a dependency publishes an `llms-full.txt`, fetch it there. Both Claude and Gemini can reference it from CONTEXT.md.
+6. **Upstream docs go in `docs/llms/`.** When a dependency publishes an `llms-full.txt`, fetch it there. Both Claude and Gemini can reference it from AGENT.md.
 
 ## What Each AI Gets
 
 ### Claude Code (coding in the repo)
-- Reads: `CLAUDE.md` → `CONTEXT.md` → source files
+- Reads: `CLAUDE.md` → `AGENT.md` → source files
 - Skills: `/automerge`, `/kkrpc`, `/interop` (slash commands)
 - MCP: `truck-cad` via bridge in `.mcp.json` (stdio → Worker `/mcp`)
 - Deep docs: `docs/llms/*.txt` when needed
 
 ### Gemini CLI (coding in the repo)
-- Reads: `GEMINI.md` → `CONTEXT.md` → source files
+- Reads: `GEMINI.md` → `AGENT.md` → source files
 - MCP: `truck-cad` via bridge (`scripts/mcp-bridge.ts` → Worker `/mcp`)
 - MCP: `playwright` with WebGPU launch args (`scripts/playwright-mcp.config.json`)
 - Both configured by `task truck:mcp:setup` → `.gemini/settings.json`
@@ -124,7 +138,7 @@ CONTEXT.md contains what the schema cannot: architecture decisions, workflow con
 - No skills system (reads the same files manually when needed)
 
 ### External AI (hitting the deployed URL)
-- Fetches: `cad.ubuntusoftware.net/llms.txt` → CONTEXT.md content
+- Fetches: `cad.ubuntusoftware.net/llms.txt` → concise project summary + MCP connection info
 - MCP: connects to `/mcp` directly (stateless JSON-RPC) or via bridge with `CAD_URL=https://cad.ubuntusoftware.net`
 - API: `/api/openapi.json` → full HTTP API reference
 - Schema: `/api/cad/schema` → raw command catalog
@@ -194,8 +208,8 @@ scripts/playwright-mcp.config.json — WebGPU-enabled Playwright browser launch 
 
 ## Open Questions
 
-- Should `/llms.txt` also append the schema JSON for a complete picture? (CONTEXT.md = WHY, schema = WHAT, combined = everything)
-- Should `CONTEXT.md` be auto-generated from ADRs + schema metadata? Or is hand-curation the right trade-off?
+- ~~Should `/llms.txt` also append the schema JSON?~~ Resolved: `web/llms.txt` is a concise external summary; `/api/cad/schema` is linked for full details.
+- ~~Should `AGENT.md` be auto-generated?~~ Resolved: hand-curation is the right trade-off; llms.txt is now separate and concise.
 - How do we handle llms.txt for future modules? One per module (`/mesh/llms.txt`) or merged?
 - Should skills be promoted to a shared format (not Claude-specific) so Gemini can invoke them too?
 - Should the bridge be published as an npm package (`npx @plat/cad-mcp`) for production users?
