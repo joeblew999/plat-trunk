@@ -333,6 +333,112 @@ Once verified:
 5. Update AGENT.md references (`docs/adr/` stays, everything else → `website/docs/`)
 6. Update CI if applicable
 
+### Phase 8 — Versioned Pages deploys (aligned with Worker versioning)
+
+Currently the Worker uses a sophisticated upload → promote → canary lifecycle
+(`taskfiles/Taskfile.cloudflare.yml`), while docs deploy directly to production
+with no versioning. This creates a gap: rolling back the Worker doesn't roll back
+docs, there's no way to correlate which docs version paired with which Worker
+version, and PR previews only exist for the Worker.
+
+**Goal:** mirror the Worker's versioned deploy pattern for Cloudflare Pages so
+both products are tagged, previewable, and promotable from the same commit.
+
+#### How Cloudflare Pages branch deploys work
+
+Every `wrangler pages deploy` creates an **immutable deployment** with a unique
+URL (`<hash>.cad-docs.pages.dev`). The `--branch` flag creates a stable alias:
+
+```bash
+# Tagged release: v0-7-0.cad-docs.pages.dev
+wrangler pages deploy .vitepress/dist --project-name=cad-docs --branch v0-7-0
+
+# PR preview: pr-42.cad-docs.pages.dev
+wrangler pages deploy .vitepress/dist --project-name=cad-docs --branch pr-42
+```
+
+The `production` branch (typically `main`) is what the custom domain
+(`docs.ubuntusoftware.net`) resolves to. Promoting a version means deploying
+it with `--branch main`.
+
+#### Lifecycle tasks
+
+Add to `systems/docs/Taskfile.docs.yml`, mirroring the Worker tasks:
+
+| Task | What it does |
+|------|-------------|
+| `docs:upload` | Build + deploy with `--branch v{{VERSION_SLUG}}` → creates `v0-7-0.cad-docs.pages.dev` |
+| `docs:promote` | Re-deploy latest version with `--branch main` → updates production |
+| `docs:preview` | Deploy with `--branch pr-{{PR_NUMBER}}` → creates `pr-42.cad-docs.pages.dev` |
+| `docs:smoke` | Curl the preview URL, check HTTP 200 + page title |
+| `docs:versions:json` | Write `website/docs-versions.json` (git SHA, version, URLs) |
+
+#### `docs-versions.json`
+
+Parallel structure to `web/gui/versions.json`:
+
+```json
+[
+  {
+    "version": "0.7.0",
+    "commit": "e4e28b8",
+    "commitHash": "e4e28b8abc123...",
+    "commitMessage": "feat: complete docs system tightening",
+    "url": "https://v0-7-0.cad-docs.pages.dev",
+    "productionUrl": "https://docs.ubuntusoftware.net",
+    "createdAt": "2026-02-25T12:00:00Z"
+  }
+]
+```
+
+#### CI alignment
+
+Update `.github/workflows/ci.yml` to use the versioned flow:
+
+```yaml
+# Main push: upload tagged docs version (does NOT update production)
+- if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  run: task docs:upload
+
+# PR: upload per-PR docs preview
+- if: github.event_name == 'pull_request'
+  run: task docs:preview PR_NUMBER=${{ github.event.pull_request.number }}
+```
+
+Production promotion is manual (`task docs:promote`), same as the Worker.
+
+#### PR comment update
+
+Add docs preview URL alongside the Worker preview:
+
+```markdown
+| Preview (App) | https://pr-42-truck-cad.gedw99.workers.dev |
+| Preview (Docs) | https://pr-42.cad-docs.pages.dev |
+```
+
+#### Version coupling
+
+The Worker and docs share the same `APP_VERSION` (from
+`crates/truck-webgpu-gui/src/commands/mod.rs`). Both get the same version tag
+and git SHA, but promote independently. This means:
+
+- **Same commit, same tag** — `v0-7-0` Worker + `v0-7-0` docs, both from the same CI run
+- **Independent promotion** — fix a docs typo without re-promoting the Worker
+- **Independent rollback** — revert docs without touching the Worker
+- **No asset size limits** — Pages has no cap (unlike Workers assets at 25/100 MB)
+- **Audit trail** — `docs-versions.json` + `web/gui/versions.json` together show exactly what's deployed
+
+#### Definition of Done (Phase 8)
+
+- [ ] `task docs:upload` creates a versioned Pages deployment with branch alias
+- [ ] `task docs:promote` deploys to production (`--branch main`)
+- [ ] `task docs:preview PR_NUMBER=42` creates PR preview
+- [ ] `task docs:smoke` validates a deployed URL
+- [ ] `docs-versions.json` generated alongside `web/gui/versions.json`
+- [ ] CI uses `docs:upload` (main) and `docs:preview` (PR) instead of direct deploy
+- [ ] PR comments include docs preview URL
+- [ ] `task docs:deploy` still works as a shortcut (upload + promote in one step)
+
 ### Staying in sync with honojs/website
 
 The `.src/honojs-website/` clone is our upstream reference. When Hono updates their
@@ -410,20 +516,25 @@ Static assets: 12 screenshots (~1.3 MB), 7 tutorial videos (~2.6 MB).
 
 ## Definition of Done
 
-- [ ] `task docs:serve` starts VitePress dev server with all content visible
-- [ ] `task docs:build` produces static site in `.vitepress/dist/`
-- [ ] `task docs:deploy` deploys to `cad-docs.pages.dev`
-- [ ] All markdown pages render correctly (user, technical, roadmap)
-- [ ] `task docs:screenshots` generates all screenshots + videos into `website/public/`
-- [ ] Screenshots and videos render in docs pages (no broken images)
+- [x] `task docs:serve` starts VitePress dev server with all content visible
+- [x] `task docs:build` produces static site in `.vitepress/dist/`
+- [x] `task docs:deploy` deploys to `cad-docs.pages.dev`
+- [x] All markdown pages render correctly (user, technical, roadmap)
+- [x] `task docs:screenshots` generates all screenshots + videos into `website/public/`
+- [x] Screenshots and videos render in docs pages (no broken images)
 - [ ] Build fails if a referenced screenshot/video is missing
-- [ ] Search works (built-in local search minimum)
-- [ ] Dark mode works
-- [ ] `llms.txt`, `llms-full.txt`, `llms-small.txt` generated on build
-- [ ] Third-party LLM refs live at `website/public/llms/` and linked from `llms.txt`
+- [x] Search works (built-in local search minimum)
+- [x] Dark mode works
+- [x] `llms.txt`, `llms-full.txt`, `llms-small.txt` generated on build
+- [x] Third-party LLM refs live at `website/public/llms/` and linked from `llms.txt`
 - [ ] `cad_docs_index`, `cad_docs_search`, `cad_docs_read`, `cad_docs_reference` MCP tools work
 - [ ] MCP `tools/list` includes doc tools (agents discover them automatically)
-- [ ] Playwright `SCREENSHOTS_DIR` / `VIDEOS_DIR` point to `website/public/` (no copy step)
-- [ ] (Phase 7, after verification) `docs/hugo/` directory deleted
-- [ ] (Phase 7, after verification) Hugo removed from dependencies
+- [x] Playwright `SCREENSHOTS_DIR` / `VIDEOS_DIR` point to `website/public/` (no copy step)
+- [x] (Phase 7, after verification) `docs/hugo/` directory deleted
+- [x] (Phase 7, after verification) Hugo removed from dependencies
+- [ ] (Phase 8) `task docs:upload` creates versioned Pages deployment with branch alias
+- [ ] (Phase 8) `task docs:promote` deploys to production
+- [ ] (Phase 8) `docs-versions.json` generated alongside `web/gui/versions.json`
+- [ ] (Phase 8) CI uses versioned flow (upload on main, preview on PR)
+- [ ] (Phase 8) PR comments include docs preview URL
 - [ ] `docs/adr/` unchanged — still in place, not part of website
