@@ -47,7 +47,7 @@ includes:
     vars:
       ROOT_DIR: '{{.PWD}}'
   docs:
-    taskfile: ./systems/docs/Taskfile.docs.yml
+    taskfile: ./systems/docs/Taskfile.pages.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
   skills:

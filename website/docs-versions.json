@@ -1,0 +1,23 @@
+{
+  "production": "https://docs.ubuntusoftware.net",
+  "github": "https://github.com/joeblew999/plat-trunk",
+  "generated": "2026-02-25T10:01:54.782Z",
+  "versions": [
+    {
+      "version": "0.7.0",
+      "tag": "v0.7.0",
+      "date": "2026-02-25T10:01:54.782Z",
+      "deploymentId": "e93e7e9c-0f33-44e0-9f91-b5e0bc436dbb",
+      "url": "https://v0-7-0.cad-docs.pages.dev",
+      "deploymentUrl": "https://e93e7e9c.cad-docs.pages.dev",
+      "git": {
+        "commitSha": "3d6914c",
+        "commitFull": "3d6914c80bec2b4aff024bbfba30112e8add0dd1",
+        "commitMessage": "docs: add Phase 8 versioned Pages deploys to ADR-0027 + mark completed phases",
+        "branch": "main",
+        "commitUrl": "https://github.com/joeblew999/plat-trunk/commit/3d6914c80bec2b4aff024bbfba30112e8add0dd1"
+      }
+    }
+  ],
+  "previews": []
+}

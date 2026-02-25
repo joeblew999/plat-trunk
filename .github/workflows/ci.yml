@@ -46,29 +46,30 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Main push: build + deploy docs to Cloudflare Pages
+      # Main push: upload tagged docs version (does NOT update production — promote is manual)
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task docs:deploy
+            task docs:upload
           else
-            echo "Skipping docs deploy — CLOUDFLARE_API_TOKEN not set"
+            echo "Skipping docs upload — CLOUDFLARE_API_TOKEN not set"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # PR: upload preview version with per-PR alias (pr-42-truck-cad.gedw99.workers.dev)
+      # PR: upload preview versions with per-PR aliases
       - if: github.event_name == 'pull_request'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
             task cf:preview PR_NUMBER=${{ github.event.pull_request.number }}
+            task docs:preview PR_NUMBER=${{ github.event.pull_request.number }}
           else
             echo "Skipping preview deploy — CLOUDFLARE_API_TOKEN not set"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Post preview URL as PR comment
+      # Post preview URLs as PR comment
       - if: github.event_name == 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
         uses: marocchino/sticky-pull-request-comment@v2
         env:
@@ -80,8 +81,9 @@ jobs:
 
             | | URL |
             |--|--|
-            | Preview | https://pr-${{ github.event.pull_request.number }}-truck-cad.gedw99.workers.dev |
-            | Production | https://cad.ubuntusoftware.net |
-            | Docs | https://docs.ubuntusoftware.net |
+            | Preview (App) | https://pr-${{ github.event.pull_request.number }}-truck-cad.gedw99.workers.dev |
+            | Preview (Docs) | https://pr-${{ github.event.pull_request.number }}.cad-docs.pages.dev |
+            | Production (App) | https://cad.ubuntusoftware.net |
+            | Production (Docs) | https://docs.ubuntusoftware.net |
 
-            Built from ${{ github.sha }} — [Compare versions side-by-side](https://cad.ubuntusoftware.net)
+            Built from ${{ github.sha }}
