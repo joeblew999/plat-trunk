@@ -2,9 +2,9 @@ import { Page, expect } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 
-/** Hugo static asset directories */
-export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../docs/hugo/static/screenshots');
-export const VIDEOS_DIR = path.resolve(__dirname, '../../docs/hugo/static/videos');
+/** VitePress static asset directories (ADR-0027) */
+export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../website/public/screenshots');
+export const VIDEOS_DIR = path.resolve(__dirname, '../../website/public/videos');
 
 /** Directory where example scene JSON files are saved */
 export const EXAMPLES_DIR = path.resolve(__dirname, '../../web/gui/examples');
