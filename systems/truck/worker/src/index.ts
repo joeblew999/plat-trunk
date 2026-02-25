@@ -437,6 +437,13 @@ function buildMcpTools(schema: ModuleSchema) {
     { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } },
     { name: 'cad_wasm_health', description: 'Test headless truck-webgpu-gui WASM geometry kernel in Worker (ADR-0018 Phase 0.5)', inputSchema: { type: 'object', properties: {} } }
   );
+  // Documentation tools (ADR-0027 Phase 6)
+  tools.push(
+    { name: 'cad_docs_index', description: 'List available documentation sections and pages', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_docs_search', description: 'Search documentation by keyword — returns matching sections', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword or phrase' } }, required: ['query'] } },
+    { name: 'cad_docs_read', description: 'Read a specific documentation page by section path (e.g. "user/getting-started")', inputSchema: { type: 'object', properties: { section: { type: 'string', description: 'Section path (e.g. "user/getting-started", "technical/architecture")' } }, required: ['section'] } },
+    { name: 'cad_docs_reference', description: 'Get third-party library reference docs (automerge or kkrpc)', inputSchema: { type: 'object', properties: { library: { type: 'string', enum: ['automerge', 'kkrpc'], description: 'Library name' } }, required: ['library'] } }
+  );
   return tools;
 }
 
@@ -508,6 +515,84 @@ app.post('/mcp', async (c) => {
             jsonrpc: '2.0', id: msg.id,
             result: { content: [{ type: 'text', text: JSON.stringify(cadSchema, null, 2) }] }
           });
+          break;
+        }
+
+        // Documentation tools (ADR-0027 Phase 6)
+        const DOCS_URL = 'https://cad-docs.pages.dev';
+        if (name === 'cad_docs_index') {
+          try {
+            const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: txt }] }
+            });
+          } catch (err: any) {
+            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to fetch docs index: ${err.message}` } });
+          }
+          break;
+        }
+        if (name === 'cad_docs_search') {
+          try {
+            const full = await fetch(`${DOCS_URL}/llms-full.txt`).then(r => r.text());
+            const query = (toolArgs?.query || '').toLowerCase();
+            // Split by markdown H1/H2 headers, find sections containing the query
+            const sections = full.split(/(?=^#{1,2}\s)/m);
+            const matches = sections.filter(s => s.toLowerCase().includes(query)).slice(0, 5);
+            const result = matches.length > 0
+              ? matches.join('\n---\n')
+              : `No documentation sections found matching "${toolArgs?.query}".`;
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: result }] }
+            });
+          } catch (err: any) {
+            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to search docs: ${err.message}` } });
+          }
+          break;
+        }
+        if (name === 'cad_docs_read') {
+          try {
+            const full = await fetch(`${DOCS_URL}/llms-full.txt`).then(r => r.text());
+            const section = (toolArgs?.section || '').toLowerCase().replace(/\.md$/, '');
+            // Find the section by matching header text against the section path
+            const sections = full.split(/(?=^# )/m);
+            const match = sections.find(s => {
+              const firstLine = s.split('\n')[0].toLowerCase();
+              return firstLine.includes(section.split('/').pop() || '');
+            });
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: match || `Section "${toolArgs?.section}" not found. Use cad_docs_index to see available sections.` }] }
+            });
+          } catch (err: any) {
+            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to read doc: ${err.message}` } });
+          }
+          break;
+        }
+        if (name === 'cad_docs_reference') {
+          try {
+            const lib = toolArgs?.library;
+            const fileMap: Record<string, string> = {
+              automerge: 'automerge-llms-full.txt',
+              kkrpc: 'kkrpc-llms-full.txt'
+            };
+            const file = fileMap[lib];
+            if (!file) {
+              responses.push({
+                jsonrpc: '2.0', id: msg.id,
+                result: { content: [{ type: 'text', text: `Unknown library "${lib}". Available: automerge, kkrpc` }] }
+              });
+              break;
+            }
+            const txt = await fetch(`${DOCS_URL}/llms/${file}`).then(r => r.text());
+            responses.push({
+              jsonrpc: '2.0', id: msg.id,
+              result: { content: [{ type: 'text', text: txt }] }
+            });
+          } catch (err: any) {
+            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to fetch reference docs: ${err.message}` } });
+          }
           break;
         }
 
