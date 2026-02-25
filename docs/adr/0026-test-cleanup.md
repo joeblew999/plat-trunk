@@ -225,11 +225,55 @@ The "Gizmo Interaction" block in `cad.spec.ts` calls `sceneController.begin_gizm
 
 **Severity: Low** — but undermines confidence.
 
-The Playwright config has `retries: 1`. If a test fails on first attempt but passes on retry, it's reported as passed. This hides flaky tests — exactly the timing bugs this ADR is trying to eliminate. With deterministic waits (Phase 2), retries should be unnecessary.
+The Playwright config has `retries: 1`. If a test fails on first attempt but passes on retry, it's reported as passed. This hides flaky tests — exactly the timing bugs this ADR is trying to eliminate. With deterministic waits (Phase 3), retries should be unnecessary.
+
+### Problem 9: `pause()` hidden inside `clickToolbar()` and `clickOutlinerItem()`
+
+**Severity: Medium** — silently infects every UI test.
+
+Both helpers end with `await pause(page)`:
+
+```typescript
+// helpers.ts:81-84
+export async function clickToolbar(page: Page, testId: string) {
+  await page.click(`[data-testid="${testId}"]`);
+  await pause(page);  // ← hidden inside helper
+}
+```
+
+Every test calling `clickToolbar()` inherits the `pause()` anti-pattern without the caller knowing. Phase 3 must fix these helpers too — replace the internal `pause()` with `waitForObjectCount()` or remove it entirely and let the caller wait for the specific condition they care about.
+
+### Problem 10: `waitForReady()` has a trailing sleep
+
+**Severity: Medium** — undermines the readiness contract.
+
+The current `waitForReady()` checks for `sceneController + cadCommand + cadDocManager.handle`, then immediately adds a fixed sleep:
+
+```typescript
+await page.waitForTimeout(IS_SLOW ? 1000 : 50);  // ← band-aid after "ready"
+```
+
+If the app is truly ready when the conditions are met, this sleep is unnecessary. If it's needed, then the readiness check is incomplete. Phase 1's `__appReady` flag must eliminate this trailing sleep entirely — the flag should only be set when the app is genuinely ready, with no post-ready stabilization needed.
+
+### Problem 11: BIM test reads Datastar signals directly
+
+**Severity: Low** — violates the "assert WASM state, not Datastar" principle.
+
+`bim.spec.ts` lines 33-34 read `_ds.root.bimType` and `_ds.root.bimId` directly from Datastar signals after a `pause()`. This is the exact anti-pattern the ADR identifies as fragile — Datastar signals may not have reconciled yet. BIM metadata should either be queryable from WASM or the test should use a `waitFor*` helper.
+
+### Problem 12: Actors test bypasses `apiCommand()` helper
+
+**Severity: Low** — inconsistency, not a bug.
+
+`actors.spec.ts` line 23 calls `page.evaluate(() => (window as any).cadCommand('clear'))` directly instead of `apiCommand(page, 'clear')`. This loses the `{ source: 'test' }` tag and bypasses the helper that the ADR says is "the ONLY mutation entry point."
+
+The same file also has a hand-rolled 10-iteration polling loop (lines 59-68) with 500ms sleeps to poll the Worker's REST API — essentially a manual `waitFor*` pattern that should be extracted into a reusable helper.
 
 -----
 
 ## Decision
+
+> **Reading guide:** Phases are detailed below (some in this section, some in their own `##` sections). See **Sequencing** for execution order and APP/TEST labels showing what each phase changes.
 
 ### Phase 1: Readiness contract (single "app ready" signal)
 
@@ -240,16 +284,16 @@ Add a single `window.__appReady` flag that the app sets after ALL init phases co
 window.__appReady = true;
 ```
 
-Update `waitForReady()` to check this single flag:
+Update `waitForReady()` to check this single flag — **with no trailing sleep**:
 
 ```typescript
 export async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__appReady === true, { timeout: 30_000 });
-  await page.waitForTimeout(IS_SLOW ? 1000 : 50);
+  // NO trailing waitForTimeout — if __appReady is true, the app is ready. Period.
 }
 ```
 
-**Why:** One flag, one place to update. New init phases (plugin loading, WebRTC, etc.) just need to delay setting `__appReady = true` until they're done. Tests don't need to know the internal init sequence.
+**Why:** One flag, one place to update, no band-aid sleeps. The trailing sleep in the current `waitForReady()` (Problem 10) is eliminated because `__appReady` should only be set when all subsystems — including Automerge doc creation — are genuinely complete.
 
 Add a test that verifies the readiness contract:
 
@@ -282,7 +326,9 @@ test('app ready signal includes all subsystems', async ({ page }) => {
 export async function apiCommand(...) { ... }
 ```
 
-### Phase 2: Eliminate `pause()` after mutations
+### Phase 3: Eliminate `pause()` after mutations (was Phase 2)
+
+> **Why after Phase 2?** Phase 2 (rationalization) merges 73 tests down to 45. Running this phase on the 45 survivors avoids wasting effort fixing `pause()` in tests that get deleted. Merges are safe with `pause()` still in place — they move the same assertions with the same timing, so no new flakes are introduced.
 
 Replace every `pause()` after a state-changing operation with the appropriate `waitFor*` helper:
 
@@ -306,20 +352,14 @@ export async function waitForSelectedId(page: Page, expectedId: string, timeoutM
   );
 }
 
-/** Wait for arbitrary WASM state condition (pass a function, not a string) */
+/** Wait for arbitrary WASM state condition */
 export async function waitForWasmState(
   page: Page,
-  fn: (ctrl: any) => boolean,
+  checkFn: () => boolean,  // runs in browser context
   timeoutMs = 5_000,
 ) {
-  await page.waitForFunction(
-    (check) => {
-      const ctrl = (window as any).sceneController;
-      return ctrl && new Function('ctrl', `return (${check})(ctrl)`)(ctrl);
-    },
-    fn.toString(),
-    { timeout: timeoutMs },
-  );
+  // Pass the function body as a string — Playwright serializes it safely
+  await page.waitForFunction(checkFn, { timeout: timeoutMs });
 }
 
 /** Pure animation delay — only for visual pauses (video recording, etc.) */
@@ -328,9 +368,20 @@ export async function animationFrame(page: Page) {
 }
 ```
 
-**After Phase 2, set `retries: 0` in `playwright.config.ts`.** If tests are deterministic, retries are a crutch. Any test that needs a retry is a bug to fix, not a flake to suppress.
+**Fix `clickToolbar()` and `clickOutlinerItem()` (Problem 9):** Remove the embedded `pause()` from both helpers. The caller should wait for the specific condition they expect:
 
-### Phase 3: Test isolation — full state reset
+```typescript
+export async function clickToolbar(page: Page, testId: string) {
+  await page.click(`[data-testid="${testId}"]`);
+  // NO pause — caller waits for the specific effect (e.g., waitForObjectCount)
+}
+```
+
+**`IS_SLOW` strategy:** After Phase 3, `IS_SLOW` should only affect `videoPause()` / `animationFrame()` — delays that are purely visual. It should NOT affect `waitForReady()` (eliminated by `__appReady`) or any `waitFor*` helpers (they poll until a condition is met, so speed doesn't matter). Remove `IS_SLOW` from timeout multipliers in `playwright.config.ts` — polling-based waits are inherently speed-independent.
+
+**After Phase 3, set `retries: 0` in `playwright.config.ts`.** If tests are deterministic, retries are a crutch. Any test that needs a retry is a bug to fix, not a flake to suppress.
+
+### Phase 4: Test isolation — full state reset (was Phase 3)
 
 The cleanup must happen **before navigation**, not after `waitForReady()`. Deleting IDB databases after the app has already opened them mid-session can break things. Two options:
 
@@ -388,7 +439,7 @@ test.afterEach(async ({ request }, testInfo) => {
 
 This prevents the Worker from accumulating stale model state across a 50-test run.
 
-### Phase 4: Consistent patterns — lint rule + docs
+### Phase 7a: Consistent patterns — lint rule + docs (was Phase 4)
 
 Establish canonical patterns and enforce them:
 
@@ -408,8 +459,10 @@ Establish canonical patterns and enforce them:
 | UI interaction | `clickToolbar(page, 'add-cube')` | `page.click('#btn-add-cube')` |
 | Clear scene | `apiCommand(page, 'clear'); waitForObjectCount(page, 0)` | `apiCommand(page, 'clear'); pause(page)` |
 | Gizmo drag (exception) | direct WASM calls with `// ADR-0013` comment | unmarked direct WASM calls |
+| Clear scene (actors) | `apiCommand(page, 'clear')` | `page.evaluate(() => cadCommand('clear'))` (bypasses helper) |
+| Poll Worker state | `waitForWorkerState(request, modelId, predicate)` (new) | hand-rolled `for` loop with `waitForTimeout(500)` |
 
-### Phase 5: Test health reporting
+### Phase 7b: Test health reporting (was Phase 5)
 
 Add a dedicated test suite that catches infrastructure regressions early:
 
@@ -460,44 +513,62 @@ test.describe('Test Infrastructure Health', () => {
 - **CI stability** — deterministic waits + `retries: 0` means every pass is real and every failure is actionable
 - **Clean Worker state** — model cleanup prevents memory accumulation across long test runs
 - **~2.5 min faster test runs** — 28 fewer browser sessions + doc videos out of CI
-- **Easier to maintain** — 45 tests with clear purpose vs 73 tests with overlapping coverage
+- **Easier to maintain** — 45 Playwright tests with clear purpose vs 73 with overlapping coverage
+- **Docs never drift** — screenshots and videos are byproducts of passing tests, not separate artifacts
+- **~18 fewer Vitest tests** — drop redundant CAD operation tests that Playwright already covers
+- **Prepares for ADR-0024** — clean, deterministic tests + documented completion contract make it safe to swap the dispatch path (Future Work) without debugging test noise
 
 ### Negative
 
 - **Migration effort** — every `pause()` call after a mutation needs manual review to determine the right `waitFor*` replacement
-- **New helpers needed** — `waitForSelectedId`, `waitForWasmState`, `animationFrame` add to the helper surface area
-- **App-side work for Phase 3** — `?reset=1` support or `DELETE /api/cad/{modelId}` endpoint
+- **New helpers needed** — `waitForSelectedId`, `waitForWasmState`, `animationFrame`, `docCapture`, `docPause` add to the helper surface area
+- **App-side work for Phase 4** — `?reset=1` support or `DELETE /api/cad/{modelId}` endpoint
 - **`retries: 0` will initially surface hidden flakes** — some tests may fail that were previously masked by retry; these are real bugs to fix, not a regression
 - **Merge effort requires care** — every assertion from dropped tests must be transplanted to a surviving test, or coverage is lost
+- **Doc capture adds complexity to tests** — `docCapture()` and `docPause()` calls in test bodies are noise in fast mode (they're no-ops, but they're visible in the code)
 
 ### What this does NOT solve
 
+- **Cloudflare-MCP Vitest tests (6 files in `.src/cloudflare-mcp/`)** — these test the generic Cloudflare MCP framework, not the CAD application. They're orthogonal to this ADR.
 - **WebGPU rendering correctness** — visual regression testing (screenshot comparison) is a separate concern
 - **Multi-device sync testing** — Automerge sync across devices needs a different setup (two browser contexts + sync server)
 - **Performance benchmarks** — timing tests (e.g., "progressive load of 1000 objects in < 2s") need dedicated fixtures, not e2e tests
 - **Rust unit tests** — WASM kernel correctness is tested via `cargo test`, orthogonal to this ADR
+- **`headless: false` requirement** — WebGPU requires a headed Chrome. CI environments need a display server (Xvfb or similar). This is a deployment constraint, not a test design issue.
 
 -----
 
 ## Sequencing
 
+Each phase is marked with what it changes:
+- **APP** = changes to application code (state.js, index.html, Worker endpoints)
+- **TEST** = changes to test files (helpers.ts, spec files, playwright.config.ts)
+- **DOCS** = documentation artifacts only
+
+**Key ordering principle:** Rationalize (merge/drop) tests _before_ fixing timing issues — don't spend effort fixing `pause()` in tests you're about to delete.
+
 ```
-Phase 1: Readiness contract (__appReady flag + completion contract docs)  ← prevents future bootstrap bugs
-  ↓
-Phase 2: Eliminate pause() after mutations + retries: 0                    ← deterministic tests
-  ↓
-Phase 3: Test isolation (IDB reset + Worker cleanup)                       ← no cross-test contamination
-  ↓
-Phase 4: Pattern docs + lint                                               ← prevent regression
-  ↓
-Phase 5: Health reporting test suite                                       ← catch infra issues early
-  ↓
-Phase 6: Test rationalization (merge/drop/restructure)                     ← fewer tests, same confidence
+Phase 1: Readiness contract (__appReady flag)                          APP + TEST
+  ↓                     Foundation — all subsequent phases depend on reliable readiness
+Phase 2: Test rationalization (73 → 45 Playwright)                     TEST
+  ↓                     Reduce test count BEFORE fixing — don't fix doomed tests
+Phase 3: Eliminate pause() + retries: 0                                TEST
+  ↓                     Fix the 45 survivors, not all 73
+Phase 4: Test isolation (?reset=1 + Worker cleanup)                    APP + TEST
+  ↓                     Requires DELETE /api/cad/{modelId} endpoint + ?reset=1 param
+Phase 5: Unified test + doc capture (delete doc-videos.spec.ts)        TEST
+  ↓                     Add docCapture/docPause to rationalized, pause-free tests
+Phase 6: Vitest rationalization (32 → ~14)                             TEST
+  ↓                     Drop tests that Playwright already covers
+Phase 7: Pattern docs + health tests + lint                            DOCS + TEST
+                        Document and guard the final state — not an intermediate one
 ```
+
+**Phases 1-7 are the scope of this ADR.** The unified Hono router (ADR-0024 Phase 3) has major test benefits but is an app architecture change — see **Future Work** below.
 
 -----
 
-## Phase 6: Test Rationalization
+## Phase 2: Test Rationalization (was Phase 6)
 
 The 73 Playwright tests were built one-at-a-time as features landed, each proving "this thing works." But a test suite isn't a changelog — it should answer: **what is the minimum set that gives maximum confidence?**
 
@@ -585,13 +656,13 @@ Each one navigates, boots WASM, boots Automerge (which it doesn't use), then run
 |------|--------|-------|--------|
 | cad.spec.ts | 24 | 16 | Merge select tests, merge export tests, drop trivials |
 | sketch.spec.ts | 11 | 3 | Merge into multi-assertion workflows |
-| actors.spec.ts | 6 | 6 | Keep (each tests a distinct actor pattern) |
-| bim.spec.ts | 1 | 1 | Keep (singleton, tests IFC import) |
-| tier.spec.ts | 8 | 8 | Keep (each tests a distinct tier behavior) |
+| actors.spec.ts | 6 | 6 | Keep — but fix: use `apiCommand()` helper (Problem 12), extract Worker polling helper |
+| bim.spec.ts | 1 | 1 | Keep — but fix: replace Datastar signal reads with WASM query or `waitFor*` (Problem 11) |
+| tier.spec.ts | 8 | 8 | Keep — but fix: 5 `pause()` calls + hardcoded `waitForTimeout()` need Phase 3 treatment |
 | cad-ui.spec.ts | 16 | 10 | Merge toolbar buttons, drop duplicate undo/select/canvas |
 | cross-tab-sync.spec.ts | 2 | 2 | Keep (must run isolated) |
 | doc-videos.spec.ts | 5 | 0 | Move to separate `task truck:test:videos` (not part of CI) |
-| health.spec.ts (new) | 0 | 3 | Phase 5 health tests |
+| health.spec.ts (new) | 0 | 3 | Phase 7 health tests |
 
 **Estimated time savings:**
 - ~28 fewer browser sessions × ~3s bootstrap each = **~85s saved** (~1.5 min)
@@ -610,22 +681,308 @@ When merging tests, follow these rules to preserve coverage:
 
 -----
 
+## Phase 5: Unified Test + Doc Capture (was Phase 7)
+
+Currently documentation assets (videos, screenshots, examples) are produced by a **separate** `doc-videos.spec.ts` file that re-implements the same workflows as the real tests — add primitives, translate, boolean subtract, save/load. This means:
+
+- The same workflow is coded twice (once for testing, once for recording)
+- The doc videos can drift from the real behavior (they don't assert anything)
+- 5 extra browser sessions just to re-do operations that already run in `cad.spec.ts`
+
+**Proposal: Tests ARE the docs. Docs ARE the tests.**
+
+Instead of separate test and demo files, each e2e test produces documentation assets as a byproduct when the `DOCS=1` flag is set:
+
+```typescript
+// helpers.ts
+export const DOCS_MODE = !!process.env.DOCS;
+
+/** Visual pause — only takes effect in docs mode */
+export async function docPause(page: Page, ms = 800) {
+  if (DOCS_MODE) await page.waitForTimeout(ms);
+}
+
+/** Screenshot at a named point — only in docs mode */
+export async function docCapture(page: Page, name: string) {
+  if (!DOCS_MODE) return;
+  await page.screenshot({ path: `${SCREENSHOTS_DIR}/${name}.png`, fullPage: false });
+}
+```
+
+Then the **same test** does both:
+
+```typescript
+test('add primitives via cadCommand return UUIDs', async ({ page }) => {
+  // --- Assertions (always run) ---
+  const sphere = await apiCommand(page, 'add_sphere', { radius: 0.8 });
+  expect(sphere.objectId).toMatch(/^[0-9a-f]{8}-/);
+  expect(await getObjectCount(page)).toBe(2);
+  await docCapture(page, '02-add-sphere');   // ← screenshot if DOCS=1
+  await docPause(page);                       // ← visual pause if DOCS=1
+
+  const cyl = await apiCommand(page, 'add_cylinder', { radius: 0.5, height: 1.0 });
+  expect(cyl.objectId).toMatch(/^[0-9a-f]{8}-/);
+  expect(await getObjectCount(page)).toBe(3);
+  await docCapture(page, '03-add-cylinder');
+
+  // ... more assertions + captures
+});
+```
+
+**Mapping:** Each doc page maps to a specific test (or sequence of tests):
+
+| Doc page | Hugo path | Source test | Captures |
+|----------|-----------|------------|----------|
+| Getting Started | docs/user/getting-started.md | `page loads with WebGPU canvas + gizmo interaction` | video + 1 screenshot |
+| Creating Shapes | docs/user/creating-shapes.md | `add primitives via cadCommand` | video + 4 screenshots |
+| Moving Objects | docs/user/moving-objects.md | `translate object by UUID` | video + 1 screenshot |
+| Boolean Ops | docs/user/boolean-operations.md | `boolean subtract via cadCommand` | video + 2 screenshots |
+| Save & Load | docs/user/save-load.md | `export/import preserves UUIDs` | video + 1 screenshot |
+
+**Running:**
+- `task truck:test:e2e` — fast, no docs, no video
+- `task truck:test:docs` — same tests with `DOCS=1 SLOW=1 video=on`, produces all assets
+- `doc-videos.spec.ts` is **deleted** — no longer needed
+
+**Benefits:**
+- Docs never drift from reality — if the test passes, the video shows working software
+- 5 fewer browser sessions
+- One place to maintain each workflow
+- Screenshots automatically update when the UI changes
+
+**What about the camera orbit/zoom choreography in `getting-started`?** That's the one doc video that does things no test does (mouse drag for orbit, scroll for zoom). This becomes a small `docExtra()` block appended to the gizmo test, gated behind `DOCS_MODE`:
+
+```typescript
+if (DOCS_MODE) {
+  // Camera choreography for getting-started video
+  await page.mouse.move(cx, cy);
+  for (let i = 0; i < 20; i++) { /* orbit */ }
+  await page.mouse.wheel(0, -200);  // zoom in
+  await docPause(page, 500);
+}
+```
+
+-----
+
+## Phase 6: Vitest Rationalization (was Phase 8)
+
+### Current state
+
+The 32 Vitest tests in `systems/truck/worker/src/index.test.ts` test the Worker HTTP layer in isolation (no browser, no WASM rendering). They use Hono's `app.request()` to test endpoints directly.
+
+### Overlap analysis
+
+| Vitest test block | Overlaps with Playwright? | Verdict |
+|---|---|---|
+| Health check | Yes — trivial, `actors.spec.ts` hits `/api/health` implicitly | **Drop** |
+| CAD Schema endpoint | Partially — Playwright implicitly relies on schema correctness | **Keep** (fast contract check) |
+| Schema Contract (ephemeral/readonly flags) | No — Playwright never inspects schema metadata directly | **Keep** (guards MCP tool leakage) |
+| CAD Command Execution (queue) | Yes — `actors.spec.ts` tests the exact same endpoints | **Drop** |
+| Result Round-Trip | Yes — `actors.spec.ts` tests result retrieval | **Drop** |
+| CAD State persistence | Yes — `actors.spec.ts` polls `/api/cad/{modelId}/state` | **Drop** |
+| CAD Queue/Pending | Low value — internal endpoints, no external consumer | **Drop** |
+| OpenAPI Spec validation | No overlap — unique | **Keep** |
+| API Docs page | No overlap — unique but low value | **Drop** |
+| MCP Initialize | No overlap — protocol-level | **Keep** |
+| MCP Tools List | No overlap — protocol-level | **Keep** |
+| MCP Tool Call | No overlap — protocol-level | **Keep** |
+| MCP Edge Cases (batch, notifications, 405) | No overlap — protocol-level | **Keep** |
+| Model Isolation (queue/state separation) | Yes — Playwright uses unique modelIds per test | **Drop** |
+
+**Proposed: 32 → ~14 tests.** Keep MCP protocol suite + schema contract + OpenAPI. Drop everything that `actors.spec.ts` already exercises through the real stack.
+
+### Why keep any Vitest?
+
+The MCP protocol tests are genuinely valuable and **cannot be replaced by Playwright**:
+- They test JSON-RPC 2.0 wire format compliance (batch requests, notifications without `id`, method-not-found errors)
+- They verify tool filtering logic (ephemeral + readonly commands excluded from `tools/list`)
+- They run in milliseconds (no browser boot) — fast CI feedback on protocol regressions
+- They don't need WebGPU, so they run on any CI runner including ARM64
+
+The schema contract tests catch a specific bug class: someone adds a new command in Rust but forgets to mark it `ephemeral: true`, causing it to leak into MCP tools. This is a one-line test that prevents real damage.
+
+-----
+
+## Future Work: Unified Hono Router (ADR-0024 Phase 3)
+
+> **Not in scope for this ADR.** This is an app architecture change (ADR-0024 Phase 3) that has major test benefits. It's documented here to show how the test cleanup prepares for it, but the implementation belongs in ADR-0024.
+
+When ADR-0024 Phase 3 lands, it also enables **two-level readiness** for plugin testing:
+- `window.__appReady` = core ready (WASM + cadCommand + Automerge)
+- `window.__plugins` = `Set` tracking loaded plugins
+- `waitForPlugin(page, 'cad-bim')` = wait for a specific plugin to load on demand
+
+This avoids delaying `__appReady` for optional plugins that load lazily (e.g., cad-bim loads on IFC file drop).
+
+### The forcing function: ADR-0024 Multi-WASM Modules
+
+ADR-0024 splits the Rust monolith into independent WASM plugins (cad-core, cad-bim, cad-mvt, cad-sketch, cad-export). Each plugin generates its own schema (`cad-schema-{name}.json`). With N plugins, the system needs something that can:
+
+1. **Route commands to the correct plugin's `execute()`** — `import_ifc` → cad-bim, `add_cube` → cad-core
+2. **Validate params per-plugin** — each schema has different param types
+3. **Merge N schemas** into one OpenAPI spec, one MCP `tools/list`, one discovery endpoint
+4. **Work identically in both environments** — Worker serves HTTP, browser calls in-process
+
+That something is Hono. The Worker already uses it. ADR-0024 Phase 3 explicitly calls for replacing `BrowserModuleRouter` with the same Hono app running in-process via `app.request()`.
+
+### Why this matters for testing
+
+Today the browser has **no validation** — `cadCommand('add_cube', { size: "oops" })` passes raw JSON to WASM, which returns an opaque "deserialization failed" error. The Worker validates the same call with Zod and returns `{ error: "Expected number, received string" }`.
+
+With one Hono router in both environments:
+
+```
+                            ┌── Worker: serves HTTP externally
+cad-schema-*.json           │   mountSchema() per plugin → Zod → OpenAPI → MCP
+  → mountSchema()     ──────┤
+  → Zod validators          │
+  → OpenAPI routes          └── Browser: app.request() in-process
+                                mountSchema() per plugin → same Zod → same validation
+```
+
+- **Same validation**: Invalid params fail with the same error message in both environments
+- **Same routing**: `cadCommand()` calls `app.request('/api/cad/.../exec/add_cube')` — same path the Worker uses
+- **Same schema merging**: `/api/openapi.json` works locally in the browser, auto-merged from all loaded plugins
+- **Local MCP**: Browser could serve `tools/list` locally — every loaded plugin's tools, validated, without a Worker round-trip
+
+### What this replaces
+
+| Today (3 browser routers) | Tomorrow (1 Hono app) |
+|---|---|
+| `BrowserModuleRouter` (128 lines, single-module pass-through) | `mountSchema(app, prefix, schema)` per plugin |
+| Hand-rolled URL regex in `index.html` (20 lines) | `app.get('/model/:id', ...)` |
+| Manual `moduleRouter.execute(type, params)` — no validation | `app.request()` — Zod validates before dispatch |
+
+### Implementation strategy
+
+This is **not a new piece of work** — it's ADR-0024 Phase 3 arriving via test cleanup. The steps:
+
+1. **Extract `mountSchema()` from Worker's `mountModule()`** — the portable part (Zod validators + command routing) becomes a shared module. The Worker-only part (SSE, command queue, result callbacks) stays in `mountWorkerRelay()`.
+
+2. **Create `shared/router.ts`** — imported by both Worker and browser:
+   ```typescript
+   export function createPluginRouter(schemas: Record<string, ModuleSchema>) {
+     const app = new OpenAPIHono();
+     for (const [prefix, schema] of Object.entries(schemas))
+       mountSchema(app, prefix, schema);
+     return app;
+   }
+   ```
+
+3. **Replace `cadCommand()` dispatch** — instead of `moduleRouter.execute()`, call `app.request()`:
+   ```javascript
+   // Before: raw dispatch, no validation
+   const result = moduleRouter.execute(type, params);
+
+   // After: Hono route, Zod validation, correct plugin routing
+   const res = await app.request(`/api/cad/${modelId}/exec/${type}`, {
+     method: 'POST', body: JSON.stringify(params)
+   });
+   ```
+
+4. **60fps gizmo escape hatch stays direct** — `cad-viewport.js` calls `plugins.get('cad').execute()` directly, bypassing Hono entirely (same as today). The gizmo path is synchronous, zero-overhead — ADR-0013 requirement.
+
+### Cost/benefit
+
+| | Cost | Benefit |
+|---|---|---|
+| **Bundle size** | Hono ~14KB + Zod ~14KB gzipped | Unified routing + validation + OpenAPI + MCP |
+| **Runtime overhead** | ~0.2ms per command (Hono routing + Zod parse) | Catch type errors before WASM (prevents panics) |
+| **Maintenance** | `mountSchema()` is shared code — changes apply everywhere | N plugins just work, no per-plugin browser glue |
+| **Migration** | `cadCommand()` calls `app.request()` instead of `moduleRouter.execute()` | `BrowserModuleRouter` deleted (128 lines), URL regex deleted (20 lines) |
+
+### Offline — 100% local operation
+
+The app already supports offline mode via `window.__cadLocalMode` (set by `?local` URL param) and the `set_mode` cadCommand (toggleable via MCP). Today this works by conditionally loading `worker-relay.js` — if local mode, the relay is never imported and all commands go through the in-process `moduleRouter.execute()`.
+
+With the unified Hono router, offline gets **stronger**:
+
+| | Today (offline) | With Hono in browser |
+|---|---|---|
+| Command dispatch | `moduleRouter.execute()` — no validation | `app.request()` — Zod validates in-process |
+| Schema discovery | Hardcoded in `cad-schema.json` | `app.request('/api/openapi.json')` — live from loaded plugins |
+| MCP tools | Unavailable offline | `app.request('/mcp')` — full JSON-RPC, local |
+| Mode toggle | `set_mode` → sets `__cadLocalMode` flag | Same — but `app.request()` routing doesn't change (always in-process) |
+| Error messages | WASM deserialization errors (opaque) | Zod validation errors (clear) |
+
+The key insight: with Hono in the browser, the **online/offline distinction shrinks to just the sync layer**. Command routing, validation, schema discovery, and MCP all work identically. The only difference is whether Automerge syncs to a remote peer or stays local. The `set_mode` MCP tool continues to work — it was never lost (Hono was never in the browser before, so removing it couldn't have broken anything).
+
+### Late binding — dynamic plugin loading
+
+ADR-0024 introduces lazy plugin loading: WASM modules are loaded on demand (e.g., `cad-bim` loads when an IFC file is dropped). This changes `__appReady` semantics (see two-level readiness above) and requires the Hono router to accept plugins at runtime:
+
+```typescript
+// Plugin loaded on demand
+const bimSchema = await loadPlugin('cad-bim');
+mountSchema(app, 'bim', bimSchema);  // ← routes added dynamically
+
+// MCP tools update automatically
+// app.request('/mcp', { method: 'POST', body: toolsListRequest })
+// → now includes cad-bim tools
+```
+
+The unified router handles this naturally — `mountSchema()` is called once per plugin, whenever that plugin loads. For testing:
+
+- **Core tests** run without optional plugins (fast)
+- **Plugin tests** load their plugin in `beforeEach`, then exercise commands through the same `apiCommand()` path
+- **Late-binding test** verifies that calling a plugin command before loading the plugin returns a clear error (not a WASM panic)
+
+### Relationship to testing
+
+The unified router directly improves test quality:
+- **Faster failure**: Invalid params fail at Zod validation, not at WASM deserialization — test errors are immediately clear
+- **Same error contract**: Browser and Worker return the same error format, so `actors.spec.ts` tests work identically whether driving via GUI or API
+- **Schema contract tests apply everywhere**: The Vitest schema contract tests (Phase 6 "keep") validate the schema that both browser and Worker use
+- **Plugin tests are automatic**: When `cad-bim` adds a new command, `mountSchema()` gives it Zod validation + routing + MCP tools in both environments. No separate test setup needed.
+- **Local MCP testing**: Tests could call `app.request('/mcp', ...)` in the browser directly — testing the real MCP dispatch path without a Worker round-trip
+
+-----
+
+## Definition of Done
+
+The test cleanup is complete when all of these are true:
+
+| # | Criterion | Phase | Verification |
+|---|-----------|-------|-------------|
+| 1 | **`__appReady` flag** — `waitForReady()` checks single flag, no trailing `waitForTimeout()` | 1 | `grep waitForTimeout tests/e2e/helpers.ts` returns 0 in `waitForReady` |
+| 2 | **Test count ≤ 48** — 45 rationalized Playwright + 3 health tests | 2 | `grep -c "test\(" tests/e2e/*.spec.ts` |
+| 3 | **Zero `pause()` after mutations** — only `animationFrame()` survives. `clickToolbar()`/`clickOutlinerItem()` no longer call `pause()`. | 3 | `grep -r 'pause(page)' tests/e2e/*.spec.ts` returns 0 |
+| 4 | **`retries: 0`** — all tests pass on first attempt for 5 consecutive runs | 3 | `grep retries tests/playwright.config.ts` → 0 |
+| 5 | **`IS_SLOW` only affects visual delays** — `animationFrame()` and `docPause()`. Not readiness, not timeouts. | 3 | `grep IS_SLOW tests/e2e/helpers.ts` → only in `animationFrame` |
+| 6 | **All spec files use `apiCommand()`** — no raw `cadCommand()` calls (except gizmo `// ADR-0013` + sketch L1) | 3 | `grep 'cadCommand(' tests/e2e/*.spec.ts` → only marked exceptions |
+| 7 | **No Datastar signal assertions without `waitFor*`** — `_ds.root.*` preceded by polling wait, or replaced with WASM queries | 3 | `grep '_ds.root' tests/e2e/*.spec.ts` → 0 outside waitFor* |
+| 8 | **Worker cleanup in `afterEach`** — `DELETE /api/cad/{modelId}` called after every test with unique modelId | 4 | Exists in shared `afterEach` in helpers.ts |
+| 9 | **`doc-videos.spec.ts` deleted** — doc capture integrated into e2e tests via `docCapture()`/`docPause()` | 5 | File doesn't exist; `DOCS=1` mode produces screenshots |
+| 10 | **Vitest ≤ 14 tests** — MCP protocol + schema contract + OpenAPI kept; redundant CAD ops dropped | 6 | `grep -c 'test(' systems/truck/worker/src/index.test.ts` ≤ 14 |
+| 11 | **PATTERNS.md exists** — documents canonical patterns table | 7 | File exists at `tests/e2e/PATTERNS.md` |
+| 12 | **Health suite passes** — bootstrapping, isolation, completion contract, IDB cleanup all green | 7 | `health.spec.ts` passes |
+
+-----
+
 ## Existing Code
 
-| File | What | Relevance |
-|------|------|-----------|
-| [helpers.ts](tests/e2e/helpers.ts) | Shared test utilities | **Phase 1-3** — modify `waitForReady`, document contract, add new waiters, add cleanup |
-| [cad.spec.ts](tests/e2e/cad.spec.ts) | Core CAD tests (20+) | **Phase 2** — replace `pause()` with `waitForObjectCount()` |
-| [actors.spec.ts](tests/e2e/actors.spec.ts) | Actor hybrid tests | **Phase 2** — replace polling loop with `waitForObjectCount()` |
-| [tier.spec.ts](tests/e2e/tier.spec.ts) | Tier tests (8) | **Phase 3** — add model-scoped cleanup to `beforeEach` |
-| [playwright.config.ts](tests/playwright.config.ts) | Playwright config | **Phase 2** — set `retries: 0` after pause elimination |
-| [state.js](web/gui/state.js) | App init + cadCommand | **Phase 1** — set `window.__appReady` after all init |
-| [history.js](web/gui/history.js) | Automerge doc manager | **Phase 1** — participates in readiness signal |
+| File | What | Phase | Change |
+|------|------|-------|--------|
+| [helpers.ts](tests/e2e/helpers.ts) | Shared test utilities | **1, 3, 4** | Modify `waitForReady`, remove `pause()` from `clickToolbar`/`clickOutlinerItem`, document contract, add new waiters, add cleanup |
+| [cad.spec.ts](tests/e2e/cad.spec.ts) | Core CAD tests (24) | **2, 3** | Merge select/export tests, drop trivials (Phase 2); replace `pause()` with `waitForObjectCount()` (Phase 3) |
+| [cad-ui.spec.ts](tests/e2e/cad-ui.spec.ts) | UI interaction tests (16) | **2, 3** | Merge toolbar buttons, drop duplicate undo/select (Phase 2); fix `pause()` in survivors (Phase 3) |
+| [sketch.spec.ts](tests/e2e/sketch.spec.ts) | WASM kernel tests (11) | **2** | Merge into 3 multi-assertion workflows |
+| [actors.spec.ts](tests/e2e/actors.spec.ts) | Actor hybrid tests (6) | **3** | Replace raw `cadCommand()` with `apiCommand()`, extract Worker polling helper |
+| [bim.spec.ts](tests/e2e/bim.spec.ts) | BIM/IFC test (1) | **3** | Replace Datastar signal reads + `pause()` with WASM query or `waitFor*` |
+| [tier.spec.ts](tests/e2e/tier.spec.ts) | Tier tests (8) | **3, 4** | Replace 5 `pause()` calls + hardcoded timeouts (Phase 3); add model-scoped cleanup (Phase 4) |
+| [cross-tab-sync.spec.ts](tests/e2e/cross-tab-sync.spec.ts) | Cross-tab sync (2) | — | No changes needed — already uses `waitFor*` helpers correctly |
+| [doc-videos.spec.ts](tests/e2e/doc-videos.spec.ts) | Doc video recording (5) | **5** | Delete entirely, doc capture moves into e2e tests |
+| [playwright.config.ts](tests/playwright.config.ts) | Playwright config | **3** | Set `retries: 0`, remove `IS_SLOW` timeout multipliers |
+| [index.test.ts](systems/truck/worker/src/index.test.ts) | Vitest Worker tests (32) | **6** | Drop ~18 redundant CAD operation tests, keep MCP protocol suite |
+| [state.js](web/gui/state.js) | App init + cadCommand | **1** | Set `window.__appReady` after all init phases |
+| [history.js](web/gui/history.js) | Automerge doc manager | **1** | Participates in readiness signal |
+| [index.html](web/gui/index.html) | App entry + init | **1** | Sets `window.__appReady` at end of init sequence |
 
 ## References
 
 - ADR-0005: Schema-Driven Unified API (cadCommand as single dispatch)
 - ADR-0011: Control Plane — State Management as API
 - ADR-0013: Lit + Three.js + Passive WASM Interaction (gizmo exception)
+- ADR-0024: Multi-WASM Module Architecture (Phase 3 = unified Hono router — Future Work, not this ADR)
 - ADR-0025: Bug #9 (waitForReady bootstrap) — the triggering incident
 - Playwright best practices: https://playwright.dev/docs/best-practices
