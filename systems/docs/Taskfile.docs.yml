@@ -31,10 +31,10 @@ tasks:
       - echo "ROOT_DIR={{.ROOT_DIR}}"
       - echo "WEBSITE_DIR={{.WEBSITE_DIR}}"
       - echo "---"
-      - cd {{.WEBSITE_DIR}} && npx vitepress --version 2>/dev/null || echo "VitePress not installed (run: cd website && bun install)"
+      - cmd: cd {{.WEBSITE_DIR}} && bunx vitepress --version 2>/dev/null || echo "VitePress not installed (run cd website && bun install)"
       - echo "---"
       - echo "Docs URL (local)  → http://localhost:5173"
-      - echo "Docs URL (prod)   → https://cad-docs.pages.dev"
+      - echo "Docs URL (prod)   → https://docs.ubuntusoftware.net"
       - echo "CAD App URL       → https://cad.ubuntusoftware.net"
     silent: true
 
@@ -58,7 +58,7 @@ tasks:
     dir: '{{.WEBSITE_DIR}}'
     cmds:
       - echo "Docs server starting at http://localhost:5173"
-      - npx vitepress dev
+      - bunx vitepress dev
 
   build:
     desc: Build VitePress static site for production
@@ -76,7 +76,7 @@ tasks:
     deps: ["build"]
     dir: '{{.WEBSITE_DIR}}'
     cmds:
-      - npx wrangler pages deploy .vitepress/dist --project-name=cad-docs
+      - bunx wrangler pages deploy .vitepress/dist --project-name=cad-docs
 
   # ===========================================================================
   # Screenshots & Videos
@@ -84,7 +84,7 @@ tasks:
   screenshots:
     desc: Generate doc screenshots + videos from E2E tests
     cmds:
-      - cd {{.ROOT_DIR}}/tests && DOCS=1 npx playwright test --project=e2e
+      - cd {{.ROOT_DIR}}/tests && DOCS=1 bunx playwright test --project=e2e
 
   # ===========================================================================
   # Open in browser

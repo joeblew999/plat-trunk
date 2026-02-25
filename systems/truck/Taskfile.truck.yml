@@ -606,10 +606,10 @@ tasks:
         echo "PASS: Truck-specific checks passed"
 
   "deploy:full":
-    desc: Deploy Worker + publish docs to R2
+    desc: Deploy Worker + docs site
     cmds:
       - task: gui:deploy
-      - task: docs:publish
+      - task: :docs:deploy
 
   # --- Visual Examples (opens window) ---
 

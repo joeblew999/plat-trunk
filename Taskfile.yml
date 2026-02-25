@@ -117,7 +117,7 @@ tasks:
   # Deploy
   # ===========================================================================
   deploy:
-    desc: Deploy everything (CAD Worker + Hugo docs site)
+    desc: Deploy everything (CAD Worker + docs site)
     cmds:
       - task: truck:deploy:full
       - task: docs:deploy

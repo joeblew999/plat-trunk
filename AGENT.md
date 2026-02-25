@@ -207,7 +207,7 @@ curl -sf https://cad.ubuntusoftware.net/api/cad/schema   # full schema with vers
 
 **CI pipeline** (`.github/workflows/ci.yml`):
 - All branches: `task truck:ci` (build + test)
-- Push to main: `task cf:upload` (tagged version, manual promote)
+- Push to main: `task cf:upload` (tagged Worker version, manual promote) + `task docs:deploy` (VitePress → Cloudflare Pages)
 - PR opened: `task cf:preview PR_NUMBER={N}` (per-PR preview alias + sticky PR comment)
 - PR previews are versions on the same Worker — no cleanup needed
 
@@ -305,8 +305,8 @@ See `docs/adr/README.md` for the full index. Key decisions:
 9. **No legacy / backward compatibility**: There are no existing users. Do not add migration paths, legacy fallback code, or backward-compat shims. Write clean code for the current design only.
 
 ## Library Reference (for AI assistants)
-- Automerge patterns & API: `docs/llms/automerge-llms-full.txt`
-- kkrpc patterns & API: `docs/llms/kkrpc-llms-full.txt`
+- Automerge patterns & API: `website/public/llms/automerge-llms-full.txt`
+- kkrpc patterns & API: `website/public/llms/kkrpc-llms-full.txt`
 - Cross-language interop (Go, Python, Rust, Swift): `.claude/skills/interop/SKILL.md`
 
 ## Deployed URLs
@@ -315,6 +315,9 @@ See `docs/adr/README.md` for the full index. Key decisions:
 |-----|---------|
 | `https://cad.ubuntusoftware.net` | Production (custom domain, promoted version) |
 | `https://truck-cad.gedw99.workers.dev` | Production (workers.dev alias) |
+| `https://docs.ubuntusoftware.net` | Docs (Cloudflare Pages, VitePress) |
+| `https://docs.ubuntusoftware.net/llms.txt` | LLM docs (auto-generated) |
 | `https://v0-6-0-truck-cad.gedw99.workers.dev` | Per-version preview (from `cf:upload`) |
 | `https://pr-1-truck-cad.gedw99.workers.dev` | Per-PR preview (from CI `cf:preview`) |
 | `http://localhost:8788` | Local dev server (`task up` or `task truck:gui:serve`) |
+| `http://localhost:5173` | Local docs dev server (`task docs:serve`) |

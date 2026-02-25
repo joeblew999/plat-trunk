@@ -6,15 +6,20 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 
 ## URLs
 
-| Environment | URL |
-|-------------|-----|
-| Production | https://cad.ubuntusoftware.net |
-| Staging | https://truck-cad.gedw99.workers.dev |
-| Local | http://localhost:8788 |
-| Docs | https://cad-docs.pages.dev |
+| | URL |
+|--|-----|
+| **Production** | |
+| CAD App | https://cad.ubuntusoftware.net |
+| Workers (alias) | https://truck-cad.gedw99.workers.dev |
+| Docs | https://docs.ubuntusoftware.net |
+| Docs (Pages) | https://cad-docs.pages.dev |
+| LLM Docs | https://docs.ubuntusoftware.net/llms.txt |
+| **Local Dev** | |
+| CAD App | http://localhost:8788 |
 | API Docs | http://localhost:8788/api-docs |
 | MCP | http://localhost:8788/mcp |
-| LLM Docs | https://cad-docs.pages.dev/llms.txt |
+| Docs Dev | http://localhost:5173 |
+| **Project** | |
 | GitHub | https://github.com/joeblew999/plat-trunk |
 | CF Deployments | [Dashboard](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
 
@@ -133,7 +138,7 @@ Env flags: `SLOW=1` `SCREENSHOTS=1` `EXAMPLES=1` `BASE_URL=https://...`
 task truck:gui:build          # WASM → web/gui/pkg-browser-renderer/
 task truck:gui:serve          # Local dev (localhost:8788)
 task truck:gui:deploy         # Deploy to Cloudflare Workers
-task truck:deploy:full        # gui:deploy + docs:publish
+task truck:deploy:full        # gui:deploy + docs:deploy
 ```
 
 ## Requirements
