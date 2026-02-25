@@ -19,6 +19,7 @@
 import { LitElement, html } from './vendor/lit.js';
 import * as THREE from './vendor/three.js';
 import { OrbitControls } from './vendor/three-orbit-controls.js';
+import { startTierManager, touchObject } from './tier-manager.js';
 
 export class CadViewport extends LitElement {
   /**
@@ -111,6 +112,8 @@ export class CadViewport extends LitElement {
           window.moduleRouter.register('core', controller);
         }
         console.log('[cad-viewport] WASM SceneController ready');
+        // Start tier manager (ADR-0025 Phase 2)
+        startTierManager('default');
         if (window.reconcile) window.reconcile({});
       } catch (err) {
         console.error('[cad-viewport] WASM init failed:', err);
@@ -184,9 +187,11 @@ export class CadViewport extends LitElement {
         }
       }
 
-      // Standard pick + select
-      const result = window.cadCommand('pick_at', { ndcX, ndcY }, { record: false, broadcast: false });
-      window.cadCommand('select', { id: (result && result.pickedId) || '' }, { record: false, broadcast: false });
+      // Standard pick + select (cadQuery is sync — cadCommand returns a Promise)
+      const result = window.cadQuery('pick_at', { ndcX, ndcY }, { record: false, broadcast: false });
+      const pickedId = (result && result.pickedId) || '';
+      if (pickedId) touchObject(pickedId);
+      window.cadQuery('select', { id: pickedId }, { record: false, broadcast: false });
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -228,7 +233,7 @@ export class CadViewport extends LitElement {
           canvas.style.cursor = '';
           window.sceneController.cancel_gizmo_drag();
         } else if (window.sceneController) {
-          window.cadCommand('deselect', {}, { record: false, broadcast: false });
+          window.cadQuery('deselect', {}, { record: false, broadcast: false });
         }
         e.preventDefault();
       }
@@ -239,11 +244,11 @@ export class CadViewport extends LitElement {
 
   /** Read initial camera from WASM's get_state (one-time bootstrap) */
   _syncFromWasm() {
-    if (!window.cadCommand || !window.sceneController) {
+    if (!window.cadQuery || !window.sceneController) {
       setTimeout(() => this._syncFromWasm(), 100);
       return;
     }
-    const state = window.cadCommand('get_state', {}, { record: false, broadcast: false });
+    const state = window.cadQuery('get_state', {}, { record: false, broadcast: false });
     if (state && state.camera) {
       const c = state.camera;
       this.camera.matrixWorld.fromArray(c.matrixWorld);
@@ -262,7 +267,7 @@ export class CadViewport extends LitElement {
 
   /** Push Three.js camera to WASM — skips if unchanged (dirty check) */
   _syncCameraToWasm() {
-    if (!window.cadCommand) return;
+    if (!window.cadQuery) return;
     this.camera.updateMatrixWorld();
     const matrix = this.camera.matrixWorld.elements; // column-major Float32Array
 
@@ -279,7 +284,7 @@ export class CadViewport extends LitElement {
     }
     this._lastMatrix = Array.from(matrix);
 
-    window.cadCommand('set_camera', {
+    window.cadQuery('set_camera', {
       matrixWorld: this._lastMatrix,
       fovDeg: this.camera.fov,
       near: this.camera.near,
@@ -322,8 +327,8 @@ export class CadViewport extends LitElement {
    * @param {string|null} objectId - Object to focus, or null for extents
    */
   zoomTo(objectId = null) {
-    if (!window.cadCommand) return;
-    const res = window.cadCommand('get_state', {}, { record: false, broadcast: false });
+    if (!window.cadQuery) return;
+    const res = window.cadQuery('get_state', {}, { record: false, broadcast: false });
     if (!res) return;
 
     // For now, zoom to scene center with a reasonable distance

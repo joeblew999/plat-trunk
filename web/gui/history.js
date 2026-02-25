@@ -1,4 +1,6 @@
 import { cadCommand, reconcile, moduleRouter } from './state.js';
+import { storeBlob, getBlob } from './blob-store.js';
+import { resetTierState, registerWarmObjects } from './tier-manager.js';
 
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
 // Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
@@ -95,7 +97,7 @@ class CadDocumentManager {
         if (ctrl) {
             const ids = ctrl.object_ids();
             if (ids.length > 0) {
-                this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
+                await this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
             }
         }
 
@@ -125,7 +127,7 @@ class CadDocumentManager {
     /** Record a completed operation into the Automerge op log.
      *  Fire-and-forget — WASM has already executed. This is for undo/redo and cross-tab sync.
      *  (Like bc?.broadcast() in test-hono.) */
-    record(type, params = {}, meta = {}) {
+    async record(type, params = {}, meta = {}) {
         if (!this.handle || !this.enabled) return;
 
         const op = {
@@ -138,6 +140,19 @@ class CadDocumentManager {
             groupId: meta.groupId || null,
         };
 
+        // Pre-compute snapshot blob ref if this op triggers a checkpoint (ADR-0025 Phase 0).
+        // Blob storage is async so it must happen before the sync handle.change() callback.
+        const doc = this.handle.doc();
+        const nextOpCount = (doc?.operations?.length || 0) + 1;
+        let snapshotRef = null;
+        if (nextOpCount % SNAPSHOT_INTERVAL === 0) {
+            const ctrl = this._ctrl();
+            if (ctrl) {
+                const sceneJson = ctrl.export_scene();
+                snapshotRef = await storeBlob(sceneJson);
+            }
+        }
+
         this._suppressChangeReplay = true;
         this.handle.change((d) => {
             d.operations.push(op);
@@ -148,17 +163,13 @@ class CadDocumentManager {
             }
 
             // Periodic snapshot for fast replay (keep last 3 checkpoints)
-            if (d.operations.length % SNAPSHOT_INTERVAL === 0) {
-                const ctrl = this._ctrl();
-                if (ctrl) {
-                    if (!d.snapshots) d.snapshots = [];
-                    d.snapshots.push({
-                        json: ctrl.export_scene(),
-                        atOpIndex: d.operations.length,
-                    });
-                    // Keep only the last 3
-                    while (d.snapshots.length > 3) d.snapshots.splice(0, 1);
-                }
+            if (snapshotRef) {
+                if (!d.snapshots) d.snapshots = [];
+                d.snapshots.push({
+                    blobRef: snapshotRef,
+                    atOpIndex: d.operations.length,
+                });
+                while (d.snapshots.length > 3) d.snapshots.splice(0, 1);
             }
         });
         this._suppressChangeReplay = false;
@@ -169,7 +180,7 @@ class CadDocumentManager {
     }
 
     /** Undo last own enabled operation (or entire group) — sets enabled=false and replays */
-    undo() {
+    async undo() {
         if (!this.handle) return false;
         const doc = this.handle.doc();
         if (!doc) return false;
@@ -191,7 +202,7 @@ class CadDocumentManager {
                     }
                 });
                 this._suppressChangeReplay = false;
-                this._replayScene();
+                await this._replayScene();
                 this._localOpCount = this._getDocOpCount();
                 return true;
             }
@@ -200,7 +211,7 @@ class CadDocumentManager {
     }
 
     /** Redo — re-enable first disabled own op/group (from end of disabled streak) */
-    redo() {
+    async redo() {
         if (!this.handle) return false;
         const doc = this.handle.doc();
         if (!doc) return false;
@@ -229,14 +240,14 @@ class CadDocumentManager {
             }
         });
         this._suppressChangeReplay = false;
-        this._replayScene();
+        await this._replayScene();
         this._localOpCount = this._getDocOpCount();
         return true;
     }
 
     /** Rollback: disable all own ops after the given op index, then replay.
      *  Double-click on a timeline chip triggers this. */
-    rollback(toOpIndex) {
+    async rollback(toOpIndex) {
         if (!this.handle) return false;
         const doc = this.handle.doc();
         if (!doc || toOpIndex < 0 || toOpIndex >= doc.operations.length) return false;
@@ -249,7 +260,7 @@ class CadDocumentManager {
             }
         });
         this._suppressChangeReplay = false;
-        this._replayScene();
+        await this._replayScene();
         this._localOpCount = this._getDocOpCount();
         return true;
     }
@@ -275,66 +286,205 @@ class CadDocumentManager {
 
     /** Replay all enabled ops to rebuild the scene from scratch.
      *  Only used by undo/redo and remote sync — not every command.
-     *  All WASM ops go through cadCommand with reconcile:false for batching (ADR-0019 Phase 3). */
+     *  All WASM ops go through cadCommand with reconcile:false for batching (ADR-0019 Phase 3).
+     *  Large snapshots (>= 50 entries) use progressive loading (ADR-0025 Phase 3):
+     *  viewport-visible objects → Hot, rest → Warm (IDB + LOD proxy). */
     async _replayScene() {
         if (!moduleRouter.ready || this._replayInProgress) return;
 
         this._replayInProgress = true;
-        const doc = this.handle.doc();
-        if (!doc) {
+        try {
+            const doc = this.handle.doc();
+            if (!doc) return;
+
+            const REPLAY = { record: false, broadcast: false, reconcile: false, source: 'replay' };
+            const prevSelectedId = window._ds?.root?.selectedId ?? null;
+
+            // Clear stale tier manager state — scene is about to be rebuilt from scratch
+            await resetTierState();
+
+            // Find nearest valid snapshot checkpoint (search newest → oldest).
+            // Supports both legacy inline (snap.json) and blobRef (ADR-0025 Phase 0).
+            let startIndex = 0;
+            let snapshotJson = null;
+            const snaps = doc.snapshots || [];
+            for (let s = snaps.length - 1; s >= 0; s--) {
+                const snap = snaps[s];
+                if (snap.atOpIndex == null) continue;
+                // Resolve snapshot data: blobRef (Phase 0) or legacy inline json
+                let json = null;
+                if (snap.blobRef) {
+                    try { json = await getBlob(snap.blobRef); }
+                    catch (err) { console.warn('[BlobStore] Snapshot fetch failed:', err); }
+                } else if (snap.json) {
+                    json = snap.json; // legacy inline snapshot
+                }
+                if (!json) continue;
+                // Valid if all ops before the snapshot are enabled
+                let valid = true;
+                for (let i = 0; i < snap.atOpIndex && i < doc.operations.length; i++) {
+                    if (!doc.operations[i].enabled) { valid = false; break; }
+                }
+                if (valid) {
+                    snapshotJson = json;
+                    startIndex = snap.atOpIndex;
+                    break;
+                }
+            }
+
+            // Decide: progressive or monolithic loading
+            const PROGRESSIVE_THRESHOLD = 50;
+            let entries = null;
+            if (snapshotJson) {
+                try { entries = JSON.parse(snapshotJson); } catch { entries = null; }
+            }
+            const useProgressive = entries && Array.isArray(entries) && entries.length >= PROGRESSIVE_THRESHOLD;
+
+            if (useProgressive) {
+                await this._progressiveLoad(entries, doc, startIndex, REPLAY);
+            } else {
+                // Existing monolithic path
+                if (snapshotJson) {
+                    cadCommand('import_scene', { json: snapshotJson }, REPLAY);
+                } else {
+                    cadCommand('clear', {}, REPLAY);
+                }
+                await this._replayRemainingOps(doc, startIndex, REPLAY);
+            }
+
+            // Restore selection in WASM + Datastar (fixes ADR-0025 selection-during-replay bug)
+            const ids = moduleRouter.query('objectIds');
+            const ds = window._ds;
+            let newSel = null;
+            if (prevSelectedId && ids.includes(prevSelectedId)) {
+                newSel = prevSelectedId;
+            } else if (ids.length > 0) {
+                newSel = ids[ids.length - 1];
+            }
+            // Tell WASM about selection so tier manager's "never evict selected" guard works
+            if (newSel) {
+                cadCommand('select', { id: newSel }, { record: false, broadcast: false, reconcile: false, source: 'replay' });
+            }
+            if (ds?.root) ds.root.selectedId = newSel;
+
+            // Single reconcile at the end — WASM state → Datastar signals → DOM
+            reconcile({ selectedId: newSel });
+            this._renderTimeline();
+        } finally {
             this._replayInProgress = false;
-            return;
         }
+    }
 
-        const REPLAY = { record: false, broadcast: false, reconcile: false, source: 'replay' };
-        const prevSelectedId = window._ds?.root?.selectedId ?? null;
-
-        // Find nearest valid snapshot checkpoint (search newest → oldest)
-        let startIndex = 0;
-        let snapshotUsed = false;
-        const snaps = doc.snapshots || [];
-        for (let s = snaps.length - 1; s >= 0; s--) {
-            const snap = snaps[s];
-            if (!snap.json || !snap.atOpIndex) continue;
-            // Valid if all ops before the snapshot are enabled
-            let valid = true;
-            for (let i = 0; i < snap.atOpIndex && i < doc.operations.length; i++) {
-                if (!doc.operations[i].enabled) { valid = false; break; }
-            }
-            if (valid) {
-                cadCommand('import_scene', { json: snap.json }, REPLAY);
-                startIndex = snap.atOpIndex;
-                snapshotUsed = true;
-                break;
-            }
-        }
-        if (!snapshotUsed) {
-            cadCommand('clear', {}, REPLAY);
-        }
-
-        // Replay each enabled op through cadCommand (no per-op reconcile)
+    /** Replay remaining ops after a snapshot (shared by both monolithic and progressive paths). */
+    async _replayRemainingOps(doc, startIndex, REPLAY) {
         for (let i = startIndex; i < doc.operations.length; i++) {
             if (doc.operations[i].enabled) {
                 const op = doc.operations[i];
-                cadCommand(op.type, op.params, REPLAY);
+                let replayParams = op.params;
+                if (op.params.blobRef) {
+                    const blob = await getBlob(op.params.blobRef);
+                    const dataKey = op.type === 'import_scene' ? 'json' : 'data';
+                    replayParams = { ...op.params, [dataKey]: blob };
+                }
+                cadCommand(op.type, replayParams, REPLAY);
+            }
+        }
+    }
+
+    /** Progressive loading path (ADR-0025 Phase 3).
+     *  Loads viewport-visible objects as Hot, rest as Warm (IDB + LOD proxy).
+     *  Uses THREE.Frustum from the already-loaded Three.js for culling. */
+    async _progressiveLoad(entries, doc, startIndex, REPLAY) {
+        const ctrl = this._ctrl();
+        if (!ctrl) return;
+        const modelId = window.__modelId || 'default';
+
+        // Clear current scene
+        cadCommand('clear', {}, REPLAY);
+
+        // 1. Collect object IDs needed by remaining ops — these must be Hot
+        const neededIds = new Set();
+        for (let i = startIndex; i < doc.operations.length; i++) {
+            if (!doc.operations[i].enabled) continue;
+            const p = doc.operations[i].params;
+            if (p.id) neededIds.add(p.id);
+            if (p.objectId) neededIds.add(p.objectId);
+            if (p._replayId) neededIds.add(p._replayId);
+            if (p.selA) neededIds.add(p.selA);
+            if (p.selB) neededIds.add(p.selB);
+        }
+
+        // 2. Build camera frustum from <cad-viewport>'s Three.js camera
+        let frustum = null;
+        const viewport = document.querySelector('cad-viewport');
+        if (viewport?.camera) {
+            const THREE = await import('./vendor/three.js');
+            const cam = viewport.camera;
+            cam.updateMatrixWorld();
+            cam.updateProjectionMatrix();
+            frustum = new THREE.Frustum();
+            const vp = new THREE.Matrix4();
+            vp.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+            frustum.setFromProjectionMatrix(vp);
+        }
+
+        // 3. Split entries: Hot (viewport-visible + needed-by-ops) vs Warm (rest)
+        const hotEntries = [];
+        const warmEntries = [];
+        // Cache the THREE import for sphere creation (module already loaded — instant)
+        const THREE = frustum ? await import('./vendor/three.js') : null;
+
+        for (const entry of entries) {
+            const isNeeded = neededIds.has(entry.id);
+            let isVisible = true; // default to visible if no frustum or no sphere
+            if (frustum && THREE && entry.bounding_sphere) {
+                const [cx, cy, cz, r] = entry.bounding_sphere;
+                isVisible = frustum.intersectsSphere(
+                    new THREE.Sphere(new THREE.Vector3(cx, cy, cz), r)
+                );
+            }
+            if (isNeeded || isVisible) {
+                hotEntries.push(entry);
+            } else {
+                warmEntries.push(entry);
             }
         }
 
-        // Restore selection via Datastar signals
-        const ids = moduleRouter.query('objectIds');
-        const ds = window._ds;
-        let newSel = null;
-        if (prevSelectedId && ids.includes(prevSelectedId)) {
-            newSel = prevSelectedId;
-        } else if (ids.length > 0) {
-            newSel = ids[ids.length - 1];
+        // 4. Import Hot entries to WASM
+        for (const entry of hotEntries) {
+            ctrl.import_entry(JSON.stringify(entry));
         }
-        if (ds?.root) ds.root.selectedId = newSel;
 
-        // Single reconcile at the end — WASM state → Datastar signals → DOM
-        reconcile({ selectedId: newSel });
-        this._renderTimeline();
-        this._replayInProgress = false;
+        // 5. Store Warm entries in IDB + add LOD proxies + register with tier manager
+        if (warmEntries.length > 0) {
+            const { bulkPutObjects } = await import('./object-store.js');
+            const warmItems = warmEntries.map(e => ({
+                objectId: e.id,
+                entryJson: JSON.stringify(e),
+            }));
+            await bulkPutObjects(modelId, warmItems);
+
+            const warmSphereMap = new Map();
+            for (const entry of warmEntries) {
+                if (entry.bounding_sphere) {
+                    const [cx, cy, cz, r] = entry.bounding_sphere;
+                    const color = entry.style?.albedo || [0.5, 0.5, 0.5, 1.0];
+                    ctrl.add_lod_proxy(JSON.stringify({
+                        objectId: entry.id,
+                        center: [cx, cy, cz],
+                        radius: r,
+                        color,
+                    }));
+                    warmSphereMap.set(entry.id, { center: [cx, cy, cz], radius: r, color });
+                }
+            }
+            registerWarmObjects(warmSphereMap);
+        }
+
+        console.log(`[Progressive] ${hotEntries.length} Hot, ${warmEntries.length} Warm, ${doc.operations.length - startIndex} remaining ops`);
+
+        // 6. Replay remaining ops (referenced objects are Hot)
+        await this._replayRemainingOps(doc, startIndex, REPLAY);
     }
 
     /** Listen for remote changes via Automerge and replay scene.

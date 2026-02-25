@@ -152,6 +152,10 @@ struct ExportEntry {
     style: Option<ObjectStyle>,
     #[serde(default)]
     bim: Option<BimMetadata>,
+    /// Precomputed bounding sphere for Phase 3 progressive loading (ADR-0025).
+    /// [cx, cy, cz, radius] — allows JS to do viewport culling without loading geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounding_sphere: Option<[f64; 4]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +194,15 @@ enum InteractionMode {
 // Shared state
 // ---------------------------------------------------------------------------
 
+/// LOD proxy: a bounding-box wireframe that represents a Warm-tier object on the GPU.
+/// Created when an object is evicted (Hot→Warm), removed when promoted (Warm→Hot).
+struct LodProxy {
+    id: String,               // same objectId as the evicted object
+    wireframe: WireFrameInstance,
+    center: Point3,
+    radius: f64,
+}
+
 struct SharedState {
     scene: Scene,
     creator: InstanceCreator,
@@ -206,6 +219,8 @@ struct SharedState {
     // Gizmo interaction
     interaction: InteractionMode,
     bounding_spheres: Vec<(String, Point3, f64)>, // (object_id, center, radius)
+    // LOD proxies for Warm-tier objects (ADR-0025 Phase 2)
+    lod_proxies: Vec<LodProxy>,
     // JS callbacks
     on_select: Option<js_sys::Function>,
     on_drag_complete: Option<js_sys::Function>,
@@ -564,6 +579,10 @@ fn rebuild_scene(s: &mut SharedState) {
             s.scene.add_object(&obj.wireframe);
         }
     }
+    // Add LOD proxy wireframes for Warm-tier objects (ADR-0025 Phase 2)
+    for proxy in &s.lod_proxies {
+        s.scene.add_object(&proxy.wireframe);
+    }
     // Add gizmo arrows if an object is selected
     add_gizmo_arrows(s);
 }
@@ -886,6 +905,7 @@ impl SceneController {
             prev_pinch_dist: None,
             interaction: InteractionMode::Idle,
             bounding_spheres: Vec::new(),
+            lod_proxies: Vec::new(),
             on_select: None,
             on_drag_complete: None,
             active_sketch: None,
@@ -1434,6 +1454,7 @@ impl SceneController {
         s.objects.clear();
         s.id_to_index.clear();
         s.bounding_spheres.clear();
+        s.lod_proxies.clear();
         s.name_counters.clear();
         s.interaction = InteractionMode::Idle;
         s.scene.clear_objects();
@@ -1454,17 +1475,180 @@ impl SceneController {
     // Save / Load (JSON serialization of truck Solids)
     // =====================================================================
 
-    /// Export entire scene as JSON string with UUIDs.
+    /// Export a single object as JSON string by UUID.
     #[wasm_bindgen]
-    pub fn export_scene(&self) -> String {
+    pub fn export_entry(&self, id: &str) -> String {
         let s = self.state.borrow();
-        let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| ExportEntry {
+        let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return "null".to_string() };
+        let obj = &s.objects[idx];
+        let (center, radius) = obj.pick_mesh.bounding_sphere();
+        let entry = ExportEntry {
             id: obj.id.to_string(),
             name: obj.name.clone(),
             solid: obj.solid.clone(),
             mesh: Some(obj.mesh.clone()),
             style: Some(obj.style.clone()),
             bim: obj.bim.clone(),
+            bounding_sphere: Some([center.x, center.y, center.z, radius]),
+        };
+        serde_json::to_string(&entry).unwrap_or_else(|e| {
+            error!("export_entry failed: {}", e);
+            "null".to_string()
+        })
+    }
+
+    /// Import a single ExportEntry JSON into the scene (additive, no clear).
+    #[wasm_bindgen]
+    pub fn import_entry(&self, json: &str) -> JsValue {
+        let entry: ExportEntry = match serde_json::from_str(json) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("import_entry failed: {}", e);
+                return JsValue::from_str(&format!("{{\"error\":\"{}\"}}", e));
+            }
+        };
+        let mut s = self.state.borrow_mut();
+        let id = Uuid::parse_str(&entry.id).unwrap_or_else(|_| Uuid::new_v4());
+        let idx = s.objects.len();
+        let style = entry.style.unwrap_or_else(|| ObjectStyle::from_index(idx));
+
+        if let Some(solid) = entry.solid {
+            let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
+            let (center, radius) = pick_mesh.bounding_sphere();
+            s.scene.add_object(&polygon);
+            s.scene.add_object(&wireframe);
+            let id_str = id.to_string();
+            s.id_to_index.insert(id_str.clone(), idx);
+            s.bounding_spheres.push((id_str.clone(), center, radius));
+            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+            s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
+        } else if let Some(mesh) = entry.mesh {
+            let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
+            let (center, radius) = pick_mesh.bounding_sphere();
+            s.scene.add_object(&polygon);
+            s.scene.add_object(&wireframe);
+            let id_str = id.to_string();
+            s.id_to_index.insert(id_str.clone(), idx);
+            s.bounding_spheres.push((id_str.clone(), center, radius));
+            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+            s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
+        }
+        JsValue::from_str("{\"error\":\"No solid or mesh in entry\"}")
+    }
+
+    // =====================================================================
+    // Tier Management — ADR-0025 Phase 2
+    // =====================================================================
+
+    /// Return bounding spheres + colors for all Hot objects.
+    /// Used by the JS tier manager to compute camera distance.
+    /// Computes directly from pick_mesh (avoids stale cache / origin+0 fallback bug).
+    #[wasm_bindgen]
+    pub fn get_bounding_spheres(&self) -> String {
+        let s = self.state.borrow();
+        let spheres: Vec<serde_json::Value> = s.objects.iter().map(|obj| {
+            let id_str = obj.id.to_string();
+            let (center, radius) = obj.pick_mesh.bounding_sphere();
+            serde_json::json!({
+                "objectId": id_str,
+                "center": [center.x, center.y, center.z],
+                "radius": radius,
+                "color": obj.style.albedo,
+            })
+        }).collect();
+        serde_json::to_string(&spheres).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Add an LOD proxy (bounding-box wireframe) for a Warm-tier object.
+    /// Called after evicting an object from Hot to Warm.
+    /// Input JSON: {"objectId":"...","center":[x,y,z],"radius":r,"color":[r,g,b,a]}
+    #[wasm_bindgen]
+    pub fn add_lod_proxy(&self, json: &str) -> bool {
+        #[derive(Deserialize)]
+        struct ProxyParams {
+            #[serde(rename = "objectId")]
+            object_id: String,
+            center: [f64; 3],
+            radius: f64,
+            color: [f64; 4],
+        }
+        let params: ProxyParams = match serde_json::from_str(json) {
+            Ok(p) => p,
+            Err(e) => { error!("add_lod_proxy: {}", e); return false; }
+        };
+        let mut s = self.state.borrow_mut();
+        // Remove existing proxy for this ID if any
+        s.lod_proxies.retain(|p| p.id != params.object_id);
+        // Build AABB edges from bounding sphere
+        let c = params.center;
+        let r = params.radius;
+        let min = [c[0] - r, c[1] - r, c[2] - r];
+        let max = [c[0] + r, c[1] + r, c[2] + r];
+        let v = [
+            Point3::new(min[0], min[1], min[2]),
+            Point3::new(max[0], min[1], min[2]),
+            Point3::new(max[0], max[1], min[2]),
+            Point3::new(min[0], max[1], min[2]),
+            Point3::new(min[0], min[1], max[2]),
+            Point3::new(max[0], min[1], max[2]),
+            Point3::new(max[0], max[1], max[2]),
+            Point3::new(min[0], max[1], max[2]),
+        ];
+        let edges: Vec<(Point3, Point3)> = vec![
+            // Bottom face
+            (v[0], v[1]), (v[1], v[2]), (v[2], v[3]), (v[3], v[0]),
+            // Top face
+            (v[4], v[5]), (v[5], v[6]), (v[6], v[7]), (v[7], v[4]),
+            // Vertical edges
+            (v[0], v[4]), (v[1], v[5]), (v[2], v[6]), (v[3], v[7]),
+        ];
+        let wire_state = WireFrameState {
+            matrix: Matrix4::identity(),
+            color: Vector4::new(params.color[0], params.color[1], params.color[2], 0.5),
+        };
+        let wireframe = s.creator.create_instance(&edges, &wire_state);
+        let center = Point3::new(params.center[0], params.center[1], params.center[2]);
+        s.lod_proxies.push(LodProxy {
+            id: params.object_id,
+            wireframe,
+            center,
+            radius: params.radius,
+        });
+        rebuild_scene(&mut s);
+        true
+    }
+
+    /// Remove an LOD proxy for an object about to be promoted (Warm→Hot).
+    #[wasm_bindgen]
+    pub fn remove_lod_proxy(&self, id: &str) -> bool {
+        let mut s = self.state.borrow_mut();
+        let before = s.lod_proxies.len();
+        s.lod_proxies.retain(|p| p.id != id);
+        if s.lod_proxies.len() < before {
+            rebuild_scene(&mut s);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Export entire scene as JSON string with UUIDs.
+    #[wasm_bindgen]
+    pub fn export_scene(&self) -> String {
+        let s = self.state.borrow();
+        let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| {
+            let (center, radius) = obj.pick_mesh.bounding_sphere();
+            ExportEntry {
+                id: obj.id.to_string(),
+                name: obj.name.clone(),
+                solid: obj.solid.clone(),
+                mesh: Some(obj.mesh.clone()),
+                style: Some(obj.style.clone()),
+                bim: obj.bim.clone(),
+                bounding_sphere: Some([center.x, center.y, center.z, radius]),
+            }
         }).collect();
         serde_json::to_string_pretty(&entries).unwrap_or_else(|e| {
             error!("Export failed: {}", e);

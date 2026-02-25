@@ -106,6 +106,9 @@ struct ExportEntry {
     style: Option<ObjectStyle>,
     #[serde(default)]
     bim: Option<BimMetadata>,
+    /// Precomputed bounding sphere for Phase 3 progressive loading (ADR-0025).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounding_sphere: Option<[f64; 4]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -437,13 +440,19 @@ impl HeadlessController {
     // ── Export ───────────────────────────────────────────────
 
     pub fn export_scene(&self) -> String {
-        let entries: Vec<ExportEntry> = self.objects.iter().map(|obj| ExportEntry {
-            id: obj.id.to_string(),
-            name: obj.name.clone(),
-            solid: obj.solid.clone(),
-            mesh: Some(obj.mesh.clone()),
-            style: Some(obj.style.clone()),
-            bim: obj.bim.clone(),
+        let entries: Vec<ExportEntry> = self.objects.iter().map(|obj| {
+            let bs = obj.solid.as_ref()
+                .map(|s| crate::compute_bounding_sphere(s))
+                .map(|(c, r)| [c.x, c.y, c.z, r]);
+            ExportEntry {
+                id: obj.id.to_string(),
+                name: obj.name.clone(),
+                solid: obj.solid.clone(),
+                mesh: Some(obj.mesh.clone()),
+                style: Some(obj.style.clone()),
+                bim: obj.bim.clone(),
+                bounding_sphere: bs,
+            }
         }).collect();
         serde_json::to_string_pretty(&entries).unwrap_or_else(|e| {
             error!("Export failed: {}", e);

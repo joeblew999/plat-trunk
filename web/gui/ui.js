@@ -1,7 +1,7 @@
 // ui.js — Document management, file save/load, example scenes, responsive layout.
 // Keyboard shortcuts → keyboard.js. Gizmo interaction → cad-viewport.js (ADR-0013).
 
-import { cadCommand, showFeedback } from './state.js';
+import { cadCommand, cadQuery, showFeedback } from './state.js';
 
 function ctrl() { return window.sceneController; }
 function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
@@ -15,7 +15,7 @@ document.getElementById('newDocBtn')?.addEventListener('click', async () => {
         if (name === null) return;
         ctrl()?.clear_scene();
         await window.cadDocManager.createDocument(name);
-        cadCommand('deselect', {}, { record: false, broadcast: false });
+        cadQuery('deselect', {}, { record: false, broadcast: false });
         showFeedback('New document created', false);
     }
 });
@@ -70,7 +70,7 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
         cadCommand('import_scene', { json: reader.result });
         // Select first object after import
         const ids = ctrl().object_ids();
-        if (ids.length > 0) cadCommand('select', { id: ids[0] }, { record: false, broadcast: false });
+        if (ids.length > 0) cadQuery('select', { id: ids[0] }, { record: false, broadcast: false });
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -100,7 +100,7 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
                 const json = await res.text();
                 cadCommand('import_scene', { json });
                 const ids = ctrl().object_ids();
-                if (ids.length > 0) cadCommand('select', { id: ids[0] }, { record: false, broadcast: false });
+                if (ids.length > 0) cadQuery('select', { id: ids[0] }, { record: false, broadcast: false });
                 showFeedback(`Loaded: ${select.options[select.selectedIndex].text}`, false);
             } catch { showFeedback('Failed to load example', true); }
             select.value = '';

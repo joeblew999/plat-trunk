@@ -302,6 +302,7 @@ See `docs/adr/README.md` for the full index. Key decisions:
 6. **reconcile() only**: Never write to Datastar signals directly — `reconcile()` is the single sync point
 7. **data-testid**: All interactive HTML elements must have `data-testid` attributes for testing
 8. **ADR context**: Read `docs/adr/README.md` before proposing architectural changes
+9. **No legacy / backward compatibility**: There are no existing users. Do not add migration paths, legacy fallback code, or backward-compat shims. Write clean code for the current design only.
 
 ## Library Reference (for AI assistants)
 - Automerge patterns & API: `docs/llms/automerge-llms-full.txt`

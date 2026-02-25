@@ -22,10 +22,12 @@ export async function pause(page: Page) {
 
 // ─── Stable API: cadCommand is the ONLY way to drive tests ─────
 
-/** Wait for WASM SceneController + cadCommand to be ready */
+/** Wait for WASM SceneController + cadCommand + Automerge to be ready */
 export async function waitForReady(page: Page) {
   await page.waitForFunction(
-    () => (window as any).sceneController && typeof (window as any).cadCommand === 'function',
+    () => (window as any).sceneController
+      && typeof (window as any).cadCommand === 'function'
+      && (window as any).cadDocManager?.handle,
     { timeout: 30_000 },
   );
   await page.waitForTimeout(IS_SLOW ? 1000 : 50);

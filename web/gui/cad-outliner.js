@@ -59,7 +59,7 @@ export class CadOutliner extends LitElement {
       const name = this._names[id] || id.slice(0, 6);
       return html`
         <div class="flex items-center gap-1 group">
-          <button class="${cls} flex-1" data-testid="outliner-item"
+          <button class="${cls} flex-1" data-testid="outliner-item" data-oid="${id}"
                   title="${id}" @click=${() => this._select(id)}>
             ${i}: ${name}${label ? html` <b>${label}</b>` : ''}
           </button>

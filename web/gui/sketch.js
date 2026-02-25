@@ -2,9 +2,9 @@
 // ALL sketch operations go through cadCommand (ADR-0019 Phase 4).
 // ES module (ADR-0019 Phase 5).
 
-import { cadCommand, reconcile, showFeedback } from './state.js';
+import { cadCommand, cadQuery, reconcile, showFeedback } from './state.js';
 
-const cmd = (type, params = {}) => cadCommand(type, params, { record: false, broadcast: false });
+const cmd = (type, params = {}) => cadQuery(type, params, { record: false, broadcast: false });
 const ds = () => window._ds;
 const fb = (msg, err) => showFeedback(msg, err);
 

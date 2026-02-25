@@ -2,6 +2,7 @@
 // cadCommand() is the ONLY way to change state. reconcile() is the ONLY way to sync it.
 
 import { moduleRouter } from './core/module-router.js';
+import { storeBlob } from './blob-store.js';
 
 // If WASM was already initialized before state.js loaded, register now
 if (window.sceneController && !moduleRouter.ready) {
@@ -45,8 +46,10 @@ function reconcileSignals(r, ids, result) {
 // ── reconcileMetadata: derived/computed signals ─────────────────
 function reconcileMetadata(r, ids, mgr) {
   const a = r.boolSelA, b = r.boolSelB;
-  r.objectCount = ids.length;
-  r.sceneEmpty = ids.length === 0;
+  const wc = window.__warmCount ?? 0;
+  r.objectCount = ids.length + wc;
+  r.warmCount = wc;
+  r.sceneEmpty = ids.length === 0 && wc === 0;
   r.boolLabel = a && b ? `A: ${a.slice(0,4)} | B: ${b.slice(0,4)}`
     : a ? `A: ${a.slice(0,4)} | B: click another` : 'Click first object';
   r.boolReady = !!(a && b);
@@ -99,7 +102,7 @@ function reconcile(result) {
   reconcileView(r.selectedId, ids);
 
   return {
-    ready: true, objectCount: ids.length, objectIds: ids,
+    ready: true, objectCount: r.objectCount, objectIds: ids, warmCount: r.warmCount,
     selectedId: r.selectedId, boolSelA: a, boolSelB: b,
     canUndo: r.canUndo, canRedo: r.canRedo,
   };
@@ -179,14 +182,14 @@ async function handleJsCommand(type, params) {
   switch (type) {
     case 'undo':
       if (mgr && mgr.canUndo) {
-        mgr.undo();
+        await mgr.undo();
         return { success: true };
       }
       return { error: 'Nothing to undo' };
 
     case 'redo':
       if (mgr && mgr.canRedo) {
-        mgr.redo();
+        await mgr.redo();
         return { success: true };
       }
       return { error: 'Nothing to redo' };
@@ -196,7 +199,8 @@ async function handleJsCommand(type, params) {
         mode: window.__cadLocalMode ? 'local' : 'online',
         automergeReady: !!mgr?.handle,
         automergeEnabled: mgr?.enabled ?? true,
-        objectCount: window._ds?.root?.objectCount || 0
+        objectCount: window._ds?.root?.objectCount || 0,
+        warmCount: window._ds?.root?.warmCount || 0
       };
 
     case 'set_mode':
@@ -228,6 +232,9 @@ async function handleJsCommand(type, params) {
     case 'clear_data':
       if (confirm('WIPE ALL LOCAL DATA? This cannot be undone.')) {
         localStorage.clear();
+        // Also clear ADR-0025 IndexedDB stores (blob store + object store)
+        indexedDB.deleteDatabase('cad-blobs');
+        indexedDB.deleteDatabase('cad-objects');
         location.reload();
         return { success: true };
       }
@@ -238,6 +245,25 @@ async function handleJsCommand(type, params) {
   }
 }
 
+// ─── Sync query: WASM dispatch + reconcile, no recording ─────────
+// Use this for commands that don't need Automerge recording (record: false).
+// Returns the result synchronously — no Promise wrapping.
+// Fixes: cadCommand() is async (Phase 0 blob store) which silently broke
+// all callers that don't await it (pick_at, addShape, tier manager, etc.).
+
+function cadQuery(type, params = {}, options = {}) {
+  const doReconcile = options.reconcile ?? true;
+  if (!moduleRouter.ready) return { error: 'ModuleRouter not ready' };
+  let result;
+  try {
+    result = moduleRouter.execute(type, params);
+  } catch (err) {
+    return { error: String(err) };
+  }
+  const state = doReconcile ? reconcile(result) : {};
+  return { ...result, ...state };
+}
+
 // ─── Single entry point for all CAD operations ───────────────────
 //
 // Options contract (ADR-0019 Phase 2):
@@ -246,6 +272,9 @@ async function handleJsCommand(type, params) {
 //   reconcile: boolean  — Run reconcile pipeline? (default: true)
 //   source:    string   — Who initiated? 'local' | 'api' | 'replay' (default: 'local')
 //   groupId:   string   — Group ID for Automerge undo grouping (optional)
+//
+// IMPORTANT: This function is async (blob storage, Automerge recording).
+// For non-recording queries/mutations, use cadQuery() instead — it's sync.
 
 let _busy = false;
 async function cadCommand(type, params = {}, options = {}) {
@@ -256,6 +285,11 @@ async function cadCommand(type, params = {}, options = {}) {
   const source    = options.source    ?? 'local';
 
   if (!moduleRouter.ready && !JS_COMMANDS.has(type)) return { error: 'ModuleRouter not ready' };
+
+  // Non-recording WASM commands: use sync path (no blob storage, no Automerge)
+  if (!record && !JS_COMMANDS.has(type)) {
+    return cadQuery(type, params, options);
+  }
 
   // Guard against re-entrancy for WASM commands that record
   if (_busy && record && !JS_COMMANDS.has(type)) return { error: 'Busy' };
@@ -281,11 +315,21 @@ async function cadCommand(type, params = {}, options = {}) {
       }
     }
 
-    // Record to Automerge (skip for non-recording commands and JS commands)
-    if (record && !JS_COMMANDS.has(type)) {
+    // Record to Automerge (only for recording WASM commands)
+    if (!JS_COMMANDS.has(type)) {
       const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
       if (mgr) {
-        mgr.record(type, params, {
+        // Strip large blob data from import commands (ADR-0025 Phase 0).
+        // Store in content-addressed blob store; only blobRef goes into Automerge.
+        let recordParams = params;
+        const BLOB_KEYS = { import_scene: 'json', import_ifc: 'data', import_step: 'data' };
+        const dataKey = BLOB_KEYS[type];
+        if (dataKey && params[dataKey]) {
+          const blobRef = await storeBlob(params[dataKey]);
+          recordParams = { ...params, blobRef };
+          delete recordParams[dataKey];
+        }
+        await mgr.record(type, recordParams, {
           objectId: result.objectId,
           groupId: options.groupId,
           hierarchy: result.hierarchy
@@ -342,22 +386,23 @@ async function cadCommand(type, params = {}, options = {}) {
 }
 
 // Add a primitive with auto-offset so new objects don't stack on top of each other
-function addShape(type, params) {
-  const result = cadCommand(type, params);
+async function addShape(type, params) {
+  const result = await cadCommand(type, params);
   if (result.objectId && result.objectIds) {
     const idx = result.objectIds.indexOf(result.objectId);
     if (idx > 0) {
       const size = params.size || params.radius || params.majorRadius || 1;
-      cadCommand('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { record: false });
+      cadQuery('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { record: false });
     }
   }
   return result;
 }
 
-export { cadCommand, moduleRouter, reconcile, loadStyle, applyStyle, showFeedback, addShape };
+export { cadCommand, cadQuery, moduleRouter, reconcile, loadStyle, applyStyle, showFeedback, addShape };
 
 // Window globals: only what's needed for inline HTML handlers and E2E tests
 window.cadCommand = cadCommand;
+window.cadQuery = cadQuery;
 window.addShape = addShape;
 window.reconcile = reconcile;
 window.__applyStyle = applyStyle;

@@ -54,7 +54,7 @@
 </head>
 <body data-signals="{
     modelId: window.__modelId || 'default',
-    objectCount: 0, sceneEmpty: true, selectedId: '',
+    objectCount: 0, warmCount: 0, sceneEmpty: true, selectedId: '',
     boolSelA: '', boolSelB: '', boolLabel: 'Click first object', boolReady: false,
     canUndo: false, canRedo: false,
     feedback: '', feedbackError: false,
@@ -408,6 +408,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <!-- ═══════════════════ STATUS BAR ═══════════════════ -->
     <footer class="app-status" data-testid="status-bar">
         <span data-text="'Objects: ' + $objectCount"></span>
+        <span data-show="$warmCount > 0" data-text="'(' + ($objectCount - $warmCount) + ' hot, ' + $warmCount + ' warm)'" class="opacity-60"></span>
         <span data-show="$selectedId" data-text="'Selected: ' + ($selectedId ? $selectedId.slice(0,8) : '')"></span>
         <span class="flex-1"></span>
         <span id="status-mode" class="opacity-50"></span>

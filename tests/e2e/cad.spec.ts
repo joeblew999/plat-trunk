@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   waitForReady, getObjectCount, getObjectIds, canvas,
   apiCommand, pause, docScreenshot, saveExample,
+  waitForObjectCount,
   CAPTURE_SCREENSHOTS, CAPTURE_EXAMPLES,
 } from './helpers';
 
@@ -137,23 +138,19 @@ test.describe('CAD Operations', () => {
 
     // Undo via keyboard (exercises the UI wiring)
     await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(1);
+    await waitForObjectCount(page, 1);
 
     await page.keyboard.press('Control+Shift+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(2);
+    await waitForObjectCount(page, 2);
 
     await apiCommand(page, 'add_cylinder', { radius: 0.5, height: 1.0 });
     expect(await getObjectCount(page)).toBe(3);
 
     await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(2);
+    await waitForObjectCount(page, 2);
 
     await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(1);
+    await waitForObjectCount(page, 1);
   });
 
   test('undo after boolean subtract', async ({ page }) => {
@@ -170,8 +167,7 @@ test.describe('CAD Operations', () => {
     expect(await getObjectCount(page)).toBe(1);
 
     await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(2);
+    await waitForObjectCount(page, 2);
   });
 
   test('undo after delete', async ({ page }) => {
@@ -179,12 +175,10 @@ test.describe('CAD Operations', () => {
     const ids = await getObjectIds(page);
 
     await apiCommand(page, 'delete', { objectId: ids[0] });
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(0);
+    await waitForObjectCount(page, 0);
 
     await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(1);
+    await waitForObjectCount(page, 1);
   });
 
   test('export/import preserves UUIDs', async ({ page }) => {

@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed (Phase 0 is urgent — Automerge blob bloat is broken today)
+**Phases 0-3 Implemented + E2E Tested** — Full tiered object lifecycle with 8 tier-specific + 50 total Playwright e2e tests (all passing). Progressive loading, auto-eviction/promotion, GUI indicators, selection protection all verified. Nine bugs fixed during hardening (see Known Issues). Phases 4-5 proposed.
+
+Key files: blob-store.js, state.js, history.js, object-store.js, tier-manager.js, cad-viewport.js, index.html, wasm_app.rs, headless.rs, tier.spec.ts.
 
 ## Context
 
@@ -263,8 +265,6 @@ d.snapshots.push({ blobRef, atOpIndex: d.operations.length });
 
 **Content-addressing gives us deduplication for free:** If the same IFC file is imported twice, only one copy is stored. If two snapshots have the same scene state, one blob.
 
-**Migration:** Existing Automerge docs with inline blobs can be migrated lazily — on load, detect inline data, store to blob store, update the op to use `blobRef`.
-
 **Result:** The Automerge doc stays small (ops are ~100 bytes each, snapshot refs are ~80 bytes). Large data lives in IndexedDB (`cad-blobs`), addressed by content hash. This is the foundation for everything else — per-object storage, cross-device sync, R2 upload all work with content-addressed blobs.
 
 ### Phase 1: Per-Object IndexedDB Store
@@ -499,6 +499,201 @@ Phase 5: Spatial index for geo-aware tier decisions              ← city-scale 
 | [history.js:51](web/gui/history.js#L51) | IndexedDB adapter (`cad-docs`) | Automerge store; new stores are separate |
 | ADR-0023 | Georeferencing — GeoReference struct, RTC offset | Spatial index for Phase 5 |
 | ADR-0024 | Multi-WASM plugins — cad-renderer independence | Renderer owns LOD proxy rendering |
+
+## Known Issues / Tech Debt
+
+Discovered during Phase 2 implementation and browser testing.
+
+### 1. ~~`cadCommand()` is async — broke all sync callers~~ (FIXED)
+
+**Root cause:** `cadCommand` was made `async` in Phase 0 (for `storeBlob` + `mgr.record`). This silently broke every caller that doesn't `await` it — they get a Promise, not the result. Affected: `pick_at` (selection broken), `set_camera` (camera never pushed), `addShape` (auto-offset broken), `zoomTo`, `deselect`, and the tier manager.
+
+**Note:** Issue originally diagnosed as "reconcile() strips camera data" — that was wrong. The spread merge `{ ...result, ...state }` preserves camera. The real problem was all callers getting a Promise instead of the result.
+
+**Fix (applied):** Added `cadQuery()` — a sync function for non-recording WASM commands. `cadCommand` with `record: false` now delegates to `cadQuery` internally, so it also returns synchronously. Updated all callers in `cad-viewport.js` and `tier-manager.js` to use `cadQuery`. Made `addShape` async + await.
+
+### 2. ~~Stale IndexedDB entries survive Wipe and accumulate across sessions~~ (FIXED)
+
+**Root cause:** The Wipe button (`clear_data`) only called `localStorage.clear()`. The `cad-blobs` and `cad-objects` IndexedDB databases were never cleared. This caused:
+- `listObjects()` returning ghost objects from previous sessions
+- `promoteObject()` importing stale geometry into WASM
+- Tier manager's `_warmSpheres` map getting out of sync with IDB
+
+**Fix (applied):**
+- Wipe handler now also calls `indexedDB.deleteDatabase('cad-blobs')` and `indexedDB.deleteDatabase('cad-objects')`
+- Added `clearObjects(modelId)` to `object-store.js` for model-scoped cleanup
+- `resetTierState()` in `tier-manager.js` now clears both in-memory maps AND IDB entries
+- `_replayScene()` in `history.js` calls `resetTierState()` before rebuilding the scene
+
+### 3. ~~Tier manager tick re-entrancy~~ (FIXED)
+
+**Root cause:** `tick()` is async (IDB reads/writes). If a tick was in-progress when the next interval fired, two ticks could run concurrently, potentially double-evicting or double-promoting the same object.
+
+**Fix (applied):** Added `_tickInProgress` guard — subsequent ticks are skipped while one is running.
+
+### 4. ~~Legacy snapshot format not handled in replay~~ (FIXED)
+
+**Root cause:** `_replayScene()` had a comment saying "Supports both legacy inline (snap.json) and blobRef" but the code only handled `blobRef`. Models created before Phase 0 (with inline `snap.json` snapshots) would silently lose fast replay and fall back to full op-by-op replay. Additionally, `!snap.atOpIndex` was falsy for `atOpIndex === 0`.
+
+**Fix (applied):** Snapshot loading now checks for `snap.blobRef` first, then falls back to `snap.json` (legacy inline). Changed `!snap.atOpIndex` to `snap.atOpIndex == null`.
+
+### 5. ~~Selection state lost during Automerge replay~~ (FIXED)
+
+**Root cause:** `clear_scene()` clears `s.selected` in WASM, and `import_scene()` does not restore it. The tier manager's selected-object guard was ineffective during replay.
+
+**Fix (applied):** `_replayScene()` now issues `cadCommand('select', { id: newSel })` after replay to restore selection in WASM (not just Datastar signals). The tier manager's "never evict selected" guard works correctly across replays. E2E test in tier.spec.ts verifies this.
+
+### 7. ~~Newly created objects evicted immediately~~ (FIXED)
+
+**Root cause:** `_lastInteraction.get(objectId)` returns `undefined` for objects never "touched" (selected/edited). The idle check `now - (undefined || 0)` is always > IDLE_TIMEOUT, making freshly created objects immediately eviction-eligible.
+
+**Fix (applied):** When the tier manager first sees an object with no interaction record, it sets `_lastInteraction.set(objectId, now)` and skips eviction for that tick. This gives objects at least one full idle timeout cycle before they can be evicted.
+
+### 8. ~~Blob params contain `undefined` — Automerge rejects~~ (FIXED)
+
+**Root cause:** Phase 0 blob extraction did `recordParams = { ...params, [dataKey]: undefined, blobRef }`. Automerge's `push()` rejects `undefined` values with `RangeError: Cannot assign undefined value`.
+
+**Fix (applied):** Changed to `delete recordParams[dataKey]` instead of setting to `undefined`. Fixed 3 previously-failing e2e tests (save/load, export/import, BIM import).
+
+### 9. ~~`waitForReady()` didn't wait for Automerge initialization~~ (FIXED)
+
+**Root cause:** `waitForReady()` in `tests/e2e/helpers.ts` only checked for `window.sceneController` and `typeof cadCommand === 'function'`. Automerge's `CadDocManager` initializes asynchronously and takes longer than WASM. Operations executed in WASM but never got recorded to Automerge (handle was null), so undo had nothing to undo. This was the root cause of 3 pre-existing undo test failures.
+
+**Fix (applied):** Added `&& (window as any).cadDocManager?.handle` to the `waitForReady()` check, ensuring tests wait for full bootstrapping (WASM + cadCommand + Automerge handle).
+
+### 10. ~~`undo()`/`redo()` didn't await `_replayScene()`~~ (FIXED)
+
+**Root cause:** `undo()`, `redo()`, and `rollback()` in `history.js` called `this._replayScene()` without `await`. Since `_replayScene()` is async (IDB reads, tier reset, WASM import), the functions returned before replay completed. `handleJsCommand` in `state.js` also didn't await the undo/redo calls.
+
+**Fix (applied):** Made `undo()`, `redo()`, `rollback()` async with `await this._replayScene()`. Updated `handleJsCommand` in `state.js` to `await mgr.undo()` / `await mgr.redo()`.
+
+### 11. ~~`_replayScene()` had no try/finally on `_replayInProgress`~~ (FIXED)
+
+**Root cause:** If `_replayScene()` threw an error, the `_replayInProgress` guard flag would stay `true` forever, silently blocking all future undo/redo/replay operations.
+
+**Fix (applied):** Wrapped the body of `_replayScene()` in `try {} finally { this._replayInProgress = false; }`.
+
+### 12. ~~`<cad-outliner>` missing `data-oid` attribute~~ (FIXED)
+
+**Root cause:** The Lit web component `<cad-outliner>` rendered `data-testid="outliner-item"` and `title="${id}"` on outliner buttons, but never `data-oid="${id}"`. The actors e2e test used `[data-oid="${objectId}"]` locator to verify API-driven changes were visible in the GUI.
+
+**Fix (applied):** Added `data-oid="${id}"` to the button element in `cad-outliner.js`.
+
+### 13. ~~`createDocument()` didn't await `record()`~~ (FIXED)
+
+**Root cause:** In `history.js` `createDocument()`, the initial `this.record('add_cube', ...)` call was not awaited. The subsequent `_localOpCount = this._getDocOpCount()` could read 0 before the op was written.
+
+**Fix (applied):** Added `await` before `this.record('add_cube', ...)`.
+
+### 6. ~~`get_bounding_spheres()` falls back to origin+0 for cache misses~~ (FIXED)
+
+**Root cause:** `get_bounding_spheres()` looked up object IDs in the `bounding_spheres` vec via linear search. If the ID wasn't found (stale cache after delete/re-add), it returned `(Point3::origin(), 0.0)` — making distant objects appear at the origin with zero radius. The tier manager would never evict them (distance 0 from any camera near origin).
+
+**Fix (applied):** `get_bounding_spheres()` now computes directly from `obj.pick_mesh.bounding_sphere()`, bypassing the cache entirely. The `SharedState.bounding_spheres` vec is still maintained for picking but is no longer the source of truth for tier management.
+
+## Phase 3 Implementation: Progressive Model Loading
+
+### How It Works
+
+When `_replayScene()` loads a snapshot with >= 50 entries, it uses the progressive path instead of the monolithic `import_scene()`:
+
+1. **Parse snapshot** → `ExportEntry[]` with `bounding_sphere` on each entry
+2. **Scan remaining ops** → collect object IDs that must be Hot (needed for post-snapshot replay)
+3. **Frustum cull** via `THREE.Frustum.intersectsSphere()` using the `<cad-viewport>` camera — no custom math, just the already-loaded Three.js
+4. **Hot** = viewport-visible + needed-by-ops → `import_entry()` each into WASM
+5. **Warm** = rest → `bulkPutObjects()` to IDB + `add_lod_proxy()` for visual context
+6. **`registerWarmObjects()`** → tier manager knows about Warm objects for future promotion
+7. **Replay remaining ops** → only targets Hot objects (all referenced IDs were included in step 2)
+
+### Verified Test (61-object spatially-distributed model)
+
+Objects placed in 4 spatial groups to exercise frustum culling realistically:
+- **Group A** (15 objects): Near origin (in camera frustum)
+- **Group B** (15 objects): Behind camera (x ≈ -100)
+- **Group C** (15 objects): Far left (z ≈ -100)
+- **Group D** (15 objects): Far below (y ≈ -100)
+- **+1** pre-existing object from prior session
+
+Spatial spread: x=[-97, 26], y=[-100, 25], z=[-3, 26]. Camera at (1.5, 1.5, 1.5).
+
+| Metric | Value |
+|--------|-------|
+| Total objects | 61 |
+| Initial Hot (frustum-visible) | 8 |
+| Initial Warm (IDB + LOD proxy) | 53 |
+| Hot + Warm = Total | 8 + 53 = 61 |
+| Tier manager promotions (dist < 50) | 32 |
+| Steady-state Hot | 40 |
+| Steady-state Warm | 21 |
+| Footer display | `Objects: 61 (40 hot, 21 warm)` |
+
+### Rust: `ExportEntry.bounding_sphere`
+
+Added `bounding_sphere: Option<[f64; 4]>` to `ExportEntry` (both `wasm_app.rs` and `headless.rs`). Populated by `export_entry()` and `export_scene()` from the object's `pick_mesh.bounding_sphere()`. Format: `[cx, cy, cz, radius]`.
+
+- `#[serde(default, skip_serializing_if = "Option::is_none")]` — backward-compatible with old serialized data
+- Enables JS to do viewport frustum culling without loading geometry from IDB
+
+### JS: `object-store.js` Phase 3 API
+
+| Function | Purpose | Status |
+|----------|---------|--------|
+| `bulkPutObjects(modelId, items)` | Batch-import `ExportEntry[]` from snapshot to IDB in single transaction | **Verified** |
+| `listObjectsWithSpheres(modelId)` | Return `{objectId, boundingSphere}[]` for viewport culling without loading geometry | **Verified** |
+| `putObject()` updated | Now extracts and stores `boundingSphere` from ExportEntry JSON | **Verified** |
+
+### JS: `tier-manager.js` Phase 3 API
+
+| Function | Purpose | Status |
+|----------|---------|--------|
+| `registerWarmObjects(sphereMap)` | Register Warm objects from progressive load (never were Hot) | **Verified** |
+
+### Threshold
+
+`PROGRESSIVE_THRESHOLD = 50` — models with < 50 objects use the existing monolithic path (fast enough). Progressive loading only kicks in for larger models where the split matters.
+
+### GUI Tier Indicators
+
+The tier system publishes live stats to the UI via Datastar signals:
+
+- **Footer**: `Objects: N (X hot, Y warm)` — parenthetical only shown when warmCount > 0
+- **Viewport HUD**: `N obj` — shows total (Hot + Warm)
+- **Live Signals panel**: `objectCount` (total), `warmCount` (Warm tier)
+- **Console**: `[Progressive] X Hot, Y Warm, Z remaining ops` on load; `[TierManager] promote/evict {id} dist={d}` on each tier transition
+
+Implementation:
+- `window.__warmCount` published by tier-manager.js on each evict/promote tick + registerWarmObjects + resetTierState
+- `state.js` `reconcileMetadata()` reads `window.__warmCount`, sets `r.objectCount = ids.length + wc` and `r.warmCount = wc`
+- `_publishWarmCount()` triggers a reconcile via `window.reconcile({})` to push signal updates to DOM (uses reconcile directly, NOT cadCommand — avoids recording spurious get_state ops in Automerge)
+
+### What Remains for Phase 4 (R2 Cloud Tier)
+
+1. **Worker R2 endpoints** — `PUT /api/models/{modelId}/snapshot` and `GET /api/models/{modelId}/snapshot`
+2. **D1 metadata table** — `{ modelId, version, objectCount, size, timestamp }`
+3. **Client upload/download** — triggered by explicit Save / model open
+
+### What Remains for Phase 5 (Spatial Index)
+
+1. **R-tree or grid index** — spatial data structure for 100K+ objects
+2. **ADR-0023 GeoReference integration** — RTC offset for large Mercator coordinates
+3. **Frustum + spatial query** — combine camera frustum with spatial index for geo-aware tier decisions
+
+## E2E Test Coverage (`tests/e2e/tier.spec.ts`)
+
+| Test | What it exercises |
+|------|-------------------|
+| evict and promote via export/import per-object | Single-object IDB round-trip |
+| bounding_sphere present in export_entry | Rust ExportEntry.bounding_sphere population |
+| warmCount signal and footer update on eviction | Datastar warmCount signal, footer display |
+| clearObjects removes IDB entries on wipe | Model-scoped IDB cleanup |
+| bulkPutObjects and listObjectsWithSpheres | Phase 3 batch IDB API + bounding sphere storage |
+| selection restored after replay preserves WASM state | Fix #5 verification — WASM select after replay |
+| progressive load splits Hot/Warm by frustum | Full progressive path (55+ objects, THREE.Frustum) |
+| tier manager auto-evicts on zoom out, auto-promotes on zoom in | Real tier manager cycle with `setThresholds({ idle: 0 })` |
+
+All 8 tier tests pass. Full suite: 50/50 tests passing (including 3 undo tests in cad.spec.ts and 1 actors test that were previously failing — fixed by bugs #9, #10, #12).
+
+-----
 
 ## References
 
