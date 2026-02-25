@@ -1,4 +1,2 @@
 # Cloudflare Pages redirects
-# Old Hugo paths → new VitePress paths
-/docs/user/* /docs/user/:splat 301
-/docs/technical/* /docs/technical/:splat 301
+# Add rules here if old URLs need mapping to new paths

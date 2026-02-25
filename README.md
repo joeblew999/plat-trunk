@@ -11,8 +11,10 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 | Production | https://cad.ubuntusoftware.net |
 | Staging | https://truck-cad.gedw99.workers.dev |
 | Local | http://localhost:8788 |
+| Docs | https://cad-docs.pages.dev |
 | API Docs | http://localhost:8788/api-docs |
 | MCP | http://localhost:8788/mcp |
+| LLM Docs | https://cad-docs.pages.dev/llms.txt |
 | GitHub | https://github.com/joeblew999/plat-trunk |
 | CF Deployments | [Dashboard](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
 
@@ -33,7 +35,7 @@ AI Agent → Bridge (stdio) → Worker /mcp (JSON-RPC) → SSE relay → browser
 
 The browser must be open — it runs the WASM kernel. The Worker relays commands via SSE.
 
-29 tools: 27 CAD commands + `cad_health` + `cad_schema`.
+33 tools: 27 CAD commands + `cad_health` + `cad_schema` + 4 docs tools (`cad_docs_*`).
 
 ### Architecture
 
@@ -87,17 +89,17 @@ All routes are model-scoped (`{modelId}` defaults to `default`).
 
 ## Tests & Docs
 
-Tests and docs are the same pipeline. E2E tests produce the screenshots, videos, and example scenes that the Hugo docs site references.
+Tests and docs are the same pipeline. E2E tests produce the screenshots, videos, and example scenes that the VitePress docs site references.
 
 ```
-cad.spec.ts + sketch.spec.ts  ──SCREENSHOTS=1──→  docs/hugo/static/screenshots/*.png
+cad.spec.ts + sketch.spec.ts  ──SCREENSHOTS=1──→  website/public/screenshots/*.png
                                ──EXAMPLES=1────→  web/gui/examples/*.json
-doc-videos.spec.ts             ──always records──→  docs/hugo/static/videos/*.webm
+                               ──DOCS=1────────→  website/public/videos/*.webm
                                                           ↓
-                                                    Hugo site + R2
+                                                    VitePress → Cloudflare Pages
 ```
 
-Hugo pages (`docs/hugo/content/docs/user/`) reference these by name. Test output names must match.
+Docs site built with VitePress (same as hono.dev). LLM docs auto-generated at build time (`llms.txt`, `llms-full.txt`, `llms-small.txt`).
 
 ```bash
 # Setup (one-time)
@@ -113,11 +115,13 @@ task truck:test:e2e           # Fast
 task truck:test:e2e:slow      # + pauses + video (SLOW=1)
 task truck:test:sketch        # Sketch tests only
 task truck:test:sync          # Cross-tab Automerge sync (runs alone)
-task truck:test:videos        # Record doc videos (webm)
-task truck:test:all           # All tests + screenshots + examples + videos
+task truck:test:all           # All tests + screenshots + examples
 
-# Docs (same tests, pointed at BASE_URL, uploads to R2)
-task truck:docs:publish       # Screenshots + videos → R2
+# Docs
+task docs:serve               # VitePress dev server (localhost:5173)
+task docs:build               # Build static site
+task docs:deploy              # Deploy to Cloudflare Pages
+task docs:screenshots         # Generate screenshots + videos from E2E tests
 task truck:ci                 # Full CI: cargo check + test + WASM build
 ```
 
