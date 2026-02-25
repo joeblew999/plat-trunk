@@ -12,7 +12,7 @@
  *   - Zoom in/out → promote/evict cycle
  */
 import { test, expect } from '@playwright/test';
-import { waitForReady, apiCommand, getObjectCount, getObjectIds, pause, IS_SLOW } from './helpers';
+import { waitForReady, apiCommand, getObjectCount, getObjectIds, animationFrame, IS_SLOW } from './helpers';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ async function forceSnapshot(page: import('@playwright/test').Page) {
     const mgr = (window as any).cadDocManager;
     if (mgr?.forceSnapshot) mgr.forceSnapshot();
   });
-  await pause(page);
+  await animationFrame(page);
 }
 
 /** Zoom via wheel events on the canvas */
@@ -104,11 +104,11 @@ async function waitForTierStable(page: import('@playwright/test').Page, timeoutM
 test.describe('ADR-0025 Tier System', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const modelId = `test-tier-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
     // Clear scene to avoid pre-existing objects from Automerge doc replay
     await apiCommand(page, 'clear');
-    await pause(page);
+    await animationFrame(page);
   });
 
   test('evict and promote via export/import per-object', async ({ page }) => {
@@ -167,7 +167,7 @@ test.describe('ADR-0025 Tier System', () => {
       (window as any).__warmCount = 1;
       (window as any).cadCommand('get_state', {}, { reconcile: true });
     }, ids[0]);
-    await pause(page);
+    await animationFrame(page);
 
     // WASM has 1 fewer, warm count is 1, total unchanged
     expect(await getObjectCount(page)).toBe(hotCount - 1);
@@ -251,7 +251,7 @@ test.describe('ADR-0025 Tier System', () => {
 
     // Select the first cube
     await apiCommand(page, 'select', { id: ids[0] }, { ephemeral: true });
-    await pause(page);
+    await animationFrame(page);
 
     // Verify WASM knows about the selection
     const wasmSelected = await page.evaluate(() => {
@@ -278,10 +278,10 @@ test.describe('ADR-0025 Progressive Loading', () => {
 
   test('progressive load splits Hot/Warm by frustum', async ({ page }, testInfo) => {
     const modelId = `test-progressive-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
     await apiCommand(page, 'clear');
-    await pause(page);
+    await animationFrame(page);
 
     // Create 55 objects (above PROGRESSIVE_THRESHOLD=50):
     // Group A: 15 near origin (should be Hot after reload)
@@ -302,7 +302,7 @@ test.describe('ADR-0025 Progressive Loading', () => {
     await page.waitForTimeout(500);
 
     // Reload — triggers _replayScene → progressive path
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
 
     // Wait for Automerge doc to load and scene to rebuild
@@ -313,6 +313,15 @@ test.describe('ADR-0025 Progressive Loading', () => {
       },
       { timeout: 30_000 },
     );
+
+    // Lower idle timeout so tier manager can evict immediately after replay
+    await page.evaluate(async () => {
+      const tm = await import('/tier-manager.js');
+      tm.setThresholds({ idle: 0 });
+    });
+
+    // Give tier manager time to run eviction ticks after replay
+    await page.waitForTimeout(3000);
 
     // Wait for tier manager to settle
     const stats = await waitForTierStable(page);
@@ -332,10 +341,10 @@ test.describe('ADR-0025 Progressive Loading', () => {
 
   test('tier manager auto-evicts on zoom out, auto-promotes on zoom in', async ({ page }, testInfo) => {
     const modelId = `test-zoom-real-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
     await apiCommand(page, 'clear');
-    await pause(page);
+    await animationFrame(page);
 
     // Lower idle timeout to 0 so tier manager can evict immediately
     // (production default is 30s — too slow for tests)

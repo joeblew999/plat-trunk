@@ -14,28 +14,48 @@ export const CAPTURE_SCREENSHOTS = !!process.env.SCREENSHOTS;
 export const CAPTURE_EXAMPLES = !!process.env.EXAMPLES;
 export const CAPTURE_VIDEOS = !!process.env.VIDEOS;
 export const IS_SLOW = !!process.env.SLOW;
+export const DOCS_MODE = !!process.env.DOCS;
 
-/** Pause between steps — short in fast mode, longer in slow/video mode */
+/** @deprecated Use waitForObjectCount/waitForSelectedId/animationFrame instead. */
 export async function pause(page: Page) {
+  await page.waitForTimeout(IS_SLOW ? 500 : 50);
+}
+
+/** Pure animation delay — only for visual pauses (video recording, etc.) */
+export async function animationFrame(page: Page) {
   await page.waitForTimeout(IS_SLOW ? 500 : 50);
 }
 
 // ─── Stable API: cadCommand is the ONLY way to drive tests ─────
 
-/** Wait for WASM SceneController + cadCommand + Automerge to be ready */
+/**
+ * Wait for the app to be fully ready (ADR-0026 Phase 1).
+ *
+ * Checks the single `window.__appReady` flag set after ALL init phases complete:
+ * WASM SceneController, cadCommand, Automerge cadDocManager.
+ *
+ * NO trailing sleep — if __appReady is true, the app is ready. Period.
+ */
 export async function waitForReady(page: Page) {
   await page.waitForFunction(
-    () => (window as any).sceneController
-      && typeof (window as any).cadCommand === 'function'
-      && (window as any).cadDocManager?.handle,
+    () => (window as any).__appReady === true,
     { timeout: 30_000 },
   );
-  await page.waitForTimeout(IS_SLOW ? 1000 : 50);
 }
 /** @deprecated Use waitForReady */
 export const waitForWasm = waitForReady;
 
-/** Execute via cadCommand — the ONE test entry point for mutations */
+/**
+ * Execute a cadCommand via the page — the ONE test entry point for mutations.
+ *
+ * Completion contract (ADR-0026):
+ * - On return: WASM state is updated (object_count, object_ids, etc.)
+ * - NOT on return: Automerge recording, Datastar reconcile, Lit re-render,
+ *   SSE push, tier manager reaction, IndexedDB blob write.
+ *
+ * For WASM assertions: assert immediately after apiCommand().
+ * For UI/Automerge/SSE assertions: use waitForObjectCount(), waitForSelectedId(), etc.
+ */
 export async function apiCommand(
   page: Page,
   type: string,
@@ -77,16 +97,14 @@ export function canvas(page: Page) {
   return page.locator('[data-testid="cad-canvas"]');
 }
 
-/** Click a toolbar button by its data-testid */
+/** Click a toolbar button by its data-testid — caller waits for the specific effect */
 export async function clickToolbar(page: Page, testId: string) {
   await page.click(`[data-testid="${testId}"]`);
-  await pause(page);
 }
 
-/** Click an outliner item by object ID */
+/** Click an outliner item by object ID — caller waits for the specific effect */
 export async function clickOutlinerItem(page: Page, objectId: string) {
   await page.click(`[data-testid="outliner-item"][data-oid="${objectId}"]`);
-  await pause(page);
 }
 
 /** Wait for object count to reach expected (polls WASM, not signals) */
@@ -104,6 +122,27 @@ export async function waitForObjectCount(
   const actual = await getObjectCount(page);
   expect(actual, `object_count() did not reach ${expected} within ${timeoutMs}ms`).toBe(expected);
   return actual;
+}
+
+/** Wait for selection to match expected ID (polls WASM, not Datastar) */
+export async function waitForSelectedId(page: Page, expectedId: string, timeoutMs = 5_000) {
+  await page.waitForFunction(
+    (id) => {
+      const ctrl = (window as any).sceneController;
+      return ctrl?.get_selected_id?.() === id;
+    },
+    expectedId,
+    { timeout: timeoutMs },
+  );
+}
+
+/** Wait for arbitrary WASM state condition */
+export async function waitForWasmState(
+  page: Page,
+  checkFn: string,
+  timeoutMs = 5_000,
+) {
+  await page.waitForFunction(new Function('return ' + checkFn) as () => boolean, { timeout: timeoutMs });
 }
 
 /** Wait for Automerge CadDocumentManager to fully initialize */
@@ -125,6 +164,18 @@ export async function getAutomergeUrl(page: Page): Promise<string> {
 }
 
 // ─── Doc/screenshot helpers ────────────────────────────────────
+
+/** Visual pause — only takes effect in DOCS mode */
+export async function docPause(page: Page, ms = 800) {
+  if (DOCS_MODE) await page.waitForTimeout(ms);
+}
+
+/** Screenshot at a named point — only in DOCS mode */
+export async function docCapture(page: Page, name: string) {
+  if (!DOCS_MODE) return;
+  mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: path.join(SCREENSHOTS_DIR, `${name}.png`), fullPage: false });
+}
 
 export async function docScreenshot(page: Page, name: string) {
   await page.screenshot({

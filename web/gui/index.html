@@ -20,6 +20,10 @@
                 localStorage.removeItem('cad-last-model-id');
                 location.href = '/?local';
             }
+            // ADR-0026 Phase 4: Test isolation — clean IDB + tier state before init
+            if (params.has('reset')) {
+                window.__resetRequested = true;
+            }
             // Extract modelId from URL: /model/:id or ?model=id
             var match = location.pathname.match(/^\/model\/([^/]+)/);
             var queryModel = params.get('model');
@@ -445,6 +449,15 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <script type="module">
         const v = window.__cbv;
 
+        // ADR-0026 Phase 4: Clean browser-side state before init when ?reset=1
+        if (window.__resetRequested) {
+            await Promise.all([
+                new Promise(r => { const req = indexedDB.deleteDatabase('cad-objects'); req.onsuccess = r; req.onerror = r; }),
+                new Promise(r => { const req = indexedDB.deleteDatabase('cad-blobs'); req.onsuccess = r; req.onerror = r; }),
+            ]);
+            if (window.resetTierState) window.resetTierState();
+        }
+
         // 0. Register <live-signals> debug panel + version picker (no WASM dependency)
         await import('./live-signals.js?v=' + v);
         await import('./version-picker.js?v=' + v);
@@ -506,6 +519,11 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                     console.warn('Automerge init failed:', err);
                 }
             }
+
+            // ADR-0026 Phase 1: Single readiness signal for all subsystems.
+            // Set ONLY after WASM + cadCommand + Automerge are all initialized.
+            window.__appReady = true;
+            console.log('App ready.');
         }
     </script>
     <script>

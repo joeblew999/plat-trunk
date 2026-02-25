@@ -9,11 +9,11 @@ const IS_SLOW = !!process.env.SLOW;
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
-  timeout: IS_SLOW ? 120_000 : 60_000,
-  expect: { timeout: IS_SLOW ? 30_000 : 15_000 },
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
   fullyParallel: false, // run serial to avoid overwhelming wrangler dev
   workers: 1,           // single worker for stability
-  retries: 1,
+  retries: 0,           // ADR-0026: deterministic tests don't need retries
   reporter: [['html', { open: 'never' }], ['list']],
 
   use: {
@@ -22,7 +22,7 @@ export default defineConfig({
     headless: false,
     channel: 'chrome',
     viewport: { width: 1280, height: 800 },
-    actionTimeout: IS_SLOW ? 20_000 : 10_000,
+    actionTimeout: 10_000,
     screenshot: 'off', // we take manual screenshots for docs
     video: IS_SLOW ? 'on' : 'retain-on-failure',
   },
@@ -30,15 +30,14 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e',
-      testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts', 'bim.spec.ts', 'tier.spec.ts'],
-      testIgnore: [/cross-tab-sync\.spec\.ts/, /doc-videos\.spec\.ts/, /cad-ui\.spec\.ts/],
+      testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts', 'bim.spec.ts', 'tier.spec.ts', 'health.spec.ts'],
+      testIgnore: [/cross-tab-sync\.spec\.ts/, /cad-ui\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },
     {
       // UI interaction tests — toolbar clicks, outliner, canvas, data-testid selectors
       name: 'ui',
       testMatch: /cad-ui\.spec\.ts/,
-      retries: 1,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -46,18 +45,6 @@ export default defineConfig({
       name: 'sync',
       testMatch: /cross-tab-sync\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      // Doc video recording — always records, runs serial (one browser at a time)
-      name: 'docs',
-      testMatch: /doc-videos\.spec\.ts/,
-      timeout: 120_000,
-      fullyParallel: false,
-      use: {
-        ...devices['Desktop Chrome'],
-        video: 'on',
-        actionTimeout: 20_000,
-      },
     },
   ],
 });

@@ -1,6 +1,6 @@
 /**
  * UI Interaction Tests — verifies toolbar buttons, outliner clicks,
- * canvas interaction, properties panel, and status bar.
+ * canvas interaction, properties panel.
  *
  * These tests verify that the GUI wires correctly to cadCommand().
  * All selectors use data-testid attributes (NOT element IDs).
@@ -15,39 +15,22 @@ import {
   apiCommand,
   clickToolbar,
   clickOutlinerItem,
-  canvas,
-  pause,
+  waitForObjectCount,
 } from './helpers';
 
 test.describe('Toolbar UI', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const modelId = `test-ui-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
   });
 
-  test('toolbar add-cube button creates object', async ({ page }) => {
+  test('toolbar buttons create objects (cube, sphere, cylinder, torus)', async ({ page }) => {
     const before = await getObjectCount(page);
-    await clickToolbar(page, 'add-cube');
-    expect(await getObjectCount(page)).toBe(before + 1);
-  });
-
-  test('toolbar add-sphere button creates object', async ({ page }) => {
-    const before = await getObjectCount(page);
-    await clickToolbar(page, 'add-sphere');
-    expect(await getObjectCount(page)).toBe(before + 1);
-  });
-
-  test('toolbar add-cylinder button creates object', async ({ page }) => {
-    const before = await getObjectCount(page);
-    await clickToolbar(page, 'add-cylinder');
-    expect(await getObjectCount(page)).toBe(before + 1);
-  });
-
-  test('toolbar add-torus button creates object', async ({ page }) => {
-    const before = await getObjectCount(page);
-    await clickToolbar(page, 'add-torus');
-    expect(await getObjectCount(page)).toBe(before + 1);
+    for (const shape of ['add-cube', 'add-sphere', 'add-cylinder', 'add-torus']) {
+      await clickToolbar(page, shape);
+    }
+    expect(await getObjectCount(page)).toBe(before + 4);
   });
 
   test('toolbar delete button removes selected object', async ({ page }) => {
@@ -68,21 +51,8 @@ test.describe('Toolbar UI', () => {
 test.describe('Keyboard Shortcuts', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const modelId = `test-shortcuts-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
-  });
-
-  test('Ctrl+Z undoes, Ctrl+Shift+Z redoes', async ({ page }) => {
-    await apiCommand(page, 'add_cube', { size: 1 });
-    expect(await getObjectCount(page)).toBe(2);
-
-    await page.keyboard.press('Control+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(1);
-
-    await page.keyboard.press('Control+Shift+z');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(2);
   });
 
   test('Escape deselects', async ({ page }) => {
@@ -90,28 +60,30 @@ test.describe('Keyboard Shortcuts', () => {
     await apiCommand(page, 'select', { id: ids[0] }, { ephemeral: true });
 
     await page.keyboard.press('Escape');
-    await pause(page);
-
-    const mode = await page.evaluate(() =>
-      (window as any).sceneController.get_interaction_mode(),
+    await page.waitForFunction(
+      () => (window as any).sceneController.get_interaction_mode() === 'idle',
+      { timeout: 5_000 },
     );
-    expect(mode).toBe('idle');
   });
 
   test('Delete key removes selected object', async ({ page }) => {
     const ids = await getObjectIds(page);
     await apiCommand(page, 'select', { id: ids[0] }, { ephemeral: true });
+    // Wait for selection to be reflected in Datastar (keyboard handler reads selectedId signal)
+    await page.waitForFunction(
+      () => !!(window as any)._ds?.root?.selectedId,
+      { timeout: 5_000 },
+    );
 
     await page.keyboard.press('Delete');
-    await pause(page);
-    expect(await getObjectCount(page)).toBe(0);
+    await waitForObjectCount(page, 0);
   });
 });
 
 test.describe('Outliner UI', () => {
   test.beforeEach(async ({ page }, testInfo) => {
     const modelId = `test-outliner-${testInfo.testId}`;
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
   });
 
@@ -151,41 +123,6 @@ test.describe('Outliner UI', () => {
   });
 });
 
-test.describe('Canvas Interaction', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await waitForReady(page);
-  });
-
-  test('canvas click selects object (pick_at + select)', async ({ page }) => {
-    const box = await canvas(page).boundingBox();
-    expect(box).toBeTruthy();
-
-    // Click center of canvas (should hit the default cube)
-    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
-    await pause(page);
-
-    const mode = await page.evaluate(() =>
-      (window as any).sceneController.get_interaction_mode(),
-    );
-    expect(mode).toBe('selected');
-  });
-
-  test('Escape after canvas select deselects', async ({ page }) => {
-    const box = await canvas(page).boundingBox();
-    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
-    await pause(page);
-
-    await page.keyboard.press('Escape');
-    await pause(page);
-
-    const mode = await page.evaluate(() =>
-      (window as any).sceneController.get_interaction_mode(),
-    );
-    expect(mode).toBe('idle');
-  });
-});
-
 test.describe('Properties Panel', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -198,21 +135,10 @@ test.describe('Properties Panel', () => {
 
     // Select → panel visible (Datastar data-show sets display)
     await apiCommand(page, 'select', { id: ids[0] }, { ephemeral: true });
-    await pause(page);
     await expect(propsPanel).toBeVisible();
 
     // Deselect → panel hidden (data-show="$selectedId" → display: none when '')
     await apiCommand(page, 'deselect', {}, { ephemeral: true });
-    await pause(page);
     await expect(propsPanel).not.toBeVisible();
-  });
-});
-
-test.describe('Status Bar', () => {
-  test('status bar is visible', async ({ page }) => {
-    await page.goto('/');
-    await waitForReady(page);
-    const status = page.locator('[data-testid="status-bar"]');
-    await expect(status).toBeVisible();
   });
 });

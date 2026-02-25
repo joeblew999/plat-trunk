@@ -41,4 +41,14 @@ document.addEventListener('keydown', (e) => {
         const sel = window._ds?.root?.selectedId;
         if (sel) cadCommand('duplicate', { objectId: sel });
     }
+
+    // Delete / Backspace — delete selected object
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+        const tag = document.activeElement?.tagName?.toLowerCase();
+        if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') {
+            e.preventDefault();
+            const sel = window._ds?.root?.selectedId;
+            if (sel) cadCommand('delete', { objectId: sel });
+        }
+    }
 });

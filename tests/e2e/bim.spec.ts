@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForReady, getObjectCount, getObjectIds, apiCommand, pause } from './helpers';
+import { waitForReady, getObjectCount, getObjectIds, apiCommand } from './helpers';
 import fs from 'fs';
 import path from 'path';
 
@@ -27,11 +27,11 @@ test.describe('BIM / IFC Operations', () => {
     // 3. Select the first imported object
     const ids = await getObjectIds(page);
     await apiCommand(page, 'select', { id: ids[0] });
-    await pause(page);
 
-    // 4. Verify BIM metadata in UI signals
-    const bimType = await page.evaluate(() => (window as any)._ds.root.bimType);
-    const bimId = await page.evaluate(() => (window as any)._ds.root.bimId);
+    // 4. Verify BIM metadata via WASM query (not Datastar signals — ADR-0026 Problem 11)
+    const bimResult = await apiCommand(page, 'get_bim_metadata', { objectId: ids[0] }, { ephemeral: true });
+    const bimType = (bimResult as any).bim?.ifc_type || '';
+    const bimId = (bimResult as any).bim?.global_id || '';
 
     expect(bimType).toBeTruthy();
     expect(bimId).toBeTruthy();

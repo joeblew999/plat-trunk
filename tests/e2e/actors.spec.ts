@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForReady, getObjectCount, clickToolbar, pause, waitForObjectCount } from './helpers';
+import { waitForReady, getObjectCount, clickToolbar, apiCommand, waitForObjectCount } from './helpers';
 
 /**
  * ACTORS TEST
@@ -15,16 +15,13 @@ test.describe('Hybrid Actor Workflow', () => {
     modelId = `test-actors-${testInfo.testId}`;
     
     // 1. Human Actor opens the browser to a specific model
-    await page.goto(`/?model=${modelId}`);
+    await page.goto(`/?model=${modelId}&reset=1`);
     await waitForReady(page);
     
     // Ensure scene is clear for testing
     // WASM might add a default cube on load, so we clear it
-    await page.evaluate(() => (window as any).cadCommand('clear'));
+    await apiCommand(page, 'clear');
     await waitForObjectCount(page, 0);
-    
-    // Wait for the clear to be reported to the worker
-    await pause(page);
   });
 
   test('AI Actor (API) drives changes, Human Actor (GUI) sees them', async ({ page, request }) => {
