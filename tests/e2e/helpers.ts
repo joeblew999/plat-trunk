@@ -201,6 +201,7 @@ export async function saveExample(page: Page, filename: string) {
 export async function saveVideo(page: Page, filename: string) {
   const video = page.video();
   if (!video) return;
+  await page.close(); // finalize video recording
   mkdirSync(VIDEOS_DIR, { recursive: true });
   await video.saveAs(path.join(VIDEOS_DIR, `${filename}.webm`));
 }

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   waitForReady, getObjectCount, getObjectIds,
-  docCapture,
+  docCapture, saveVideo, DOCS_MODE,
 } from './helpers';
 
 test.describe('Sketch & Extrude', () => {
@@ -113,6 +113,7 @@ test.describe('Sketch & Extrude', () => {
     });
     expect(triId).toMatch(/^[0-9a-f]{8}-/);
     expect(await getObjectCount(page)).toBe(beforeCount + 2);
+    await docCapture(page, '12-sketch-triangle-extrude');
 
     // XZ plane square extrude
     const xzId = await page.evaluate(() => {
@@ -145,6 +146,7 @@ test.describe('Sketch & Extrude', () => {
       return ctrl.sketch_extrude(1.0);
     });
     expect(failId).toBe('');
+    if (DOCS_MODE) await saveVideo(page, 'sketch-and-extrude');
   });
 
   test('sketch export/import round-trip + cancel', async ({ page }) => {

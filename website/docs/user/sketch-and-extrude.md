@@ -1,5 +1,9 @@
 # Sketch and Extrude
 
+<video controls width="100%">
+  <source src="/videos/sketch-and-extrude.webm" type="video/webm">
+</video>
+
 Create 3D solids from 2D constrained sketches. This is the parametric modeling workflow: draw a 2D profile, add geometric constraints, solve, then extrude into a 3D solid.
 
 ## Quick Start: Rectangle Extrude

@@ -15,6 +15,11 @@ processes:
     availability:
       restart: on_failure
 
+  docs:
+    command: task docs:serve
+    availability:
+      restart: on_failure
+
   shape-viewer:
     command: task truck:run:shape-viewer
     availability:

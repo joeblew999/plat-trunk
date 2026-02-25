@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import {
   waitForReady, getObjectCount, getObjectIds, canvas,
-  apiCommand, docScreenshot, docCapture, saveExample,
+  apiCommand, docCapture, saveExample, saveVideo,
   waitForObjectCount,
-  CAPTURE_SCREENSHOTS, CAPTURE_EXAMPLES,
+  CAPTURE_EXAMPLES, DOCS_MODE,
 } from './helpers';
 
 // ─── CAD Operations (cadCommand layer) ─────────────────────────
@@ -19,8 +19,9 @@ test.describe('CAD Operations', () => {
   test('page loads with WebGPU canvas and default cube', async ({ page }) => {
     await expect(canvas(page)).toBeVisible();
     expect(await getObjectCount(page)).toBe(1);
-    if (CAPTURE_SCREENSHOTS) await docScreenshot(page, '01-initial-scene');
+    await docCapture(page, '01-initial-scene');
     if (CAPTURE_EXAMPLES) await saveExample(page, 'default-cube');
+    if (DOCS_MODE) await saveVideo(page, 'getting-started');
   });
 
   test('add primitives via cadCommand return UUIDs', async ({ page }) => {
@@ -51,6 +52,7 @@ test.describe('CAD Operations', () => {
     // All IDs are unique
     const ids = await getObjectIds(page);
     expect(new Set(ids).size).toBe(4);
+    if (DOCS_MODE) await saveVideo(page, 'adding-primitives');
   });
 
   test('translate object by UUID', async ({ page }) => {
@@ -65,6 +67,7 @@ test.describe('CAD Operations', () => {
     // UUID stays the same after translate
     const idsAfter = await getObjectIds(page);
     expect(idsAfter[0]).toBe(cubeId);
+    if (DOCS_MODE) await saveVideo(page, 'transforms');
   });
 
   test('select and deselect sets interaction mode', async ({ page }) => {
@@ -114,6 +117,7 @@ test.describe('CAD Operations', () => {
     const idsAfter = await getObjectIds(page);
     expect(idsAfter).toHaveLength(1);
     expect(idsAfter[0]).toBe(subResult.objectId);
+    if (DOCS_MODE) await saveVideo(page, 'boolean-subtract');
   });
 
   test('boolean union via cadCommand', async ({ page }) => {
@@ -156,6 +160,7 @@ test.describe('CAD Operations', () => {
 
     await apiCommand(page, 'add_cylinder', { radius: 0.5, height: 1.0 });
     expect(await getObjectCount(page)).toBe(3);
+    await docCapture(page, '09-ui-overview');
 
     await page.keyboard.press('Control+z');
     await waitForObjectCount(page, 2);
@@ -212,6 +217,7 @@ test.describe('CAD Operations', () => {
     const idsAfter = await getObjectIds(page);
     expect(idsAfter).toEqual(idsBefore);
     await docCapture(page, '08-save-load');
+    if (DOCS_MODE) await saveVideo(page, 'save-and-load');
   });
 
   test('set_style and set_color via cadCommand', async ({ page }) => {

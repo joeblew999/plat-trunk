@@ -84,7 +84,7 @@ tasks:
   screenshots:
     desc: Generate doc screenshots + videos from E2E tests
     cmds:
-      - cd {{.ROOT_DIR}}/tests && DOCS=1 bunx playwright test --project=e2e
+      - cd {{.ROOT_DIR}}/tests && DOCS=1 SLOW=1 bunx playwright test --project=e2e
 
   # ===========================================================================
   # Open in browser
