@@ -164,7 +164,7 @@ Future user/technical docs are written there directly — no sync step.
 
 ### Phase 3 — Taskfile update
 
-Replace `Taskfile.docs.yml`:
+Replace `Taskfile.vitepress.yml`:
 
 ```yaml
 vars:
@@ -221,7 +221,7 @@ With VitePress, wire them properly:
    <video src="/videos/getting-started.webm" controls />
    ```
 
-3. **`task docs:screenshots`** — runs Playwright with `DOCS=1` to produce all 12
+3. **`task vitepress:screenshots`** — runs Playwright with `DOCS=1` to produce all 12
    screenshots + 7 videos in one pass, directly into `website/public/`.
 
 4. **Build-time validation** — a VitePress `buildEnd` hook that checks all referenced
@@ -320,9 +320,9 @@ cached in the Worker's isolate for the duration of the request.
 ### Phase 7 — Cleanup (only after `website/` is fully verified)
 
 **Do not delete anything from `docs/` until `website/` is proven working:**
-- `task docs:serve` renders all pages
-- `task docs:build` produces a complete site
-- `task docs:deploy` succeeds to `cad-docs.pages.dev`
+- `task vitepress:serve` renders all pages
+- `task vitepress:build` produces a complete site
+- `task vitepress:build && task cf:pages:deploy` succeeds to `cad-docs.pages.dev`
 - MCP tools return correct content
 
 Once verified:
@@ -363,19 +363,22 @@ it with `--branch main`.
 
 #### Lifecycle tasks
 
-Add to `systems/docs/Taskfile.docs.yml`, mirroring the Worker tasks:
+All deploy tasks live in `taskfiles/Taskfile.cloudflare.yml` (shared with Workers):
 
 | Task | What it does |
 |------|-------------|
-| `docs:upload` | Build + deploy with `--branch v{{VERSION_SLUG}}` → creates `v0-7-0.cad-docs.pages.dev` |
-| `docs:promote` | Re-deploy latest version with `--branch main` → updates production |
-| `docs:preview` | Deploy with `--branch pr-{{PR_NUMBER}}` → creates `pr-42.cad-docs.pages.dev` |
-| `docs:smoke` | Curl the preview URL, check HTTP 200 + page title |
-| `docs:versions:json` | Write `website/docs-versions.json` (git SHA, version, URLs) |
+| `cf:pages:upload` | Deploy with `--branch v{{VERSION_SLUG}}` → creates `v0-7-0.cad-docs.pages.dev` |
+| `cf:pages:promote` | Re-deploy latest version with `--branch main` → updates production |
+| `cf:pages:deploy` | Upload + promote in one step |
+| `cf:pages:preview` | Deploy with `--branch pr-{{PR_NUMBER}}` → creates `pr-42.cad-docs.pages.dev` |
+| `cf:pages:smoke` | Curl the preview URL, check HTTP 200 + llms.txt |
+| `cf:pages:versions:json` | Write `website/cf-pages-versions.json` (git SHA, version, URLs) |
 
-#### `docs-versions.json`
+Build stays in `systems/docs/Taskfile.vitepress.yml` (`task vitepress:build`).
 
-Parallel structure to `web/gui/versions.json`:
+#### `cf-pages-versions.json`
+
+Parallel structure to `web/gui/cf-versions.json`:
 
 ```json
 [
@@ -396,16 +399,16 @@ Parallel structure to `web/gui/versions.json`:
 Update `.github/workflows/ci.yml` to use the versioned flow:
 
 ```yaml
-# Main push: upload tagged docs version (does NOT update production)
+# Main push: build + upload tagged docs version (does NOT update production)
 - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  run: task docs:upload
+  run: task vitepress:build && task cf:pages:upload
 
-# PR: upload per-PR docs preview
+# PR: build + upload per-PR docs preview
 - if: github.event_name == 'pull_request'
-  run: task docs:preview PR_NUMBER=${{ github.event.pull_request.number }}
+  run: task vitepress:build && task cf:pages:preview PR_NUMBER=${{ github.event.pull_request.number }}
 ```
 
-Production promotion is manual (`task docs:promote`), same as the Worker.
+Production promotion is manual (`task cf:pages:promote`), same as the Worker.
 
 #### PR comment update
 
@@ -426,18 +429,19 @@ and git SHA, but promote independently. This means:
 - **Independent promotion** — fix a docs typo without re-promoting the Worker
 - **Independent rollback** — revert docs without touching the Worker
 - **No asset size limits** — Pages has no cap (unlike Workers assets at 25/100 MB)
-- **Audit trail** — `docs-versions.json` + `web/gui/versions.json` together show exactly what's deployed
+- **Audit trail** — `cf-pages-versions.json` + `web/gui/cf-versions.json` together show exactly what's deployed
 
 #### Definition of Done (Phase 8)
 
-- [ ] `task docs:upload` creates a versioned Pages deployment with branch alias
-- [ ] `task docs:promote` deploys to production (`--branch main`)
-- [ ] `task docs:preview PR_NUMBER=42` creates PR preview
-- [ ] `task docs:smoke` validates a deployed URL
-- [ ] `docs-versions.json` generated alongside `web/gui/versions.json`
-- [ ] CI uses `docs:upload` (main) and `docs:preview` (PR) instead of direct deploy
-- [ ] PR comments include docs preview URL
-- [ ] `task docs:deploy` still works as a shortcut (upload + promote in one step)
+- [x] `task cf:pages:upload` creates a versioned Pages deployment with branch alias
+- [x] `task cf:pages:promote` deploys to production (`--branch main`)
+- [x] `task cf:pages:preview PR_NUMBER=42` creates PR preview
+- [x] `task cf:pages:smoke` validates a deployed URL
+- [x] `cf-pages-versions.json` generated alongside `web/gui/cf-versions.json`
+- [x] CI uses `cf:pages:upload` (main) and `cf:pages:preview` (PR) instead of direct deploy
+- [x] PR comments include docs preview URL
+- [x] `task cf:pages:deploy` still works as a shortcut (upload + promote in one step)
+- [x] All CF deploy tasks consolidated in `taskfiles/Taskfile.cloudflare.yml` (Workers + Pages)
 
 ### Staying in sync with honojs/website
 
@@ -464,7 +468,7 @@ The `.src/` clone is a reference, not a submodule. We own our copies.
 ### What changes
 - NEW: `website/` — self-contained VitePress project (mirrors honojs/website)
 - Content copied from `docs/` → `website/docs/` (user, technical, ROADMAP) + `docs/llms/` → `website/public/llms/`
-- `Taskfile.docs.yml` — points to `website/`, simplified (no sync, no Hugo binary)
+- `Taskfile.vitepress.yml` — points to `website/`, simplified (no sync, no Hugo binary)
 - `systems/truck/worker/src/index.ts` — 4 new MCP tools (`cad_docs_*`)
 - `tests/e2e/helpers.ts` — `SCREENSHOTS_DIR` / `VIDEOS_DIR` → `website/public/`
 - New deps: `vitepress`, `vue`, `@shikijs/vitepress-twoslash`, `vitepress-plugin-group-icons` (dev only, in `website/package.json`)
@@ -516,11 +520,11 @@ Static assets: 12 screenshots (~1.3 MB), 7 tutorial videos (~2.6 MB).
 
 ## Definition of Done
 
-- [x] `task docs:serve` starts VitePress dev server with all content visible
-- [x] `task docs:build` produces static site in `.vitepress/dist/`
-- [x] `task docs:deploy` deploys to `cad-docs.pages.dev`
+- [x] `task vitepress:serve` starts VitePress dev server with all content visible
+- [x] `task vitepress:build` produces static site in `.vitepress/dist/`
+- [x] `task cf:pages:deploy` deploys to `cad-docs.pages.dev`
 - [x] All markdown pages render correctly (user, technical, roadmap)
-- [x] `task docs:screenshots` generates all screenshots + videos into `website/public/`
+- [x] `task vitepress:screenshots` generates all screenshots + videos into `website/public/`
 - [x] Screenshots and videos render in docs pages (no broken images)
 - [ ] Build fails if a referenced screenshot/video is missing
 - [x] Search works (built-in local search minimum)
@@ -532,9 +536,10 @@ Static assets: 12 screenshots (~1.3 MB), 7 tutorial videos (~2.6 MB).
 - [x] Playwright `SCREENSHOTS_DIR` / `VIDEOS_DIR` point to `website/public/` (no copy step)
 - [x] (Phase 7, after verification) `docs/hugo/` directory deleted
 - [x] (Phase 7, after verification) Hugo removed from dependencies
-- [ ] (Phase 8) `task docs:upload` creates versioned Pages deployment with branch alias
-- [ ] (Phase 8) `task docs:promote` deploys to production
-- [ ] (Phase 8) `docs-versions.json` generated alongside `web/gui/versions.json`
-- [ ] (Phase 8) CI uses versioned flow (upload on main, preview on PR)
-- [ ] (Phase 8) PR comments include docs preview URL
+- [x] (Phase 8) `task cf:pages:upload` creates versioned Pages deployment with branch alias
+- [x] (Phase 8) `task cf:pages:promote` deploys to production
+- [x] (Phase 8) `cf-pages-versions.json` generated alongside `web/gui/cf-versions.json`
+- [x] (Phase 8) CI uses versioned flow (upload on main, preview on PR)
+- [x] (Phase 8) PR comments include docs preview URL
+- [x] (Phase 8) All CF deploy tasks consolidated in `taskfiles/Taskfile.cloudflare.yml`
 - [ ] `docs/adr/` unchanged — still in place, not part of website

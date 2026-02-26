@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitepress'
 import type { DefaultTheme } from 'vitepress'
+import cfDeploy from '../../cf-deploy.json'
 import {
   groupIconMdPlugin,
   groupIconVitePlugin,
@@ -80,10 +81,10 @@ export default defineConfig({
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/joeblew999/plat-trunk' },
+      { icon: 'github', link: `https://github.com/${cfDeploy.github}` },
     ],
     editLink: {
-      pattern: 'https://github.com/joeblew999/plat-trunk/edit/main/website/:path',
+      pattern: `https://github.com/${cfDeploy.github}/edit/main/website/:path`,
       text: 'Edit this page on GitHub',
     },
     footer: {
@@ -93,7 +94,7 @@ export default defineConfig({
     nav: [
       { text: 'Docs', link: '/docs/user/getting-started' },
       { text: 'Technical', link: '/docs/technical/architecture' },
-      { text: 'CAD App', link: 'https://cad.ubuntusoftware.net' },
+      { text: 'CAD App', link: cfDeploy.worker.production },
     ],
     sidebar: {
       '/': sidebars(),

@@ -9,7 +9,7 @@ version: '3'
 # ============================================================================
 
 vars:
-  ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  # ROOT_DIR passed by parent include — do NOT redefine
   BIN_DIR: '{{.ROOT_DIR}}/.bin'
   EXE: '{{if eq OS "windows"}}.exe{{end}}'
   # Prefer system gh (pre-installed on GitHub Actions runners), fall back to .bin/gh

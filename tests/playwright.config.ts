@@ -1,10 +1,29 @@
 import { defineConfig, devices } from '@playwright/test';
+import cfDeploy from '../cf-deploy.json';
 
 // Dev server must be running before tests start.
 // Start it with: task truck:test:serve:start
 // Or run the full pipeline: task truck:test:all
-const BASE_URL = process.env.BASE_URL || 'http://localhost:8788';
+const BASE_URL = process.env.BASE_URL || cfDeploy.local.worker;
 const IS_SLOW = !!process.env.SLOW;
+
+// WebGPU requires specific Chrome flags on macOS
+const WEBGPU_ARGS = [
+  '--enable-unsafe-webgpu',
+  '--enable-features=Vulkan',
+  '--use-angle=metal',             // macOS Metal backend
+  '--disable-dawn-features=disallow_unsafe_apis',
+];
+
+// Shared browser config: headed Chrome with WebGPU enabled
+const chromeWithWebGPU = {
+  ...devices['Desktop Chrome'],
+  channel: 'chrome' as const,
+  headless: false,
+  launchOptions: {
+    args: WEBGPU_ARGS,
+  },
+};
 
 export default defineConfig({
   testDir: './e2e',
@@ -18,9 +37,6 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
-    // WebGPU needs a real browser — use headed Chrome
-    headless: false,
-    channel: 'chrome',
     viewport: { width: 1280, height: 800 },
     actionTimeout: 10_000,
     screenshot: 'off', // we take manual screenshots for docs
@@ -32,19 +48,19 @@ export default defineConfig({
       name: 'e2e',
       testMatch: ['cad.spec.ts', 'sketch.spec.ts', 'actors.spec.ts', 'bim.spec.ts', 'tier.spec.ts', 'health.spec.ts'],
       testIgnore: [/cross-tab-sync\.spec\.ts/, /cad-ui\.spec\.ts/],
-      use: { ...devices['Desktop Chrome'] },
+      use: chromeWithWebGPU,
     },
     {
       // UI interaction tests — toolbar clicks, outliner, canvas, data-testid selectors
       name: 'ui',
       testMatch: /cad-ui\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'] },
+      use: chromeWithWebGPU,
     },
     {
       // Cross-tab sync — must run alone (broadcasts interfere)
       name: 'sync',
       testMatch: /cross-tab-sync\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'] },
+      use: chromeWithWebGPU,
     },
   ],
 });

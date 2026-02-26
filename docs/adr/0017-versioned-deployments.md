@@ -142,7 +142,7 @@ The alias format is `v{VERSION_SLUG}` where dots are replaced with dashes (e.g.,
 
 ### GUI Version Picker (Implemented v0.5.0+)
 
-The GUI header includes a version dropdown populated from `/versions.json` (generated at deploy time by `deploy:versions:json`). Users can see all tagged versions and click to visit any preview URL.
+The GUI header includes a version dropdown populated from `/cf-versions.json` (generated at deploy time by `deploy:versions:json`). Users can see all tagged versions and click to visit any preview URL.
 
 **Note**: The version picker only appears in v0.5.0 and later — older versions are immutable snapshots that predate this feature. To switch between versions, visit any version's preview URL directly, or use the picker from the latest deployment.
 

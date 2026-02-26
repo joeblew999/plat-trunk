@@ -1,198 +1,291 @@
 version: '3'
 
 # ============================================================================
-# Reusable Cloudflare Workers deploy lifecycle.
+# Reusable Cloudflare deploy lifecycle (Workers + Pages).
 #
-# Include this from any project that deploys to Cloudflare Workers.
-# All project-specific values come from vars passed by the parent include.
+# All config is read from cf-deploy.json via scripts/cf-deploy.ts.
+# The parent include only needs to pass ROOT_DIR.
 #
-# Required vars:
-#   WORKER_NAME     — Cloudflare Worker name (e.g., "truck-cad", "remy-sport")
-#   WORKER_DOMAIN   — workers.dev subdomain (e.g., "gedw99.workers.dev")
+# Task namespaces:
+#   cf:worker:*  — Worker versioned deploy lifecycle
+#   cf:pages:*   — Pages versioned deploy lifecycle
+#   cf:versions  — Unified manifest (Worker + Pages)
+#   cf:d1:*      — D1 databases (account resource)
+#   cf:r2:*      — R2 storage (account resource)
+#   cf:whoami    — Account info
 #
-# Optional vars:
-#   ROOT_DIR, WORKER_DIR, PRODUCTION_URL, GITHUB_REPO,
-#   APP_VERSION, VERSION_SLUG, SCHEMA_FILE, OUTPUT_FILE,
-#   DB_NAME, BUCKET_NAME, SMOKE_EXTRA_CMD
+# Required var: ROOT_DIR (passed by parent include)
+# Optional vars: DB_NAME, BUCKET_NAME (for d1/r2 tasks)
 # ============================================================================
 
-# vars: set by parent include (see Required/Optional vars above)
+vars:
+  # All vars resolved from cf-deploy.json — single source of truth
+  GITHUB_REPO:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config github
+  SCHEMA_FILE:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config version.source)"
+  WORKER_NAME:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.name
+  WORKER_DOMAIN:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.domain
+  WORKER_DIR:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.dir)"
+  WORKER_PRODUCTION_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.production
+  WORKER_OUTPUT_FILE:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config output)"
+  PAGES_PROJECT:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.project
+  PAGES_DOMAIN:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.domain
+  PAGES_DIR:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.dir)"
+  PAGES_PRODUCTION_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.production
+  APP_VERSION:
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version)" 2>/dev/null || echo "0.0.0"
+  VERSION_SLUG:
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version.replaceAll('.','-'))" 2>/dev/null || echo "0-0-0"
 
 tasks:
 
   # ==========================================================================
-  # Versioned Deploy Lifecycle
+  # Worker: Versioned Deploy Lifecycle (delegates to cf-deploy.ts)
   # ==========================================================================
 
-  upload:
+  "worker:upload":
     desc: "Upload new Worker version (does NOT deploy to production)"
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload {{if .APP_VERSION}}--tag "v{{.APP_VERSION}}" --message "v{{.APP_VERSION}}"{{end}} {{if .VERSION_SLUG}}--preview-alias "v{{.VERSION_SLUG}}"{{end}}
+      - bun scripts/cf-deploy.ts upload
 
-  promote:
+  "worker:promote":
     desc: Deploy latest uploaded version to 100% traffic
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - |
-        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} {{if .OUTPUT_FILE}}OUTPUT_FILE={{.OUTPUT_FILE}}{{end}} bun scripts/versions-json.ts --latest-env)
-        if [ -z "$VERSION_ID" ]; then
-          echo "ERROR: No versionId in versions.json — upload first"
-          exit 1
-        fi
-        echo "Promoting $VERSION_ID (v${VERSION}, commit ${COMMIT_SHA}) to 100%..."
-        cd {{.WORKER_DIR}} && bun x wrangler versions deploy "$VERSION_ID@100%" --yes
+      - bun scripts/cf-deploy.ts promote
 
-  canary:
+  "worker:canary":
     desc: Deploy with gradual traffic split (interactive)
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions deploy
+      - bunx wrangler versions deploy
 
-  rollback:
+  "worker:rollback":
     desc: Roll back to previous version
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler rollback
+      - bun scripts/cf-deploy.ts rollback
 
-  smoke:
+  "worker:smoke":
     desc: Smoke test a deployed URL (health + index + optional extra checks)
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - |
-        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} {{if .OUTPUT_FILE}}OUTPUT_FILE={{.OUTPUT_FILE}}{{end}} bun scripts/versions-json.ts --latest-env)
-        URL="${PREVIEW_URL:-{{.PRODUCTION_URL}}}"
-        echo "Smoke testing: $URL"
-        echo ""
-        # 1. Health check
-        HEALTH=$(curl -sf "$URL/api/health" 2>&1) || { echo "FAIL: /api/health unreachable"; exit 1; }
-        HEALTH_VER=$(echo "$HEALTH" | bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version||'?')")
-        echo "  health:    OK (v${HEALTH_VER})"
-        # 2. Index page
-        INDEX_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$URL/")
-        INDEX_SIZE=$(curl -sf -o /dev/null -w "%{size_download}" "$URL/")
-        echo "  index:     OK (HTTP ${INDEX_STATUS}, ${INDEX_SIZE} bytes)"
-        # 3. Project-specific checks (if SMOKE_EXTRA_CMD is set)
-        {{if .SMOKE_EXTRA_CMD}}
-        SMOKE_URL="$URL" {{.SMOKE_EXTRA_CMD}}
-        {{end}}
-        # 4. Version match
-        echo ""
-        if [ -n "$VERSION" ] && [ "$HEALTH_VER" = "$VERSION" ]; then
-          echo "PASS: All checks passed (v${VERSION}, commit ${COMMIT_SHA:-?})"
-        elif [ -n "$VERSION" ]; then
-          echo "WARN: Version mismatch — expected v${VERSION}, got v${HEALTH_VER}"
-        else
-          echo "PASS: All checks passed (v${HEALTH_VER})"
-        fi
+      - bun scripts/cf-deploy.ts smoke
 
-  preview:
+  "worker:preview":
     desc: "Upload PR preview version"
+    dir: '{{.WORKER_DIR}}'
     vars:
       PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"
-      - |
-        echo ""
-        echo 'Preview: https://pr-{{.PR_NUMBER}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}'
+      - 'bun install && bunx wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
+      - 'echo "Preview: https://pr-{{.PR_NUMBER}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
 
   # ==========================================================================
-  # Simple Deploy (for projects not using versioned flow)
+  # Worker: Simple Deploy (for projects not using versioned flow)
   # ==========================================================================
 
-  deploy:
+  "worker:deploy":
     desc: Deploy worker to Cloudflare (simple, non-versioned)
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun install && bunx wrangler deploy
+      - bun install && bunx wrangler deploy
 
-  deploy:staging:
+  "worker:deploy:staging":
     desc: Deploy to staging environment
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler deploy --env staging
+      - bunx wrangler deploy --env staging
 
   # ==========================================================================
-  # Versions & Status
+  # Versions & Status (unified Worker + Pages)
   # ==========================================================================
 
-  "versions:list":
-    desc: List recent Worker versions (tags, dates)
+  versions:
+    desc: Generate unified cf-versions.json (Worker + Pages)
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler versions list
-
-  "versions:json":
-    desc: Generate versions.json for GUI version picker
-    dir: "{{.WORKER_DIR}}"
-    cmds:
-      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} WORKER_NAME={{.WORKER_NAME}} WORKER_DOMAIN={{.WORKER_DOMAIN}} {{if .APP_VERSION}}APP_VERSION={{.APP_VERSION}}{{end}} {{if .PRODUCTION_URL}}PRODUCTION_URL={{.PRODUCTION_URL}}{{end}} {{if .GITHUB_REPO}}GITHUB_REPO={{.GITHUB_REPO}}{{end}} {{if .SCHEMA_FILE}}SCHEMA_FILE={{.SCHEMA_FILE}}{{end}} {{if .OUTPUT_FILE}}OUTPUT_FILE={{.OUTPUT_FILE}}{{end}} bun scripts/versions-json.ts
-    silent: true
+      - bun scripts/cf-deploy.ts versions
 
   status:
-    desc: Show current deployment (versions + traffic split)
+    desc: Show current deployment info
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler deployments list
+      - bun scripts/cf-deploy.ts status
 
   list:
-    desc: Show all preview URLs (versions + PR previews)
+    desc: List all versions and previews (Worker + Pages)
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - |
-        VERSIONS=$(cd {{.WORKER_DIR}} && bun x wrangler versions list 2>&1 | \
-          awk '/^Version ID:/{id=$NF} /^Created:/{ts=$NF} /^Tag:/{tag=$NF; if(tag!="-") print id, ts, tag}' | \
-          sort -k2 -r)
+      - bun scripts/cf-deploy.ts list
 
-        echo "=== Release Versions ==="
-        echo ""
-        echo "$VERSIONS" | grep "^.* .* v[0-9]" | while read VID TS TAG; do
-          SLUG=$(echo "$TAG" | sed 's/^v//' | tr '.' '-')
-          echo "  $TAG  ($TS)"
-          echo "    https://v${SLUG}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"
-          echo ""
-        done
+  release-notes:
+    desc: Generate GitHub release markdown from manifest
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts release-notes
 
-        PR_LINES=$(echo "$VERSIONS" | grep "^.* .* pr-" || true)
-        if [ -n "$PR_LINES" ]; then
-          echo "=== PR Previews ==="
-          echo ""
-          echo "$PR_LINES" | while read VID TS TAG; do
-            echo "  $TAG  ($TS)"
-            echo "    https://${TAG}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"
-            echo ""
-          done
-        fi
+  readme-urls:
+    desc: Generate/update README URL table from config
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts readme-urls
 
-        {{if .PRODUCTION_URL}}echo "Production:  {{.PRODUCTION_URL}}"{{end}}
+  verify:
+    desc: Audit codebase for stale hardcoded values (should read from cf-deploy.json)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts verify
+
+  # Keep individual wrangler commands for direct access
+  "worker:versions:list":
+    desc: List recent Worker versions (tags, dates)
+    dir: '{{.WORKER_DIR}}'
+    cmds:
+      - bunx wrangler versions list
+
+  "worker:status":
+    desc: Show current Worker deployment (traffic split)
+    dir: '{{.WORKER_DIR}}'
+    cmds:
+      - bunx wrangler deployments list
+
+  "worker:secret:list":
+    desc: List Worker secrets
+    dir: '{{.WORKER_DIR}}'
+    cmds:
+      - bunx wrangler secret list
+
+  "worker:tail":
+    desc: Tail live Worker logs
+    dir: '{{.WORKER_DIR}}'
+    cmds:
+      - bunx wrangler tail
 
   # ==========================================================================
-  # D1 Database
+  # Pages: Versioned Deploy Lifecycle
+  # ==========================================================================
+
+  # Internal helper — all Pages deploys go through here
+  "pages:_deploy":
+    internal: true
+    dir: '{{.PAGES_DIR}}'
+    preconditions:
+      - sh: test -d {{.PAGES_DIR}}/.vitepress/dist
+        msg: "No build found — run task vitepress:build first"
+    cmds:
+      - bunx wrangler pages deploy .vitepress/dist --project-name={{.PAGES_PROJECT}} --branch {{.BRANCH}} --commit-dirty=true
+
+  "pages:upload":
+    desc: "Upload versioned Pages deploy (v{{.VERSION_SLUG}}.{{.PAGES_DOMAIN}}) — does NOT update production"
+    cmds:
+      - task: "pages:_deploy"
+        vars: { BRANCH: 'v{{.VERSION_SLUG}}' }
+      - task: "versions"
+      - 'echo "Uploaded v{{.APP_VERSION}} → https://v{{.VERSION_SLUG}}.{{.PAGES_DOMAIN}}"'
+      - 'echo "To promote to production: task cf:pages:promote"'
+
+  "pages:promote":
+    desc: Deploy latest Pages build to production (updates custom domain)
+    cmds:
+      - task: "pages:_deploy"
+        vars: { BRANCH: 'main' }
+      - 'echo "Promoted to production → {{.PAGES_PRODUCTION_URL}}"'
+
+  "pages:deploy":
+    desc: "Deploy Pages (upload v{{.VERSION_SLUG}} + promote to production)"
+    cmds:
+      - task: "pages:upload"
+      - task: "pages:promote"
+      - 'echo "Deployed v{{.APP_VERSION}} → {{.PAGES_PRODUCTION_URL}}"'
+
+  "pages:preview":
+    desc: "Upload PR preview Pages deploy"
+    vars:
+      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
+    cmds:
+      - task: "pages:_deploy"
+        vars: { BRANCH: 'pr-{{.PR_NUMBER}}' }
+      - 'echo "Preview → https://pr-{{.PR_NUMBER}}.{{.PAGES_DOMAIN}}"'
+
+  "pages:smoke":
+    desc: Smoke test a deployed Pages URL
+    vars:
+      SMOKE_URL: '{{.SMOKE_URL | default .PAGES_PRODUCTION_URL}}'
+    cmds:
+      - |
+        URL="{{.SMOKE_URL}}"
+        echo "Smoke testing: $URL"
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
+        SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL/")
+        if [ "$STATUS" = "200" ]; then
+          echo "  index:  OK (HTTP ${STATUS}, ${SIZE} bytes)"
+        else
+          echo "  FAIL:   HTTP ${STATUS}"
+          exit 1
+        fi
+        LLMS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/llms.txt")
+        echo "  llms:   OK (HTTP ${LLMS_STATUS})"
+        echo ""
+        echo "PASS: $URL"
+
+  "pages:versions:list":
+    desc: List recent Pages deployments
+    cmds:
+      - bunx wrangler pages deployment list --project-name={{.PAGES_PROJECT}}
+
+  # ==========================================================================
+  # D1 Database (account resource)
   # ==========================================================================
 
   "d1:list":
     desc: List D1 databases
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 list
+      - bunx wrangler d1 list
 
   "d1:create":
     desc: Create the project D1 database
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 create {{.DB_NAME}}
+      - bunx wrangler d1 create {{.DB_NAME}}
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:tables":
     desc: List tables in local D1
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 execute {{.DB_NAME}} --local --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      - bunx wrangler d1 execute {{.DB_NAME}} --local --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:tables:remote":
     desc: List tables in remote D1
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 execute {{.DB_NAME}} --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      - bunx wrangler d1 execute {{.DB_NAME}} --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:execute":
     desc: Execute SQL against local D1
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 execute {{.DB_NAME}} --local --command "{{.SQL}}"
+      - bunx wrangler d1 execute {{.DB_NAME}} --local --command "{{.SQL}}"
     requires:
       vars: [SQL]
     preconditions:
@@ -201,8 +294,9 @@ tasks:
 
   "d1:execute:remote":
     desc: Execute SQL against remote D1
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 execute {{.DB_NAME}} --remote --command "{{.SQL}}"
+      - bunx wrangler d1 execute {{.DB_NAME}} --remote --command "{{.SQL}}"
     requires:
       vars: [SQL]
     preconditions:
@@ -211,8 +305,9 @@ tasks:
 
   "d1:migrations:create":
     desc: Create a new D1 migration
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 migrations create {{.DB_NAME}} "{{.NAME}}"
+      - bunx wrangler d1 migrations create {{.DB_NAME}} "{{.NAME}}"
     requires:
       vars: [NAME]
     preconditions:
@@ -221,60 +316,84 @@ tasks:
 
   "d1:migrations:apply":
     desc: Apply D1 migrations locally (idempotent)
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 migrations apply {{.DB_NAME}} --local
+      - bunx wrangler d1 migrations apply {{.DB_NAME}} --local
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:migrations:apply:remote":
     desc: Apply D1 migrations to remote (idempotent)
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler d1 migrations apply {{.DB_NAME}} --remote
+      - bunx wrangler d1 migrations apply {{.DB_NAME}} --remote
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   # ==========================================================================
-  # R2 Storage
+  # R2 Storage (account resource)
   # ==========================================================================
 
   "r2:list":
     desc: List R2 buckets
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler r2 bucket list
+      - bunx wrangler r2 bucket list
 
   "r2:create":
     desc: Create the project R2 bucket
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler r2 bucket create {{.BUCKET_NAME}}
+      - bunx wrangler r2 bucket create {{.BUCKET_NAME}}
     preconditions:
       - sh: '[ -n "{{.BUCKET_NAME}}" ]'
         msg: "BUCKET_NAME is required"
 
   "r2:objects":
     desc: List objects in the project R2 bucket
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler r2 object list {{.BUCKET_NAME}}
+      - bunx wrangler r2 object list {{.BUCKET_NAME}}
     preconditions:
       - sh: '[ -n "{{.BUCKET_NAME}}" ]'
         msg: "BUCKET_NAME is required"
 
   # ==========================================================================
-  # Secrets & Debugging
+  # Account
   # ==========================================================================
 
-  "secret:list":
-    desc: List Worker secrets
+  debug:
+    desc: Show all Cloudflare vars and env (verify config is correct)
+    silent: true
     cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler secret list
-
-  tail:
-    desc: Tail live Worker logs
-    cmds:
-      - cd {{.WORKER_DIR}} && bunx wrangler tail
+      - |
+        echo "=== Shared ==="
+        echo "  ROOT_DIR:       {{.ROOT_DIR}}"
+        echo "  GITHUB_REPO:    {{.GITHUB_REPO}}"
+        echo "  SCHEMA_FILE:    {{.SCHEMA_FILE}}"
+        echo "  APP_VERSION:    {{.APP_VERSION}}"
+        echo "  VERSION_SLUG:   {{.VERSION_SLUG}}"
+        echo ""
+        echo "=== Worker ==="
+        echo "  WORKER_DIR:            {{.WORKER_DIR}}"
+        echo "  WORKER_NAME:           {{.WORKER_NAME}}"
+        echo "  WORKER_DOMAIN:         {{.WORKER_DOMAIN}}"
+        echo "  WORKER_PRODUCTION_URL: {{.WORKER_PRODUCTION_URL}}"
+        echo "  WORKER_OUTPUT_FILE:    {{.WORKER_OUTPUT_FILE}}"
+        echo ""
+        echo "=== Pages ==="
+        echo "  PAGES_DIR:             {{.PAGES_DIR}}"
+        echo "  PAGES_PROJECT:         {{.PAGES_PROJECT}}"
+        echo "  PAGES_DOMAIN:          {{.PAGES_DOMAIN}}"
+        echo "  PAGES_PRODUCTION_URL:  {{.PAGES_PRODUCTION_URL}}"
+        echo ""
+        echo "=== Auth ==="
+        echo "  CLOUDFLARE_API_TOKEN:      ${CLOUDFLARE_API_TOKEN:+set (${#CLOUDFLARE_API_TOKEN} chars)}"
+        echo "  CLOUDFLARE_API_TOKEN_NAME: ${CLOUDFLARE_API_TOKEN_NAME:-<not set>}"
 
   whoami:
     desc: Show current Cloudflare auth info
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - bunx wrangler whoami
+      - bun scripts/cf-deploy.ts whoami

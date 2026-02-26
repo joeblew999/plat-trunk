@@ -28,18 +28,31 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { mkdirSync, appendFileSync } from 'fs';
+import { mkdirSync, appendFileSync, readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
-const LOCAL_URL = 'http://localhost:8788';
+// --- Config (single read from cf-deploy.json) ---
+const cfConfig = (() => {
+  try {
+    const rootDir = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel']).stdout.toString().trim();
+    const cfgPath = join(rootDir, 'cf-deploy.json');
+    if (existsSync(cfgPath)) return JSON.parse(readFileSync(cfgPath, 'utf8'));
+  } catch { /* fallback */ }
+  return null;
+})();
+
+const LOCAL_URL = cfConfig?.local?.worker || 'http://localhost:8788';
+const WORKER_NAME = cfConfig?.worker?.name || 'truck-cad';
+const WORKER_DOMAIN = cfConfig?.worker?.domain || 'gedw99.workers.dev';
+
 const RETRY_ATTEMPTS = 6;
 const RETRY_BASE_MS = 1000;
 const POLL_INTERVAL_MS = 30_000;
 const startedAt = Date.now();
 
 // --- Logging ---
-const LOG_DIR = join(homedir(), '.cache', 'truck-cad');
+const LOG_DIR = join(homedir(), '.cache', WORKER_NAME);
 const LOG_FILE = join(LOG_DIR, 'mcp-bridge.log');
 
 function log(msg: string) {
@@ -68,6 +81,11 @@ async function isReachable(url: string): Promise<boolean> {
   }
 }
 
+/** Worker config from top-level cfConfig (single read) */
+function getWorkerConfig(): { name: string; domain: string } {
+  return { name: WORKER_NAME, domain: WORKER_DOMAIN };
+}
+
 /** Check if current git branch has an open PR, return its preview URL */
 function detectPrPreviewUrl(): string | null {
   try {
@@ -79,7 +97,8 @@ function detectPrPreviewUrl(): string | null {
     if (gh.exitCode !== 0) return null;
     const pr = JSON.parse(gh.stdout.toString());
     if (pr.number && pr.state === 'OPEN') {
-      return `https://pr-${pr.number}-truck-cad.gedw99.workers.dev`;
+      const w = getWorkerConfig();
+      return `https://pr-${pr.number}-${w.name}.${w.domain}`;
     }
   } catch {
     // git or gh not available — fine, skip
@@ -194,7 +213,7 @@ async function getBridgeStatus(): Promise<any> {
 // --- Server Setup ---
 
 const server = new Server(
-  { name: 'truck-cad-bridge', version: '1.0.0' },
+  { name: `${WORKER_NAME}-bridge`, version: '1.0.0' },
   { capabilities: { tools: { listChanged: true } } }
 );
 

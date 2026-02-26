@@ -77,7 +77,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <header class="app-header">
         <div class="flex items-center gap-2">
             <span class="logo">CAD</span>
-            <cad-version-picker></cad-version-picker>
+            <cf-control-plane></cf-control-plane>
             <span id="docInfo" class="text-xs opacity-50 truncate max-w-40 cursor-pointer" title="Click to copy doc URL">Untitled</span>
         </div>
         <div class="flex items-center gap-1">
@@ -460,7 +460,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
         // 0. Register <live-signals> debug panel + version picker (no WASM dependency)
         await import('./live-signals.js?v=' + v);
-        await import('./version-picker.js?v=' + v);
+        await import('./cf-control-plane.js?v=' + v);
 
         // 1. Export WASM modules as globals (cad-viewport does the actual init)
         const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js?v=' + v);

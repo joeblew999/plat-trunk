@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import app from './index';
 import cadSchema from '../../../../web/cad-schema.json';
+import cfDeploy from '../../../../cf-deploy.json';
 
 // Helper: make a request to the Hono app
 async function req(path: string, init?: RequestInit) {
@@ -8,7 +9,7 @@ async function req(path: string, init?: RequestInit) {
   return app.request(url, init, {
     // Stub R2 bindings (not used by CAD API routes)
     MY_VAR: 'test',
-    DOCS_BUCKET: {} as any,
+    PAGES_BUCKET: {} as any,
     CAD_DOCS_BUCKET: {} as any,
   });
 }
@@ -112,7 +113,7 @@ describe('MCP Initialize', () => {
     expect(body.jsonrpc).toBe('2.0');
     expect(body.id).toBe(1);
     expect(body.result.protocolVersion).toBe('2025-03-26');
-    expect(body.result.serverInfo.name).toBe('truck-cad');
+    expect(body.result.serverInfo.name).toBe(cfDeploy.worker.name);
     expect(body.result.capabilities.tools).toBeDefined();
   });
 });
@@ -139,25 +140,30 @@ describe('MCP Tools List', () => {
     const { body } = await mcpPost({
       jsonrpc: '2.0', id: 3, method: 'tools/list', params: {}
     });
+    // Meta-tools and docs tools don't require modelId
+    const META_TOOLS = ['cad_health', 'cad_schema', 'cad_wasm_health',
+      'cad_docs_index', 'cad_docs_search', 'cad_docs_read', 'cad_docs_reference'];
     for (const tool of body.result.tools) {
       expect(tool.name).toMatch(/^cad_/);
       expect(tool.description).toBeDefined();
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.properties).toBeDefined();
-      if (tool.name !== 'cad_health' && tool.name !== 'cad_schema') {
+      if (!META_TOOLS.includes(tool.name)) {
         expect(tool.inputSchema.properties.modelId).toBeDefined();
       }
     }
   });
 
-  it('MCP tool count = non-ephemeral non-readonly commands + 2 meta-tools', async () => {
-    const { body: schema } = await json('/api/cad/schema');
+  it('MCP tool count = schema commands + controlPlane + meta-tools', async () => {
+    const { body: schema } = await json('/api/cad/schema') as { body: any };
     const cmdCount = Object.entries(schema.commands)
       .filter(([_, def]: any) => !def.ephemeral && !def.readonly).length;
+    const cpCount = schema.controlPlane ? Object.keys(schema.controlPlane).length : 0;
+    const META_TOOL_COUNT = 7; // health, schema, wasm_health + 4 docs tools
     const { body } = await mcpPost({
       jsonrpc: '2.0', id: 4, method: 'tools/list', params: {}
     });
-    expect(body.result.tools.length).toBe(cmdCount + 2);
+    expect(body.result.tools.length).toBe(cmdCount + cpCount + META_TOOL_COUNT);
   });
 });
 

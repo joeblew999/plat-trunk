@@ -77,8 +77,8 @@ web/gui/local-mode.js
 # Copied at build time for /llms.txt serving
 web/gui/llms.txt
 
-# Generated at deploy time by scripts/versions-json.ts
-web/gui/versions.json
+# Generated at deploy time by scripts/cf-deploy.ts
+web/gui/cf-versions.json
 
 # Rust build artifacts
 target/

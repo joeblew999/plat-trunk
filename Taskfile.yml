@@ -17,17 +17,11 @@ dotenv: ['.env', '.env.local']
 
 includes:
   # Cloudflare Workers deploy lifecycle (reusable across projects)
+  # Reads all config from cf-deploy.json — only needs ROOT_DIR
   cf:
     taskfile: ./taskfiles/Taskfile.cloudflare.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
-      WORKER_DIR: '{{.PWD}}/systems/truck/worker'
-      WORKER_NAME: 'truck-cad'
-      WORKER_DOMAIN: 'gedw99.workers.dev'
-      PRODUCTION_URL: 'https://cad.ubuntusoftware.net'
-      GITHUB_REPO: 'joeblew999/plat-trunk'
-      SCHEMA_FILE: '{{.PWD}}/web/cad-schema.json'
-      OUTPUT_FILE: '{{.PWD}}/web/gui/versions.json'
 
   # Local systems
   envsubst:
@@ -46,8 +40,8 @@ includes:
     taskfile: ./systems/ezpz/Taskfile.ezpz.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
-  docs:
-    taskfile: ./systems/docs/Taskfile.pages.yml
+  vitepress:
+    taskfile: ./systems/docs/Taskfile.vitepress.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
   skills:
@@ -110,7 +104,7 @@ tasks:
       - task: truck:debug:self
       - task: ezpz:debug:self
       - task: gh:debug:self
-      - task: docs:debug:self
+      - task: vitepress:debug:self
       - task: skills:debug:self
 
   # ===========================================================================
@@ -120,7 +114,8 @@ tasks:
     desc: Deploy everything (CAD Worker + docs site)
     cmds:
       - task: truck:deploy:full
-      - task: docs:deploy
+      - task: vitepress:build
+      - task: cf:pages:deploy
 
   # ===========================================================================
   # Deps

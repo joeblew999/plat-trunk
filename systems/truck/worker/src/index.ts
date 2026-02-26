@@ -2,11 +2,12 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import cadSchema from '../../../../web/cad-schema.json';
+import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm';
 
 type Bindings = {
   MY_VAR: string;
-  DOCS_BUCKET: R2Bucket;
+  PAGES_BUCKET: R2Bucket;
   CAD_DOCS_BUCKET: R2Bucket;
 };
 
@@ -341,7 +342,7 @@ app.doc('/api/openapi.json', {
 
 api.openapi(createRoute({
   method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
-}), (c) => c.json({ status: 'ok', service: 'truck-cad', version: (cadSchema as ModuleSchema).version }));
+}), (c) => c.json({ status: 'ok', service: cfDeploy.worker.name, version: (cadSchema as ModuleSchema).version }));
 
 // =========================================================================
 // Phase 0.5: Headless truck-webgpu-gui WASM test (ADR-0018)
@@ -463,7 +464,7 @@ app.post('/mcp', async (c) => {
           result: {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: 'truck-cad', version: (cadSchema as ModuleSchema).version || '1.0.0' }
+            serverInfo: { name: cfDeploy.worker.name, version: (cadSchema as ModuleSchema).version || '1.0.0' }
           }
         });
         break;
@@ -485,7 +486,7 @@ app.post('/mcp', async (c) => {
           responses.push({
             jsonrpc: '2.0', id: msg.id,
             result: { content: [{ type: 'text', text: JSON.stringify({
-              status: 'ok', service: 'truck-cad',
+              status: 'ok', service: cfDeploy.worker.name,
               version: (cadSchema as ModuleSchema).version,
               activeModel: mid, sseClients: m?.sseClientCount ?? 0,
               browserConnected: (m?.sseClientCount ?? 0) > 0
@@ -519,7 +520,7 @@ app.post('/mcp', async (c) => {
         }
 
         // Documentation tools (ADR-0027 Phase 6)
-        const DOCS_URL = 'https://docs.ubuntusoftware.net';
+        const DOCS_URL = cfDeploy.pages.production;
         if (name === 'cad_docs_index') {
           try {
             const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());
@@ -629,7 +630,7 @@ app.get('/llms.txt', async (c) => {
     const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
     if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
   } catch {}
-  return c.redirect('https://raw.githubusercontent.com/joeblew999/plat-trunk/main/web/llms.txt');
+  return c.redirect(`https://raw.githubusercontent.com/${cfDeploy.github}/main/web/llms.txt`);
 });
 
 // llms-full.txt — full context for LLMs: llms.txt + complete tool catalog from schema
@@ -712,10 +713,10 @@ Allow: /
 // security.txt — vulnerability disclosure (RFC 9116)
 app.get('/.well-known/security.txt', (c) => {
   return new Response(
-`Contact: https://github.com/joeblew999/plat-trunk/security/advisories
+`Contact: https://github.com/${cfDeploy.github}/security/advisories
 Expires: 2027-01-01T00:00:00.000Z
 Preferred-Languages: en
-Canonical: https://cad.ubuntusoftware.net/.well-known/security.txt
+Canonical: ${cfDeploy.worker.production}/.well-known/security.txt
 `, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
 });
 
@@ -729,7 +730,7 @@ app.get('/.well-known/agent.json', (c) => {
     url: `${baseUrl}/mcp`,
     provider: {
       organization: 'plat-trunk',
-      url: 'https://github.com/joeblew999/plat-trunk'
+      url: `https://github.com/${cfDeploy.github}`
     },
     version: s.version,
     documentationUrl: `${baseUrl}/llms.txt`,
@@ -776,7 +777,7 @@ app.get('/.well-known/mcp/server-card.json', (c) => {
   return c.json({
     version: '1.0',
     protocolVersion: '2025-03-26',
-    serverInfo: { name: 'truck-cad', title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
+    serverInfo: { name: cfDeploy.worker.name, title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
     description: 'Professional 3D CAD system. B-Rep kernel (truck), WebGPU rendering, Automerge collaboration. 29 MCP tools for modeling, transforms, booleans, sketch, import/export, and control plane.',
     iconUrl: `${baseUrl}/favicon.svg`,
     documentationUrl: `${baseUrl}/llms.txt`,
@@ -784,7 +785,7 @@ app.get('/.well-known/mcp/server-card.json', (c) => {
     capabilities: { tools: true },
     authentication: { schemes: [] },
     tools: tools.map(t => t.name),
-    instructions: `Connect with: claude mcp add --transport http truck-cad ${baseUrl}/mcp`
+    instructions: `Connect with: claude mcp add --transport http ${cfDeploy.worker.name} ${baseUrl}/mcp`
   }, 200, { 'cache-control': 'public, max-age=3600' });
 });
 
@@ -805,6 +806,6 @@ app.get('/model/*', async (c) => {
 });
 
 const MIME: Record<string,string> = { '.webm': 'video/webm', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.mp4': 'video/mp4' };
-app.get('/docs/*', async (c, next) => { const k = c.req.path.slice(1); const e = k.slice(k.lastIndexOf('.')); if (!MIME[e]) return next(); const o = await c.env.DOCS_BUCKET.get(k); if (!o) return c.notFound(); return new Response(o.body, { headers: { 'content-type': MIME[e], 'cache-control': 'public, max-age=86400' } }); });
+app.get('/docs/*', async (c, next) => { const k = c.req.path.slice(1); const e = k.slice(k.lastIndexOf('.')); if (!MIME[e]) return next(); const o = await c.env.PAGES_BUCKET.get(k); if (!o) return c.notFound(); return new Response(o.body, { headers: { 'content-type': MIME[e], 'cache-control': 'public, max-age=86400' } }); });
 
 export default app;

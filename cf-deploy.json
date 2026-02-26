@@ -1,0 +1,39 @@
+{
+  "worker": {
+    "name": "truck-cad",
+    "domain": "gedw99.workers.dev",
+    "dir": "systems/truck/worker",
+    "production": "https://cad.ubuntusoftware.net"
+  },
+  "pages": {
+    "project": "cad-docs",
+    "domain": "cad-docs.pages.dev",
+    "dir": "website",
+    "production": "https://docs.ubuntusoftware.net"
+  },
+  "local": {
+    "worker": "http://localhost:8788",
+    "pages": "http://localhost:5173"
+  },
+  "account": "7384af54e33b8a54ff240371ea368440",
+  "github": "joeblew999/plat-trunk",
+  "version": {
+    "source": "web/cad-schema.json"
+  },
+  "output": "web/gui/cf-versions.json",
+  "endpoints": {
+    "health": "/api/health",
+    "mcp": "/mcp",
+    "schema": "/api/cad/schema",
+    "gui": "/",
+    "pages": "https://docs.ubuntusoftware.net"
+  },
+  "r2": {
+    "pages": "cad-docs",
+    "documents": "cad-documents"
+  },
+  "smoke": {
+    "extra": "task truck:smoke:extra"
+  },
+  "configVersion": 1
+}

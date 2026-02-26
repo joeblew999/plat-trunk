@@ -39,7 +39,7 @@ jobs:
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task cf:upload
+            task cf:worker:upload
           else
             echo "Skipping Worker deploy — CLOUDFLARE_API_TOKEN not set"
           fi
@@ -50,7 +50,7 @@ jobs:
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task docs:upload
+            task vitepress:build && task cf:pages:upload
           else
             echo "Skipping docs upload — CLOUDFLARE_API_TOKEN not set"
           fi
@@ -61,13 +61,25 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task cf:preview PR_NUMBER=${{ github.event.pull_request.number }}
-            task docs:preview PR_NUMBER=${{ github.event.pull_request.number }}
+            task cf:worker:preview PR_NUMBER=${{ github.event.pull_request.number }}
+            task vitepress:build && task cf:pages:preview PR_NUMBER=${{ github.event.pull_request.number }}
           else
             echo "Skipping preview deploy — CLOUDFLARE_API_TOKEN not set"
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      # Read config for PR comment URLs
+      - if: github.event_name == 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
+        id: cfg
+        env:
+          CLOUDFLARE_API_TOKEN: placeholder
+        run: |
+          echo "worker_name=$(bun scripts/cf-deploy.ts config worker.name)" >> $GITHUB_OUTPUT
+          echo "worker_domain=$(bun scripts/cf-deploy.ts config worker.domain)" >> $GITHUB_OUTPUT
+          echo "pages_domain=$(bun scripts/cf-deploy.ts config pages.domain)" >> $GITHUB_OUTPUT
+          echo "worker_prod=$(bun scripts/cf-deploy.ts config worker.production)" >> $GITHUB_OUTPUT
+          echo "pages_prod=$(bun scripts/cf-deploy.ts config pages.production)" >> $GITHUB_OUTPUT
 
       # Post preview URLs as PR comment
       - if: github.event_name == 'pull_request' && env.CLOUDFLARE_API_TOKEN != ''
@@ -81,9 +93,9 @@ jobs:
 
             | | URL |
             |--|--|
-            | Preview (App) | https://pr-${{ github.event.pull_request.number }}-truck-cad.gedw99.workers.dev |
-            | Preview (Docs) | https://pr-${{ github.event.pull_request.number }}.cad-docs.pages.dev |
-            | Production (App) | https://cad.ubuntusoftware.net |
-            | Production (Docs) | https://docs.ubuntusoftware.net |
+            | Preview (App) | https://pr-${{ github.event.pull_request.number }}-${{ steps.cfg.outputs.worker_name }}.${{ steps.cfg.outputs.worker_domain }} |
+            | Preview (Docs) | https://pr-${{ github.event.pull_request.number }}.${{ steps.cfg.outputs.pages_domain }} |
+            | Production (App) | ${{ steps.cfg.outputs.worker_prod }} |
+            | Production (Docs) | ${{ steps.cfg.outputs.pages_prod }} |
 
             Built from ${{ github.sha }}

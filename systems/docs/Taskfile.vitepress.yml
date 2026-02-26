@@ -1,0 +1,122 @@
+version: '3'
+
+# ============================================================================
+# Pages - VitePress Documentation Site on Cloudflare Pages (ADR-0027)
+# https://vitepress.dev/ — same setup as hono.dev
+#
+# Quick start:
+#   task vitepress:serve       # Local preview
+#   task vitepress:build       # Build for production
+#   task vitepress:screenshots # Generate screenshots + videos from E2E tests
+#
+# Deploy lifecycle lives in taskfiles/Taskfile.cloudflare.yml (cf:pages:*)
+#
+# Required var: ROOT_DIR (passed by parent include)
+# ============================================================================
+
+vars:
+  WEBSITE_DIR: '{{.ROOT_DIR}}/website'
+  LOCAL_PAGES_URL: 'http://localhost:5173'
+  PAGES_PROD_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.production
+
+tasks:
+  default:
+    internal: true
+    cmds:
+      - task: debug:self
+
+  # ===========================================================================
+  # Debug
+  # ===========================================================================
+  "debug:self":
+    desc: Print pages vars
+    silent: true
+    cmds:
+      - |
+        echo "=== Pages ==="
+        echo "  ROOT_DIR:       {{.ROOT_DIR}}"
+        echo "  WEBSITE_DIR:    {{.WEBSITE_DIR}}"
+        echo "  LOCAL_PAGES_URL: {{.LOCAL_PAGES_URL}}"
+        echo "  PAGES_PROD_URL: {{.PAGES_PROD_URL}}"
+        echo ""
+        echo "=== VitePress ==="
+        cd {{.WEBSITE_DIR}} && bun -e "console.log('  version:', require('vitepress/package.json').version)" 2>/dev/null || echo "  not installed (run: cd website && bun install)"
+
+  # ===========================================================================
+  # Dependencies
+  # ===========================================================================
+  "deps:install":
+    desc: Install VitePress dependencies
+    dir: '{{.WEBSITE_DIR}}'
+    cmds:
+      - bun install
+    status:
+      - test -d {{.WEBSITE_DIR}}/node_modules/vitepress
+
+  # ===========================================================================
+  # Serve & Build
+  # ===========================================================================
+  serve:
+    desc: Start VitePress dev server
+    deps: ["deps:install"]
+    dir: '{{.WEBSITE_DIR}}'
+    cmds:
+      - echo "Pages server starting at {{.LOCAL_PAGES_URL}}"
+      - cd {{.WEBSITE_DIR}} && bun run dev
+
+  build:
+    desc: Build VitePress static site for production
+    deps: ["deps:install"]
+    dir: '{{.WEBSITE_DIR}}'
+    cmds:
+      - cd {{.WEBSITE_DIR}} && bun scripts/build-llm-docs.ts
+      - cd {{.WEBSITE_DIR}} && bun run build
+      - echo "Site built at {{.WEBSITE_DIR}}/.vitepress/dist/"
+
+  # ===========================================================================
+  # Screenshots & Videos
+  # ===========================================================================
+  screenshots:
+    desc: Generate doc screenshots + videos from E2E tests
+    cmds:
+      - cd {{.ROOT_DIR}}/tests && DOCS=1 SLOW=1 bunx playwright test --project=e2e
+
+  # ===========================================================================
+  # Open in browser
+  # ===========================================================================
+  open:
+    desc: Open pages site in browser (local)
+    cmds:
+      - open {{.LOCAL_PAGES_URL}}
+
+  "open:prod":
+    desc: Open production pages site in browser
+    cmds:
+      - open {{.PAGES_PROD_URL}}
+
+  # ===========================================================================
+  # List
+  # ===========================================================================
+  list:
+    desc: List all docs in the website
+    silent: true
+    cmds:
+      - |
+        echo "=== User Docs ==="
+        ls {{.WEBSITE_DIR}}/docs/user/*.md 2>/dev/null | xargs -I{} basename {}
+        echo ""
+        echo "=== Technical Docs ==="
+        ls {{.WEBSITE_DIR}}/docs/technical/*.md 2>/dev/null | xargs -I{} basename {}
+        echo ""
+        echo "=== Other ==="
+        ls {{.WEBSITE_DIR}}/docs/ROADMAP.md 2>/dev/null | xargs -I{} basename {}
+
+  # ===========================================================================
+  # Clean
+  # ===========================================================================
+  clean:
+    desc: Remove VitePress build artifacts
+    cmds:
+      - rm -rf {{.WEBSITE_DIR}}/.vitepress/dist
+      - rm -rf {{.WEBSITE_DIR}}/.vitepress/cache

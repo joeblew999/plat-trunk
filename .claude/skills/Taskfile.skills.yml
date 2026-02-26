@@ -19,7 +19,7 @@ version: '3'
 # ============================================================================
 
 vars:
-  ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  # ROOT_DIR passed by parent include — do NOT redefine
   LLMS_DIR: '{{.ROOT_DIR}}/docs/llms'
   SKILLS_DIR: '{{.ROOT_DIR}}/.claude/skills'
   # Upstream URLs

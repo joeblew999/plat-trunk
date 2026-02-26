@@ -5,7 +5,7 @@ version: '3'
 # ============================================================================
 
 vars:
-  ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  # ROOT_DIR passed by parent include — do NOT redefine
   BIN_DIR: '{{.ROOT_DIR}}/.bin'
 
 tasks:

@@ -3,7 +3,7 @@ version: '3'
 # Truck - Rust CAD Kernel  https://github.com/ricosjp/truck
 
 vars:
-  ROOT_DIR: '{{.ROOT_DIR | default "."}}'
+  # ROOT_DIR passed by parent include — do NOT redefine
   BIN_DIR: '{{.ROOT_DIR}}/.bin'
   SRC_DIR: '{{.ROOT_DIR}}/.src'
   TRUCK_SRC_DIR: '{{.SRC_DIR}}/truck'
@@ -16,14 +16,22 @@ vars:
   IFC_LITE_REPO: 'github.com/louistrue/ifc-lite'
   EZPZ_SRC_DIR: '{{.SRC_DIR}}/ezpz'
   EZPZ_REPO: 'github.com/KittyCAD/ezpz'
-  BASE_URL: '{{.BASE_URL | default "https://cad.ubuntusoftware.net"}}'
-  WORKER_NAME: '{{.WORKER_NAME | default "truck-cad"}}'
-  WORKER_DOMAIN: '{{.WORKER_DOMAIN | default "gedw99.workers.dev"}}'
-  WORKER_DIR: '{{.ROOT_DIR}}/systems/truck/worker'
+  BASE_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.production
+  WORKER_NAME:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.name
+  WORKER_DOMAIN:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.domain
+  WORKER_DIR:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.dir)"
+  LOCAL_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config local.worker
+  SCHEMA_FILE:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config version.source)"
   CAD_VERSION:
-    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/web/cad-schema.json','utf8')).version)"
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version)"
   CAD_VERSION_SLUG:
-    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/web/cad-schema.json','utf8')).version.replaceAll('.','-'))"
+    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version.replaceAll('.','-'))"
 
 tasks:
   default:
@@ -187,9 +195,9 @@ tasks:
       - src/**/*.rs
       - Cargo.toml
     generates:
-      - "{{.ROOT_DIR}}/web/cad-schema.json"
+      - "{{.SCHEMA_FILE}}"
     cmds:
-      - cargo run --bin generate-schema 2>/dev/null > {{.ROOT_DIR}}/web/cad-schema.json
+      - cargo run --bin generate-schema 2>/dev/null > {{.SCHEMA_FILE}}
 
   "gui:build":
     desc: Build browser WASM + generate schema
@@ -229,8 +237,8 @@ tasks:
         echo ""
 
         echo "1. Worker health..."
-        if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
-          VERSION=$(curl -sf http://localhost:8788/api/health | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+        if curl -sf {{.LOCAL_URL}}/api/health > /dev/null 2>&1; then
+          VERSION=$(curl -sf {{.LOCAL_URL}}/api/health | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
           echo "   OK (v${VERSION})"
         else
           echo "   FAIL — run: task up"
@@ -238,7 +246,7 @@ tasks:
         echo ""
 
         echo "2. MCP endpoint (tools/list)..."
-        TOOLS=$(curl -sf -X POST http://localhost:8788/mcp \
+        TOOLS=$(curl -sf -X POST {{.LOCAL_URL}}/mcp \
           -H 'Content-Type: application/json' \
           -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>/dev/null \
           | grep -o '"name"' | wc -l | tr -d ' ')
@@ -259,8 +267,8 @@ tasks:
         echo ""
 
         echo "4. Bridge log (last 5 lines)..."
-        if [ -f "$HOME/.cache/truck-cad/mcp-bridge.log" ]; then
-          tail -5 "$HOME/.cache/truck-cad/mcp-bridge.log" | sed 's/^/   /'
+        if [ -f "$HOME/.cache/{{.WORKER_NAME}}/mcp-bridge.log" ]; then
+          tail -5 "$HOME/.cache/{{.WORKER_NAME}}/mcp-bridge.log" | sed 's/^/   /'
         else
           echo "   No log file yet (bridge hasn't run)"
         fi
@@ -281,31 +289,38 @@ tasks:
     silent: true
 
   "gui:serve":
-    desc: Local dev server (localhost:8788)
+    desc: Local dev server
     deps: ["gui:build", "mcp:bootstrap"]
+    preconditions:
+      - sh: test -f {{.ROOT_DIR}}/web/gui/vendor/lit.js
+        msg: "vendor/lit.js missing — run: git checkout HEAD -- web/gui/vendor/lit.js"
+      - sh: test -f {{.ROOT_DIR}}/web/gui/vendor/three.js
+        msg: "vendor/three.js missing — run: git checkout HEAD -- web/gui/vendor/three.js"
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
   "gui:deploy":
-    desc: "Build + upload + git tag v{{.CAD_VERSION}} (does NOT promote — use cf:promote when ready)"
-    deps: ["gui:build", "deploy:setup"]
+    desc: "Build + upload + smoke + git tag v{{.CAD_VERSION}} (does NOT promote — use cf:worker:promote when ready)"
+    deps: ["gui:build", "deploy:setup", "version:check"]
     cmds:
-      - task: :cf:upload
+      - task: :cf:worker:upload
         vars:
           APP_VERSION: '{{.CAD_VERSION}}'
           VERSION_SLUG: '{{.CAD_VERSION_SLUG}}'
-      - task: :cf:versions:json
+      - task: :cf:versions
+      # Smoke test the preview URL before tagging — catches broken uploads
+      - task: :cf:worker:smoke
       - task: deploy:tag
       - 'echo "Uploaded v{{.CAD_VERSION}} → https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
-      - 'echo "To promote to production: task cf:promote"'
+      - 'echo "To promote to production: task cf:worker:promote"'
 
   # --- Tests & Docs ---
   #
   # Two MCP systems power the dev+test workflow:
   #
-  #   1. CAD MCP   — lives at http://localhost:8788/mcp (part of dev server)
+  #   1. CAD MCP   — lives at LOCAL_URL/mcp (part of dev server)
   #      Provides: cad_add_cube, cad_translate, cad_boolean_subtract, ...
-  #      Config:   .claude/settings.json → truck-cad
+  #      Config:   .claude/settings.json → {{.WORKER_NAME}}
   #      Start:    task truck:gui:serve
   #
   #   2. Playwright MCP — browser automation (already running via Claude Code)
@@ -333,7 +348,7 @@ tasks:
   #   SLOW=1         pauses between steps + video recording
   #   SCREENSHOTS=1  save PNGs → docs/hugo/static/screenshots/
   #   EXAMPLES=1     save scene JSON → web/gui/examples/
-  #   BASE_URL=...   override localhost:8788
+  #   BASE_URL=...   override local worker URL
 
   "test:install":
     desc: Install Playwright + Chrome
@@ -348,16 +363,16 @@ tasks:
     cmds:
       - |
         echo "=== Dev Server ==="
-        if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
-          echo "  ✓ running (http://localhost:8788)"
+        if curl -sf {{.LOCAL_URL}}/api/health > /dev/null 2>&1; then
+          echo "  ✓ running ({{.LOCAL_URL}})"
         else
           echo "  ✗ not running → task truck:gui:serve"
           exit 1
         fi
         echo "=== CAD MCP ==="
-        if curl -sf http://localhost:8788/api/cad/schema > /dev/null 2>&1; then
-          CMDS=$(curl -s http://localhost:8788/api/cad/schema | bun -e "process.stdout.write(String(Object.keys(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).commands).length))" 2>/dev/null || echo "?")
-          echo "  ✓ schema: $CMDS commands (http://localhost:8788/mcp)"
+        if curl -sf {{.LOCAL_URL}}/api/cad/schema > /dev/null 2>&1; then
+          CMDS=$(curl -s {{.LOCAL_URL}}/api/cad/schema | bun -e "process.stdout.write(String(Object.keys(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).commands).length))" 2>/dev/null || echo "?")
+          echo "  ✓ schema: $CMDS commands ({{.LOCAL_URL}}/mcp)"
         else
           echo "  ✗ not available"
           exit 1
@@ -369,12 +384,12 @@ tasks:
           echo "  ✗ .mcp.json missing → task truck:gui:mcp"
         fi
         if command -v claude >/dev/null 2>&1; then
-          if CLAUDECODE= claude mcp list 2>/dev/null | grep -q "truck-cad.*Connected"; then
-            echo "  ✓ truck-cad registered + connected in Claude Code"
-          elif CLAUDECODE= claude mcp list 2>/dev/null | grep -q "truck-cad"; then
-            echo "  ⚠ truck-cad registered but not connected (restart Claude Code)"
+          if CLAUDECODE= claude mcp list 2>/dev/null | grep -q "{{.WORKER_NAME}}.*Connected"; then
+            echo "  ✓ {{.WORKER_NAME}} registered + connected in Claude Code"
+          elif CLAUDECODE= claude mcp list 2>/dev/null | grep -q "{{.WORKER_NAME}}"; then
+            echo "  ⚠ {{.WORKER_NAME}} registered but not connected (restart Claude Code)"
           else
-            echo "  ✗ truck-cad not registered → task truck:gui:mcp"
+            echo "  ✗ {{.WORKER_NAME}} not registered → task truck:gui:mcp"
           fi
         fi
         echo "=== Playwright MCP ==="
@@ -454,7 +469,7 @@ tasks:
       - |
         echo "Waiting for server to be ready..."
         for i in {1..30}; do
-          if curl -sf http://localhost:8788/api/health > /dev/null 2>&1; then
+          if curl -sf {{.LOCAL_URL}}/api/health > /dev/null 2>&1; then
             echo "Server ready!"
             break
           fi
@@ -486,10 +501,10 @@ tasks:
       - |
         cd {{.ROOT_DIR}}/systems/truck/worker
         for f in ../../../docs/hugo/static/screenshots/*.png; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "$(bun scripts/cf-deploy.ts config r2.pages)/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
         done
         for f in ../../../docs/hugo/static/videos/*.webm; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "cad-docs/docs/videos/$(basename $f)" --file="$f" --ct="video/webm" --remote
+          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "$(bun scripts/cf-deploy.ts config r2.pages)/docs/videos/$(basename $f)" --file="$f" --ct="video/webm" --remote
         done
 
   # --- Version Management ---
@@ -501,15 +516,23 @@ tasks:
     preconditions:
       - sh: '[ -n "{{.CLI_ARGS}}" ]'
         msg: "Usage: task truck:version:bump -- 0.4.0"
+      - sh: 'echo "{{.CLI_ARGS}}" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+$"'
+        msg: "Invalid semver — expected format: 1.2.3"
       - sh: '! git rev-parse "v{{.CLI_ARGS}}" >/dev/null 2>&1'
         msg: "Tag v{{.CLI_ARGS}} already exists — pick a new version"
     cmds:
+      # Cross-platform version replacement (works on macOS + Linux)
       - |
-        sed -i '' 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "{{.CLI_ARGS}}"/' {{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands/mod.rs
+        MOD_RS="{{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands/mod.rs"
+        bun -e "
+          const fs = require('fs');
+          const f = process.env.MOD_RS;
+          fs.writeFileSync(f, fs.readFileSync(f,'utf8').replace(/\"version\":\s*\"[0-9]+\.[0-9]+\.[0-9]+\"/, '\"version\": \"{{.CLI_ARGS}}\"'));
+        "
       - task: gui:schema
       - |
         cd {{.ROOT_DIR}}
-        git add crates/truck-webgpu-gui/src/commands/mod.rs web/cad-schema.json
+        git add crates/truck-webgpu-gui/src/commands/mod.rs {{.SCHEMA_FILE}}
         git commit -m "release: v{{.CLI_ARGS}}"
         git tag "v{{.CLI_ARGS}}"
         echo ""
@@ -522,10 +545,28 @@ tasks:
       - echo "v{{.CAD_VERSION}}"
     silent: true
 
+  "version:check":
+    desc: Verify commands/mod.rs and cad-schema.json versions match
+    cmds:
+      - |
+        RUST_VER=$(bun -e "const s=require('fs').readFileSync('{{.ROOT_DIR}}/crates/truck-webgpu-gui/src/commands/mod.rs','utf8'); const m=s.match(/\"version\":\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"/); process.stdout.write(m?m[1]:'?')")
+        SCHEMA_VER=$(bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version)")
+        echo "Rust (mod.rs):         v${RUST_VER}"
+        echo "Schema (cad-schema):   v${SCHEMA_VER}"
+        if [ "$RUST_VER" = "$SCHEMA_VER" ]; then
+          echo ""
+          echo "OK: versions match"
+        else
+          echo ""
+          echo "MISMATCH: run 'task truck:gui:schema' to regenerate"
+          exit 1
+        fi
+    silent: true
+
   # --- Deploy ---
   # Generic CF tasks are in cf: include (taskfiles/Taskfile.cloudflare.yml).
   # Truck-specific: tag (GitHub release), setup (gh secret), smoke:extra (schema + MCP).
-  # Flow: gui:deploy → cf:upload + tag → cf:smoke → cf:promote
+  # Flow: gui:deploy → version:check → cf:worker:upload → cf:worker:smoke → tag → cf:worker:promote
 
   "deploy:tag":
     desc: "Create git tag v{{.CAD_VERSION}} + GitHub release (idempotent)"
@@ -549,27 +590,7 @@ tasks:
         if $GH release view "$VERSION" >/dev/null 2>&1; then
           echo "Release $VERSION already exists"
         else
-          BODY=$(cat <<NOTES
-        ## Try this version
-
-        **Preview URL**: https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}
-
-        ## All URLs
-
-        | Endpoint | URL |
-        |----------|-----|
-        | This version | https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}} |
-        | Production | {{.BASE_URL}} |
-        | API Health | {{.BASE_URL}}/api/health |
-        | MCP | {{.BASE_URL}}/mcp |
-
-        ## Verify
-        \`\`\`sh
-        curl -sf https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}/api/health
-        # {"version":"{{.CAD_VERSION}}"}
-        \`\`\`
-        NOTES
-          )
+          BODY=$(bun scripts/cf-deploy.ts release-notes)
           $GH release create "$VERSION" --title "$VERSION" --notes "$BODY"
           echo "Created GitHub release $VERSION"
         fi
@@ -582,15 +603,16 @@ tasks:
   smoke:
     desc: "Full smoke test (generic + truck-specific schema/MCP checks)"
     cmds:
-      - task: :cf:smoke
+      - task: :cf:worker:smoke
       - task: smoke:extra
 
   "smoke:extra":
     desc: "Truck-specific smoke checks (schema + MCP)"
+    dir: '{{.ROOT_DIR}}'
     cmds:
       - |
-        eval $(cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} WORKER_DIR={{.WORKER_DIR}} OUTPUT_FILE={{.ROOT_DIR}}/web/gui/versions.json bun scripts/versions-json.ts --latest-env)
-        URL="${PREVIEW_URL:-{{.BASE_URL}}}"
+        eval $(bun scripts/cf-deploy.ts status --env)
+        URL="${WORKER_IMMUTABLE_URL:-${WORKER_URL:-{{.BASE_URL}}}}"
         echo "Truck-specific checks: $URL"
         # Schema check
         SCHEMA=$(curl -sf "$URL/api/cad/schema" 2>&1) || { echo "FAIL: /api/cad/schema unreachable"; exit 1; }
@@ -609,7 +631,8 @@ tasks:
     desc: Deploy Worker + docs site
     cmds:
       - task: gui:deploy
-      - task: :docs:deploy
+      - task: :vitepress:build
+      - task: :cf:pages:deploy
 
   # --- Visual Examples (opens window) ---
 

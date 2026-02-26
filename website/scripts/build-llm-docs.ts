@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { glob } from 'node:fs/promises'
 
+const cfDeploy = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../cf-deploy.json'), 'utf8'))
 const frontmatterRegex = /^\n*---(\n.+)*?\n---\n/
 
 const docsDir = path.resolve('docs')
@@ -22,7 +23,7 @@ function capitalizeDelimiter(str: string) {
 }
 
 async function generateLLMDocs() {
-  const siteUrl = 'https://cad-docs.pages.dev'
+  const siteUrl = `https://${cfDeploy.pages.domain}`
 
   // --- llms.txt (index) ---
   const outputListFile = path.resolve('public/llms.txt')

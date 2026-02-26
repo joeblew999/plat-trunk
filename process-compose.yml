@@ -1,10 +1,28 @@
+# ============================================================================
+# Process Compose — local dev orchestrator
+#
+# Start:  task up:detached   (background)  or  task up  (TUI)
+# Stop:   task down
+# Attach: task attach        (reconnect to running TUI)
+#
+# All URLs from cf-deploy.json:
+#   Worker (CAD app):  http://localhost:8788
+#   Pages  (docs):     http://localhost:5173
+#   PC TUI:            http://localhost:8000
+# ============================================================================
+
 version: "0.5"
+
 processes:
+  # ── CAD Worker ─────────────────────────────────────────────────────────────
+  # Hono + WASM worker via wrangler dev — serves GUI, API, MCP on :8788
   gui-worker:
     command: task truck:gui:serve
     availability:
       restart: on_failure
-  
+
+  # ── File Watchers ──────────────────────────────────────────────────────────
+  # Auto-rebuild on file changes (GUI assets + worker source)
   watch-gui:
     command: task truck:watch:gui
     availability:
@@ -15,11 +33,15 @@ processes:
     availability:
       restart: on_failure
 
+  # ── Docs (VitePress) ──────────────────────────────────────────────────────
+  # Documentation site on :5173 — hot-reload for authoring
   docs:
-    command: task docs:serve
+    command: task vitepress:serve
     availability:
       restart: on_failure
 
+  # ── Shape Viewer ───────────────────────────────────────────────────────────
+  # Standalone geometry viewer for debugging WASM shape ops
   shape-viewer:
     command: task truck:run:shape-viewer
     availability:

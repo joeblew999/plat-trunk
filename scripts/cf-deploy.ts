@@ -1,0 +1,852 @@
+#!/usr/bin/env bun
+/**
+ * cf-deploy — Cloudflare Workers + Pages deploy lifecycle CLI.
+ *
+ * Single-file CLI that reads cf-deploy.json for all config.
+ * Replaces: cf-versions-json.ts + cf-versions-common.ts + cf-versions-worker.ts + cf-versions-pages.ts
+ *
+ * Usage:
+ *   bun scripts/cf-deploy.ts versions          # Generate unified cf-versions.json
+ *   bun scripts/cf-deploy.ts upload             # Upload new Worker version
+ *   bun scripts/cf-deploy.ts promote            # Promote latest to 100% traffic
+ *   bun scripts/cf-deploy.ts rollback           # Roll back to previous version
+ *   bun scripts/cf-deploy.ts smoke [URL]        # Smoke test a deployed URL
+ *   bun scripts/cf-deploy.ts release-notes      # Markdown for GitHub releases
+ *   bun scripts/cf-deploy.ts readme-urls        # URL table for README
+ *   bun scripts/cf-deploy.ts status [--env]     # Current deployment info
+ *   bun scripts/cf-deploy.ts list               # All versions + previews
+ *   bun scripts/cf-deploy.ts config [path]      # Read config value
+ *   bun scripts/cf-deploy.ts verify             # Audit for stale hardcodes
+ *   bun scripts/cf-deploy.ts whoami             # Cloudflare auth info
+ *
+ * See ADR-0022 (v2) for design rationale.
+ */
+
+import { execSync } from "child_process";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { join, resolve } from "path";
+
+// ============================================================================
+// Config
+// ============================================================================
+
+const CURRENT_CONFIG_VERSION = 1;
+
+interface Config {
+  worker: { name: string; domain: string; dir: string; production: string };
+  pages: { project: string; domain: string; dir: string; production: string };
+  local: { worker: string; pages: string };
+  account: string;
+  github: string;
+  version: { source: string };
+  output: string;
+  endpoints: Record<string, string>;
+  r2?: { pages?: string; documents?: string };
+  smoke?: { extra?: string };
+  configVersion?: number;
+}
+
+/** Required top-level keys — fail fast if config is missing fields */
+const REQUIRED_KEYS: (keyof Config)[] = [
+  "worker", "pages", "local", "account", "github", "version", "output", "endpoints",
+];
+
+function loadConfig(rootDir: string): Config {
+  const configPath = join(rootDir, "cf-deploy.json");
+  if (!existsSync(configPath)) {
+    console.error(`ERROR: cf-deploy.json not found at ${configPath}`);
+    process.exit(1);
+  }
+  const cfg: Config = JSON.parse(readFileSync(configPath, "utf8"));
+
+  // Validate required keys
+  const missing = REQUIRED_KEYS.filter((k) => !(k in cfg));
+  if (missing.length) {
+    console.error(`ERROR: cf-deploy.json missing required keys: ${missing.join(", ")}`);
+    console.error(`  Expected configVersion: ${CURRENT_CONFIG_VERSION}`);
+    process.exit(1);
+  }
+
+  // Warn on version mismatch (non-fatal — lets old configs still work)
+  if (cfg.configVersion && cfg.configVersion > CURRENT_CONFIG_VERSION) {
+    console.error(`WARN: cf-deploy.json configVersion ${cfg.configVersion} > expected ${CURRENT_CONFIG_VERSION}`);
+    console.error(`  Update scripts/cf-deploy.ts to match.`);
+  }
+
+  return cfg;
+}
+
+function getRootDir(): string {
+  return process.env.ROOT_DIR || execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
+}
+
+// ============================================================================
+// Version + Git Metadata
+// ============================================================================
+
+interface GitInfo {
+  commitSha: string;
+  commitFull: string;
+  commitMessage: string;
+  branch: string;
+  commitUrl: string;
+}
+
+function getGitInfo(rootDir: string, githubRepo: string): GitInfo {
+  const run = (cmd: string) => execSync(cmd, { cwd: rootDir, encoding: "utf8" }).trim();
+  const commitFull = run("git rev-parse HEAD");
+  return {
+    commitSha: run("git rev-parse --short HEAD"),
+    commitFull,
+    commitMessage: run("git log -1 --format=%s"),
+    branch: run("git branch --show-current"),
+    commitUrl: `https://github.com/${githubRepo}/commit/${commitFull}`,
+  };
+}
+
+function readAppVersion(rootDir: string, source: string): { version: string; commandCount?: number } {
+  const schemaPath = resolve(rootDir, source);
+  if (!existsSync(schemaPath)) return { version: "0.0.0" };
+  const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+  return {
+    version: schema.version || "0.0.0",
+    commandCount: schema.commands ? Object.keys(schema.commands).length : undefined,
+  };
+}
+
+// ============================================================================
+// Manifest Types
+// ============================================================================
+
+interface VersionEntry {
+  version: string;
+  tag: string;
+  date: string;
+  worker?: { id: string; url: string; immutableUrl: string };
+  pages?: { id: string; url: string; immutableUrl: string };
+  git?: GitInfo;
+  commandCount?: number;
+}
+
+interface PreviewEntry {
+  label: string;
+  platform: "worker" | "pages";
+  tag: string;
+  date: string;
+  id: string;
+  url: string;
+}
+
+interface Manifest {
+  production: { worker: string; pages: string };
+  github: string;
+  endpoints: Record<string, string>;
+  generated: string;
+  versions: VersionEntry[];
+  previews: PreviewEntry[];
+}
+
+// ============================================================================
+// Worker: Parse wrangler versions list
+// ============================================================================
+
+function parseWorkerVersions(raw: string, cfg: Config) {
+  const releases: { version: string; tag: string; date: string; id: string; url: string; immutableUrl: string }[] = [];
+  const previews: PreviewEntry[] = [];
+
+  let cur: { id?: string; created?: string; tag?: string } = {};
+  for (const line of raw.split("\n")) {
+    const idMatch = line.match(/^Version ID:\s+(.+)/);
+    const createdMatch = line.match(/^Created:\s+(.+)/);
+    const tagMatch = line.match(/^Tag:\s+(.+)/);
+
+    if (idMatch) cur = { id: idMatch[1].trim() };
+    else if (createdMatch && cur.id) cur.created = createdMatch[1].trim();
+    else if (tagMatch && cur.id) {
+      cur.tag = tagMatch[1].trim();
+      if (cur.tag !== "-" && cur.created) {
+        const workerUrl = (prefix: string) => `https://${prefix}-${cfg.worker.name}.${cfg.worker.domain}`;
+
+        if (cur.tag.startsWith("pr-")) {
+          previews.push({
+            label: `PR #${cur.tag.replace("pr-", "")}`,
+            platform: "worker",
+            tag: cur.tag,
+            date: cur.created,
+            id: cur.id,
+            url: workerUrl(cur.tag),
+          });
+        } else if (/^v\d/.test(cur.tag)) {
+          const ver = cur.tag.replace("v", "");
+          const slug = ver.replaceAll(".", "-");
+          releases.push({
+            version: ver,
+            tag: cur.tag,
+            date: cur.created,
+            id: cur.id,
+            url: workerUrl(`v${slug}`),
+            immutableUrl: workerUrl(cur.id),
+          });
+        }
+      }
+      cur = {};
+    }
+  }
+
+  return { releases, previews };
+}
+
+// ============================================================================
+// Pages: Parse wrangler pages deployment list
+// ============================================================================
+
+function parsePagesDeployments(raw: string, cfg: Config) {
+  const releases: { version: string; tag: string; date: string; id: string; url: string; immutableUrl: string }[] = [];
+  const previews: PreviewEntry[] = [];
+
+  const pagesUrl = (branch: string) => `https://${branch}.${cfg.pages.domain}`;
+
+  for (const line of raw.split("\n")) {
+    const match = line.match(
+      /│\s*([0-9a-f-]{36})\s*│\s*(\w+)\s*│\s*(\S+)\s*│\s*(\S+)\s*│\s*(https:\/\/\S+)\s*│/
+    );
+    if (!match) continue;
+
+    const [, id, , branch, source, deploymentUrl] = match;
+
+    if (/^v\d/.test(branch)) {
+      const ver = branch.replace(/^v/, "").replaceAll("-", ".");
+      releases.push({
+        version: ver,
+        tag: `v${ver}`,
+        date: new Date().toISOString(),
+        id,
+        url: pagesUrl(branch),
+        immutableUrl: deploymentUrl,
+      });
+    }
+
+    // PR previews
+    if (branch.startsWith("pr-")) {
+      previews.push({
+        label: `PR #${branch.replace("pr-", "")}`,
+        platform: "pages",
+        tag: branch,
+        date: new Date().toISOString(),
+        id,
+        url: deploymentUrl,
+      });
+    }
+  }
+
+  return { releases, previews };
+}
+
+// ============================================================================
+// Subcommand: versions — Generate unified cf-versions.json
+// ============================================================================
+
+async function cmdVersions(rootDir: string, cfg: Config) {
+  const gitInfo = getGitInfo(rootDir, cfg.github);
+  const { version: appVersion, commandCount } = readAppVersion(rootDir, cfg.version.source);
+
+  // Query both platforms (either can fail gracefully)
+  let workerData = { releases: [] as any[], previews: [] as PreviewEntry[] };
+  let pagesData = { releases: [] as any[], previews: [] as PreviewEntry[] };
+
+  try {
+    const workerDir = resolve(rootDir, cfg.worker.dir);
+    const raw = execSync("bun x wrangler versions list 2>&1", { cwd: workerDir, encoding: "utf8" });
+    workerData = parseWorkerVersions(raw, cfg);
+    console.log(`  worker: ${workerData.releases.length} versions, ${workerData.previews.length} previews`);
+  } catch (e) {
+    console.log("  worker: skipped (wrangler failed)");
+  }
+
+  try {
+    const raw = execSync(`bun x wrangler pages deployment list --project-name=${cfg.pages.project} 2>&1`, {
+      cwd: rootDir,
+      encoding: "utf8",
+    });
+    pagesData = parsePagesDeployments(raw, cfg);
+    console.log(`  pages:  ${pagesData.releases.length} versions, ${pagesData.previews.length} previews`);
+  } catch (e) {
+    console.log("  pages:  skipped (wrangler failed)");
+  }
+
+  // Merge by version number
+  const versionMap = new Map<string, VersionEntry>();
+
+  for (const r of workerData.releases) {
+    const existing = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
+    existing.worker = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    if (!existing.date || r.date > existing.date) existing.date = r.date;
+    versionMap.set(r.version, existing);
+  }
+
+  for (const r of pagesData.releases) {
+    const existing = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
+    existing.pages = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    if (!existing.date || r.date > existing.date) existing.date = r.date;
+    versionMap.set(r.version, existing);
+  }
+
+  // Ensure current version is present
+  if (!versionMap.has(appVersion)) {
+    const slug = appVersion.replaceAll(".", "-");
+    versionMap.set(appVersion, {
+      version: appVersion,
+      tag: `v${appVersion}`,
+      date: new Date().toISOString(),
+      worker: {
+        id: "",
+        url: `https://v${slug}-${cfg.worker.name}.${cfg.worker.domain}`,
+        immutableUrl: "",
+      },
+      pages: {
+        id: "",
+        url: `https://v${slug}.${cfg.pages.domain}`,
+        immutableUrl: "",
+      },
+    });
+  }
+
+  // Enrich current version with git info
+  const current = versionMap.get(appVersion);
+  if (current) {
+    current.git = gitInfo;
+    if (commandCount !== undefined) current.commandCount = commandCount;
+  }
+
+  // Sort by version descending
+  const versions = [...versionMap.values()].sort((a, b) =>
+    b.version.localeCompare(a.version, undefined, { numeric: true })
+  );
+
+  // Merge previews
+  const previews = [...workerData.previews, ...pagesData.previews];
+
+  // Build manifest
+  const manifest: Manifest = {
+    production: {
+      worker: cfg.worker.production,
+      pages: cfg.pages.production,
+    },
+    github: `https://github.com/${cfg.github}`,
+    endpoints: cfg.endpoints,
+    generated: new Date().toISOString(),
+    versions,
+    previews,
+  };
+
+  const outPath = resolve(rootDir, cfg.output);
+  writeFileSync(outPath, JSON.stringify(manifest, null, 2) + "\n");
+  console.log(`\nWrote ${outPath}: ${versions.length} versions, ${previews.length} previews (${gitInfo.commitSha})`);
+}
+
+// ============================================================================
+// Subcommand: upload — Upload new Worker version
+// ============================================================================
+
+function cmdUpload(rootDir: string, cfg: Config) {
+  const { version } = readAppVersion(rootDir, cfg.version.source);
+  const slug = version.replaceAll(".", "-");
+  const workerDir = resolve(rootDir, cfg.worker.dir);
+
+  console.log(`Uploading Worker version v${version}...`);
+  execSync(
+    `bun install && bunx wrangler versions upload --tag "v${version}" --message "v${version}" --preview-alias "v${slug}"`,
+    { cwd: workerDir, stdio: "inherit" }
+  );
+  console.log(`\nUploaded v${version}`);
+  console.log(`  Preview: https://v${slug}-${cfg.worker.name}.${cfg.worker.domain}`);
+}
+
+// ============================================================================
+// Subcommand: promote — Promote latest to 100% traffic
+// ============================================================================
+
+function cmdPromote(rootDir: string, cfg: Config) {
+  const manifest = readManifest(rootDir, cfg);
+  const latest = manifest.versions[0];
+  if (!latest) {
+    console.error("ERROR: No versions found — upload first");
+    process.exit(1);
+  }
+
+  const versionId = latest.worker?.id;
+  if (!versionId) {
+    console.error("ERROR: No Worker version ID — upload first");
+    process.exit(1);
+  }
+
+  console.log(`Promoting ${versionId} (v${latest.version}) to 100% traffic...`);
+  const workerDir = resolve(rootDir, cfg.worker.dir);
+  execSync(`bunx wrangler versions deploy "${versionId}@100%" --yes`, {
+    cwd: workerDir,
+    stdio: "inherit",
+  });
+  console.log(`\nPromoted v${latest.version} to production`);
+}
+
+// ============================================================================
+// Subcommand: rollback
+// ============================================================================
+
+function cmdRollback(rootDir: string, cfg: Config) {
+  const workerDir = resolve(rootDir, cfg.worker.dir);
+  execSync("bunx wrangler rollback", { cwd: workerDir, stdio: "inherit" });
+}
+
+// ============================================================================
+// Subcommand: smoke — Smoke test a deployed URL
+// ============================================================================
+
+function cmdSmoke(rootDir: string, cfg: Config, targetUrl?: string) {
+  const manifest = readManifest(rootDir, cfg);
+  const latest = manifest.versions[0];
+  const url = targetUrl || latest?.worker?.immutableUrl || latest?.worker?.url || cfg.worker.production;
+
+  console.log(`Smoke testing: ${url}\n`);
+
+  // 1. Health check
+  try {
+    const healthJson = execSync(`curl -sf "${url}/api/health"`, { encoding: "utf8" });
+    const health = JSON.parse(healthJson);
+    console.log(`  health:  OK (v${health.version})`);
+
+    // Version match
+    if (latest && health.version !== latest.version) {
+      console.log(`  WARN:    Version mismatch — expected v${latest.version}, got v${health.version}`);
+    }
+  } catch {
+    console.error("  FAIL:    /api/health unreachable");
+    process.exit(1);
+  }
+
+  // 2. Index page
+  try {
+    const status = execSync(`curl -sf -o /dev/null -w "%{http_code}" "${url}/"`, { encoding: "utf8" }).trim();
+    const size = execSync(`curl -sf -o /dev/null -w "%{size_download}" "${url}/"`, { encoding: "utf8" }).trim();
+    console.log(`  index:   OK (HTTP ${status}, ${size} bytes)`);
+  } catch {
+    console.error("  FAIL:    Index page unreachable");
+    process.exit(1);
+  }
+
+  // 3. Project-specific checks
+  if (cfg.smoke?.extra) {
+    try {
+      execSync(`SMOKE_URL="${url}" ${cfg.smoke.extra}`, { cwd: rootDir, stdio: "inherit" });
+    } catch {
+      console.error("  FAIL:    Extra smoke checks failed");
+      process.exit(1);
+    }
+  }
+
+  console.log(`\nPASS: All checks passed`);
+}
+
+// ============================================================================
+// Subcommand: release-notes — Markdown for GitHub releases
+// ============================================================================
+
+function cmdReleaseNotes(rootDir: string, cfg: Config) {
+  const manifest = readManifest(rootDir, cfg);
+  const latest = manifest.versions[0];
+  if (!latest) {
+    console.error("ERROR: No versions found");
+    process.exit(1);
+  }
+
+  const v = latest.version;
+  const slug = v.replaceAll(".", "-");
+  const workerPreview = `https://v${slug}-${cfg.worker.name}.${cfg.worker.domain}`;
+  const pagesPreview = `https://v${slug}.${cfg.pages.domain}`;
+
+  const lines = [
+    `## Try this version`,
+    ``,
+    `| | Worker | Pages |`,
+    `|--|--------|-------|`,
+    `| **This version** | [v${slug}-${cfg.worker.name}](${workerPreview}) | [v${slug}.${cfg.pages.domain}](${pagesPreview}) |`,
+    `| **Production** | [${new URL(cfg.worker.production).hostname}](${cfg.worker.production}) | [${new URL(cfg.pages.production).hostname}](${cfg.pages.production}) |`,
+    ``,
+    `### Endpoints`,
+    ``,
+    `| Endpoint | URL |`,
+    `|----------|-----|`,
+  ];
+
+  for (const [name, path] of Object.entries(cfg.endpoints)) {
+    const url = path.startsWith("http") ? path : `${cfg.worker.production}${path}`;
+    lines.push(`| ${name} | ${url} |`);
+  }
+
+  lines.push(
+    ``,
+    `### Verify`,
+    ``,
+    "```sh",
+    `curl -sf ${workerPreview}/api/health`,
+    `# {"version":"${v}"}`,
+    "```",
+  );
+
+  console.log(lines.join("\n"));
+}
+
+// ============================================================================
+// Subcommand: readme-urls — URL table for README
+// ============================================================================
+
+function cmdReadmeUrls(rootDir: string, cfg: Config) {
+  const lines = [
+    `<!-- cf-urls:start -->`,
+    `| | URL |`,
+    `|--|-----|`,
+    `| **Production** | |`,
+    `| CAD App | ${cfg.worker.production} |`,
+    `| Workers (alias) | https://${cfg.worker.name}.${cfg.worker.domain} |`,
+    `| Docs | ${cfg.pages.production} |`,
+    `| Docs (Pages) | https://${cfg.pages.domain} |`,
+    `| LLM Docs | ${cfg.pages.production}/llms.txt |`,
+    `| **Local Dev** | |`,
+    `| CAD App | ${cfg.local.worker} |`,
+    `| API Docs | ${cfg.local.worker}/api-docs |`,
+    `| MCP | ${cfg.local.worker}/mcp |`,
+    `| Pages Dev | ${cfg.local.pages} |`,
+    `| **Project** | |`,
+    `| GitHub | https://github.com/${cfg.github} |`,
+    `| CF Deployments | [Dashboard](https://dash.cloudflare.com/${cfg.account}/workers/services/view/${cfg.worker.name}/production/deployments) |`,
+    `<!-- cf-urls:end -->`,
+  ];
+
+  const block = lines.join("\n");
+
+  // Auto-update README.md if it has cf-urls markers
+  const readmePath = join(rootDir, "README.md");
+  if (existsSync(readmePath)) {
+    const readme = readFileSync(readmePath, "utf8");
+    const re = /<!-- cf-urls:start -->[\s\S]*?<!-- cf-urls:end -->/;
+    if (re.test(readme)) {
+      const updated = readme.replace(re, block);
+      if (updated !== readme) {
+        writeFileSync(readmePath, updated);
+        console.log("README.md updated");
+      } else {
+        console.log("README.md already up to date");
+      }
+      return;
+    }
+  }
+
+  // Fallback: print to stdout
+  console.log(block);
+}
+
+// ============================================================================
+// Subcommand: status — Current deployment info
+// ============================================================================
+
+function cmdStatus(rootDir: string, cfg: Config, asEnv: boolean) {
+  const manifest = readManifest(rootDir, cfg);
+  const latest = manifest.versions[0];
+
+  if (!latest) {
+    console.error("No versions found — run 'versions' first");
+    process.exit(1);
+  }
+
+  if (asEnv) {
+    // Shell-evaluable output (used by Taskfile promote/smoke)
+    console.log(`VERSION="${latest.version}"`);
+    console.log(`COMMIT_SHA="${latest.git?.commitSha || "?"}"`);
+    if (latest.worker) {
+      console.log(`VERSION_ID="${latest.worker.id}"`);
+      console.log(`WORKER_URL="${latest.worker.url}"`);
+      console.log(`WORKER_IMMUTABLE_URL="${latest.worker.immutableUrl}"`);
+    }
+    if (latest.pages) {
+      console.log(`PAGES_URL="${latest.pages.url}"`);
+      console.log(`PAGES_IMMUTABLE_URL="${latest.pages.immutableUrl}"`);
+    }
+    console.log(`COMMAND_COUNT="${latest.commandCount || 0}"`);
+    return;
+  }
+
+  console.log(`Version:  v${latest.version}`);
+  console.log(`Tag:      ${latest.tag}`);
+  console.log(`Date:     ${latest.date}`);
+  if (latest.git) {
+    console.log(`Commit:   ${latest.git.commitSha} (${latest.git.branch})`);
+    console.log(`          ${latest.git.commitMessage}`);
+  }
+  console.log(``);
+  if (cfg.local) {
+    console.log(`Local:`);
+    if (cfg.local.worker) console.log(`  Worker:  ${cfg.local.worker}`);
+    if (cfg.local.pages) console.log(`  Pages:   ${cfg.local.pages}`);
+    console.log(``);
+  }
+  if (latest.worker || cfg.worker?.production) {
+    console.log(`Worker:`);
+    if (latest.worker?.url) console.log(`  Preview: ${latest.worker.url}`);
+    console.log(`  Prod:    ${cfg.worker.production}`);
+  }
+  if (latest.pages || cfg.pages?.production) {
+    console.log(`Pages:`);
+    if (latest.pages?.url) console.log(`  Preview: ${latest.pages.url}`);
+    console.log(`  Prod:    ${cfg.pages.production}`);
+  }
+  if (latest.commandCount) {
+    console.log(`\nCommands: ${latest.commandCount}`);
+  }
+}
+
+// ============================================================================
+// Subcommand: list — All versions + previews
+// ============================================================================
+
+function cmdList(rootDir: string, cfg: Config) {
+  const manifest = readManifest(rootDir, cfg);
+
+  console.log("=== Versions ===\n");
+  for (const v of manifest.versions) {
+    const w = v.worker?.url ? "W" : " ";
+    const p = v.pages?.url ? "P" : " ";
+    const date = v.date ? new Date(v.date).toLocaleDateString() : "";
+    console.log(`  v${v.version}  [${w}${p}]  ${date}`);
+    if (v.worker?.url) console.log(`    Worker: ${v.worker.url}`);
+    if (v.pages?.url) console.log(`    Pages:  ${v.pages.url}`);
+  }
+
+  if (manifest.previews.length > 0) {
+    console.log("\n=== Previews ===\n");
+    for (const p of manifest.previews) {
+      console.log(`  ${p.label}  (${p.platform})`);
+      console.log(`    ${p.url}`);
+    }
+  }
+
+  console.log(`\nProduction:`);
+  console.log(`  Worker: ${cfg.worker.production}`);
+  console.log(`  Pages:  ${cfg.pages.production}`);
+}
+
+// ============================================================================
+// Subcommand: config — Read a config value by dot path
+// ============================================================================
+
+function cmdConfig(cfg: Config, path: string) {
+  if (!path) {
+    // No path — dump entire config
+    console.log(JSON.stringify(cfg, null, 2));
+    return;
+  }
+  const value = path.split(".").reduce((obj: any, key) => obj?.[key], cfg);
+  if (value === undefined) {
+    console.error(`ERROR: config path '${path}' not found`);
+    process.exit(1);
+  }
+  if (typeof value === "object") {
+    console.log(JSON.stringify(value, null, 2));
+  } else {
+    process.stdout.write(String(value));
+  }
+}
+
+// ============================================================================
+// Subcommand: verify — audit codebase for stale hardcoded values
+// ============================================================================
+
+function cmdVerify(rootDir: string, cfg: Config) {
+  // Values from cf-deploy.json that should NOT appear hardcoded in source files
+  const checks: { label: string; value: string; glob: string }[] = [
+    { label: "worker.name", value: cfg.worker.name, glob: "*.{ts,js,sh,yml}" },
+    { label: "worker.domain", value: cfg.worker.domain, glob: "*.{ts,js,sh,yml}" },
+    { label: "worker.production", value: cfg.worker.production.replace("https://", ""), glob: "*.{ts,js,sh,yml}" },
+    { label: "pages.project", value: cfg.pages.project, glob: "*.{ts,js,sh,yml}" },
+    { label: "pages.domain", value: cfg.pages.domain, glob: "*.{ts,js,sh,yml}" },
+    { label: "pages.production", value: cfg.pages.production.replace("https://", ""), glob: "*.{ts,js,sh,yml}" },
+    { label: "account", value: cfg.account, glob: "*.{ts,js,sh,yml,json}" },
+    { label: "github", value: cfg.github, glob: "*.{ts,js,sh,yml}" },
+    { label: "local.worker", value: cfg.local.worker, glob: "*.{ts,js,sh,yml}" },
+    { label: "local.pages", value: cfg.local.pages, glob: "*.{ts,js,sh,yml}" },
+    { label: "r2.pages", value: cfg.r2?.pages || "", glob: "*.{ts,toml,yml}" },
+    { label: "r2.documents", value: cfg.r2?.documents || "", glob: "*.{ts,toml,yml}" },
+  ].filter((c) => c.value);
+
+  // Files that legitimately contain hardcoded values
+  const ALLOWED = [
+    "cf-deploy.json",
+    "cf-versions.json",
+    "AGENT.md",
+    "CLAUDE.md",
+    "README.md",
+    "memory/",
+    "docs/adr/",
+    "node_modules/",
+    ".git/",
+  ];
+
+  let issues = 0;
+
+  for (const { label, value, glob } of checks) {
+    try {
+      const result = execSync(
+        `grep -rn --include='${glob}' -l '${value}' . 2>/dev/null || true`,
+        { cwd: rootDir, encoding: "utf8" },
+      ).trim();
+
+      if (!result) continue;
+
+      const files = result
+        .split("\n")
+        .map((f: string) => f.replace("./", ""))
+        .filter((f: string) => !ALLOWED.some((a) => f.includes(a)));
+
+      for (const file of files) {
+        // Check if this file actually reads from config (dynamic)
+        const content = readFileSync(join(rootDir, file), "utf8");
+        const isDynamic =
+          content.includes("cfDeploy") ||
+          content.includes("cfConfig") ||
+          content.includes("cf-deploy.ts config") ||
+          content.includes("cf-deploy.json");
+
+        // Check if it's just a fallback default (|| 'value')
+        const isFallback = content.includes(`|| '${value}'`) || content.includes(`|| "${value}"`);
+
+        if (isDynamic || isFallback) continue;
+
+        // Check if it's in a comment
+        const lines = content.split("\n");
+        const matchLines = lines
+          .map((l: string, i: number) => ({ line: i + 1, text: l }))
+          .filter((l: { line: number; text: string }) => l.text.includes(value));
+
+        for (const m of matchLines) {
+          const trimmed = m.text.trim();
+          if (trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*")) continue;
+
+          // This is a hardcoded reference that's NOT dynamic, NOT a fallback, NOT a comment
+          console.log(`  HARDCODED  ${label}="${value}"  →  ${file}:${m.line}`);
+          issues++;
+        }
+      }
+    } catch {
+      // grep failed — skip
+    }
+  }
+
+  if (issues === 0) {
+    console.log("PASS: All cf-deploy.json values are properly wired (no stale hardcodes found)");
+  } else {
+    console.log(`\nFOUND ${issues} hardcoded value(s) that should read from cf-deploy.json`);
+    process.exit(1);
+  }
+}
+
+// ============================================================================
+// Subcommand: whoami
+// ============================================================================
+
+function cmdWhoami(rootDir: string, cfg: Config) {
+  const workerDir = resolve(rootDir, cfg.worker.dir);
+  execSync("bunx wrangler whoami", { cwd: workerDir, stdio: "inherit" });
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function readManifest(rootDir: string, cfg: Config): Manifest {
+  const outPath = resolve(rootDir, cfg.output);
+  if (!existsSync(outPath)) {
+    console.error(`ERROR: ${outPath} not found — run 'versions' first`);
+    process.exit(1);
+  }
+  return JSON.parse(readFileSync(outPath, "utf8"));
+}
+
+function printHelp() {
+  console.log(`cf-deploy — Cloudflare Workers + Pages deploy lifecycle
+
+Usage: bun scripts/cf-deploy.ts <command> [options]
+
+Commands:
+  versions          Generate unified cf-versions.json (Worker + Pages)
+  upload            Upload new Worker version (does not promote)
+  promote           Promote latest uploaded version to 100% traffic
+  rollback          Roll back to previous Worker version
+  smoke [URL]       Smoke test a deployed URL
+  release-notes     Generate GitHub release markdown from manifest
+  readme-urls       Generate README URL table from config
+  status [--env]    Show current deployment info (--env for shell vars)
+  list              List all versions and previews
+  config [path]     Read config value (e.g. worker.name, pages.production)
+  verify            Audit codebase for stale hardcoded values
+  whoami            Show Cloudflare auth info
+
+Config: reads cf-deploy.json from repo root.
+See ADR-0022 (v2) for design rationale.`);
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+const args = process.argv.slice(2);
+const command = args[0];
+
+if (!command || command === "--help" || command === "-h") {
+  printHelp();
+  process.exit(0);
+}
+
+const rootDir = getRootDir();
+const cfg = loadConfig(rootDir);
+
+switch (command) {
+  case "versions":
+    await cmdVersions(rootDir, cfg);
+    break;
+  case "upload":
+    cmdUpload(rootDir, cfg);
+    break;
+  case "promote":
+    cmdPromote(rootDir, cfg);
+    break;
+  case "rollback":
+    cmdRollback(rootDir, cfg);
+    break;
+  case "smoke":
+    cmdSmoke(rootDir, cfg, args[1]);
+    break;
+  case "release-notes":
+    cmdReleaseNotes(rootDir, cfg);
+    break;
+  case "readme-urls":
+    cmdReadmeUrls(rootDir, cfg);
+    break;
+  case "status":
+    cmdStatus(rootDir, cfg, args.includes("--env"));
+    break;
+  case "list":
+    cmdList(rootDir, cfg);
+    break;
+  case "config":
+    cmdConfig(cfg, args[1]);
+    break;
+  case "verify":
+    cmdVerify(rootDir, cfg);
+    break;
+  case "whoami":
+    cmdWhoami(rootDir, cfg);
+    break;
+  default:
+    console.error(`Unknown command: ${command}`);
+    printHelp();
+    process.exit(1);
+}

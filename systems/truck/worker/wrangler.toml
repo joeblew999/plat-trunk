@@ -1,3 +1,5 @@
+# Keep name, routes, port, r2 bucket_name in sync with cf-deploy.json
+# (wrangler.toml can't import JSON)
 name = "truck-cad"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
@@ -17,7 +19,7 @@ directory = "../../../web/gui"
 not_found_handling = "single-page-application"
 
 [[r2_buckets]]
-binding = "DOCS_BUCKET"
+binding = "PAGES_BUCKET"
 bucket_name = "cad-docs"
 
 [[r2_buckets]]
