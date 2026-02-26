@@ -337,8 +337,8 @@ See `docs/adr/README.md` for the full index. Key decisions:
 |-----|---------|
 | `https://cad.ubuntusoftware.net` | Production (custom domain, promoted version) |
 | `https://truck-cad.gedw99.workers.dev` | Production (workers.dev alias) |
-| `https://docs.ubuntusoftware.net` | Docs (Cloudflare Pages, VitePress) |
-| `https://docs.ubuntusoftware.net/llms.txt` | LLM docs (auto-generated) |
+| `https://cad.ubuntusoftware.net/docs/` | Docs (Workers Static Assets via service binding) |
+| `https://cad.ubuntusoftware.net/docs/llms.txt` | LLM docs (auto-generated) |
 | `https://v0-6-0-truck-cad.gedw99.workers.dev` | Per-version preview (from `cf:worker:upload`) |
 | `https://pr-1-truck-cad.gedw99.workers.dev` | Per-PR preview (from CI `cf:worker:preview`) |
 | `http://localhost:8788` | Local dev server (`task up` or `task truck:gui:serve`) |

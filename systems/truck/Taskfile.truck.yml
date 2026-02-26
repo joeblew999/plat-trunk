@@ -664,7 +664,7 @@ tasks:
     cmds:
       - task: gui:deploy
       - task: :vitepress:build
-      - task: :cf:pages:deploy
+      - task: :vitepress:worker:deploy
 
   # --- Visual Examples (opens window) ---
 

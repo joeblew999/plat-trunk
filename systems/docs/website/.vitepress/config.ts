@@ -13,35 +13,35 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
     text: 'User Guide',
     collapsed: false,
     items: [
-      { text: 'Getting Started', link: '/docs/user/getting-started' },
-      { text: 'Creating Shapes', link: '/docs/user/creating-shapes' },
-      { text: 'Moving Objects', link: '/docs/user/moving-objects' },
-      { text: 'Sketch & Extrude', link: '/docs/user/sketch-and-extrude' },
-      { text: 'Boolean Operations', link: '/docs/user/boolean-operations' },
-      { text: 'Scene Management', link: '/docs/user/scene-management' },
-      { text: 'Save & Load', link: '/docs/user/save-load' },
-      { text: 'Known Issues', link: '/docs/user/known-issues' },
+      { text: 'Getting Started', link: '/user/getting-started' },
+      { text: 'Creating Shapes', link: '/user/creating-shapes' },
+      { text: 'Moving Objects', link: '/user/moving-objects' },
+      { text: 'Sketch & Extrude', link: '/user/sketch-and-extrude' },
+      { text: 'Boolean Operations', link: '/user/boolean-operations' },
+      { text: 'Scene Management', link: '/user/scene-management' },
+      { text: 'Save & Load', link: '/user/save-load' },
+      { text: 'Known Issues', link: '/user/known-issues' },
     ],
   },
   {
     text: 'Technical',
     collapsed: true,
     items: [
-      { text: 'Architecture', link: '/docs/technical/architecture' },
-      { text: 'Truck (CAD Kernel)', link: '/docs/technical/truck' },
-      { text: 'WebGPU', link: '/docs/technical/webgpu' },
-      { text: 'Sketch System', link: '/docs/technical/sketch' },
-      { text: 'Gizmo', link: '/docs/technical/gizmo' },
-      { text: 'Undo / Redo', link: '/docs/technical/undo-redo' },
-      { text: 'Automerge (CRDT)', link: '/docs/technical/automerge' },
-      { text: 'kkrpc', link: '/docs/technical/kkrpc' },
-      { text: 'MCP Integration', link: '/docs/technical/mcp' },
-      { text: 'Direct vs Parametric', link: '/docs/technical/direct-vs-parametric' },
+      { text: 'Architecture', link: '/technical/architecture' },
+      { text: 'Truck (CAD Kernel)', link: '/technical/truck' },
+      { text: 'WebGPU', link: '/technical/webgpu' },
+      { text: 'Sketch System', link: '/technical/sketch' },
+      { text: 'Gizmo', link: '/technical/gizmo' },
+      { text: 'Undo / Redo', link: '/technical/undo-redo' },
+      { text: 'Automerge (CRDT)', link: '/technical/automerge' },
+      { text: 'kkrpc', link: '/technical/kkrpc' },
+      { text: 'MCP Integration', link: '/technical/mcp' },
+      { text: 'Direct vs Parametric', link: '/technical/direct-vs-parametric' },
     ],
   },
   {
     text: 'Roadmap',
-    link: '/docs/ROADMAP',
+    link: '/ROADMAP',
   },
   {
     text: 'LLM',
@@ -59,6 +59,8 @@ export default defineConfig({
   title: 'CAD Documentation',
   description:
     'Browser-based CAD application built with Truck, WebGPU, Hono, and Automerge. Local-first, collaborative, deployed on Cloudflare.',
+  srcDir: 'docs',
+  base: '/docs/',
   lastUpdated: true,
   cleanUrls: true,
   markdown: {
@@ -84,7 +86,7 @@ export default defineConfig({
       { icon: 'github', link: `https://github.com/${cfDeploy.github}` },
     ],
     editLink: {
-      pattern: `https://github.com/${cfDeploy.github}/edit/main/systems/docs/website/:path`,
+      pattern: `https://github.com/${cfDeploy.github}/edit/main/systems/docs/website/docs/:path`,
       text: 'Edit this page on GitHub',
     },
     footer: {
@@ -92,8 +94,8 @@ export default defineConfig({
       copyright: 'Copyright © 2024-present',
     },
     nav: [
-      { text: 'Docs', link: '/docs/user/getting-started' },
-      { text: 'Technical', link: '/docs/technical/architecture' },
+      { text: 'Docs', link: '/user/getting-started' },
+      { text: 'Technical', link: '/technical/architecture' },
       { text: 'CAD App', link: cfDeploy.worker.production },
     ],
     sidebar: {
@@ -108,6 +110,7 @@ export default defineConfig({
     plugins: [
       groupIconVitePlugin(),
     ],
+    publicDir: '../public',
     server: {
       allowedHosts: true,
     },

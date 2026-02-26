@@ -12,14 +12,14 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 | **Production** | |
 | CAD App | https://cad.ubuntusoftware.net |
 | Workers (alias) | https://truck-cad.gedw99.workers.dev |
-| Docs | https://docs.ubuntusoftware.net |
-| Docs (Pages) | https://cad-docs.pages.dev |
-| LLM Docs | https://docs.ubuntusoftware.net/llms.txt |
+| Docs | https://cad.ubuntusoftware.net/docs |
+| Docs (Workers) | https://docs-worker.gedw99.workers.dev |
+| LLM Docs | https://cad.ubuntusoftware.net/docs/llms.txt |
 | **Local Dev** | |
 | CAD App | http://localhost:8788 |
 | API Docs | http://localhost:8788/api-docs |
 | MCP | http://localhost:8788/mcp |
-| Pages Dev | http://localhost:5173 |
+| Docs Dev | http://localhost:5174 |
 | **Project** | |
 | GitHub | https://github.com/joeblew999/plat-trunk |
 | CF Deployments | [Dashboard](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |

@@ -9,7 +9,7 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /docs/user/getting-started
+      link: /user/getting-started
     - theme: alt
       text: View on GitHub
       link: https://github.com/joeblew999/plat-trunk

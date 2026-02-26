@@ -23,7 +23,7 @@ function capitalizeDelimiter(str: string) {
 }
 
 async function generateLLMDocs() {
-  const siteUrl = cfDeploy.docs?.production || `https://${cfDeploy.pages.domain}`
+  const siteUrl = cfDeploy.docs.production
 
   // --- llms.txt (index) ---
   const outputListFile = path.resolve('public/llms.txt')
@@ -32,7 +32,7 @@ async function generateLLMDocs() {
 
   for await (const file of optionalFiles) {
     optionals.push(
-      `- [${capitalizeDelimiter(extractLabel(file))}](${siteUrl}/docs/${sliceExt(file)})`
+      `- [${capitalizeDelimiter(extractLabel(file))}](${siteUrl}/${sliceExt(file)})`
     )
   }
 

@@ -5,24 +5,23 @@
 # Stop:   task down
 # Attach: task attach        (reconnect to running TUI)
 #
-# All URLs from cf-deploy.json:
-#   Worker (CAD app):  http://localhost:8788
-#   Pages  (docs):     http://localhost:5173
-#   PC TUI:            http://localhost:8000
+# URL:  http://localhost:8788  (GUI, API, MCP, /docs/* via service binding)
+# TUI:  http://localhost:8000
 # ============================================================================
 
 version: "0.5"
 
 processes:
   # ── CAD Worker ─────────────────────────────────────────────────────────────
-  # Hono + WASM worker via wrangler dev — serves GUI, API, MCP on :8788
+  # wrangler dev — serves everything: GUI, API, MCP, /docs/*
+  # Service binding to docs-worker resolved automatically by wrangler
   gui-worker:
     command: task truck:gui:serve
     availability:
       restart: on_failure
 
   # ── File Watchers ──────────────────────────────────────────────────────────
-  # Auto-rebuild on file changes (GUI assets + worker source)
+  # Auto-rebuild WASM on Rust source changes
   watch-gui:
     command: task truck:watch:gui
     availability:
@@ -33,16 +32,19 @@ processes:
     availability:
       restart: on_failure
 
-  # ── Docs (VitePress) ──────────────────────────────────────────────────────
-  # Documentation site on :5173 — hot-reload for authoring
-  docs:
+  # ── Optional ───────────────────────────────────────────────────────────────
+  # Start from TUI when needed (disabled by default)
+
+  docs-hmr:
     command: task vitepress:serve
+    disabled: true
+    description: "VitePress HMR on :5173 (doc authoring)"
     availability:
       restart: on_failure
 
-  # ── Shape Viewer ───────────────────────────────────────────────────────────
-  # Standalone geometry viewer for debugging WASM shape ops
   shape-viewer:
     command: task truck:run:shape-viewer
+    disabled: true
+    description: "Geometry viewer for debugging WASM shape ops"
     availability:
       restart: on_failure

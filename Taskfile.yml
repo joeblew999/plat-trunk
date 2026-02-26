@@ -117,7 +117,7 @@ tasks:
     cmds:
       - task: truck:deploy:full
       - task: vitepress:build
-      - task: cf:pages:deploy
+      - task: vitepress:worker:deploy
 
   # ===========================================================================
   # Deps

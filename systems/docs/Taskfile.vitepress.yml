@@ -18,10 +18,10 @@ vars:
   DOCS_DIR: '{{.ROOT_DIR}}/systems/docs'
   WEBSITE_DIR: '{{.ROOT_DIR}}/systems/docs/website'
   DOCS_WORKER_DIR: '{{.ROOT_DIR}}/systems/docs/worker'
-  LOCAL_PAGES_URL: 'http://localhost:5173'
+  LOCAL_DEV_URL: 'http://localhost:5173'
   LOCAL_WORKER_URL: 'http://localhost:5174'
   DOCS_PROD_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo "https://docs.ubuntusoftware.net"
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo "https://cad.ubuntusoftware.net/docs"
 
 tasks:
   default:
@@ -33,16 +33,16 @@ tasks:
   # Debug
   # ===========================================================================
   "debug:self":
-    desc: Print pages vars
+    desc: Print docs vars
     silent: true
     cmds:
       - |
-        echo "=== Pages ==="
+        echo "=== Docs ==="
         echo "  ROOT_DIR:        {{.ROOT_DIR}}"
         echo "  DOCS_DIR:        {{.DOCS_DIR}}"
         echo "  WEBSITE_DIR:     {{.WEBSITE_DIR}}"
         echo "  DOCS_WORKER_DIR: {{.DOCS_WORKER_DIR}}"
-        echo "  LOCAL_PAGES_URL: {{.LOCAL_PAGES_URL}}"
+        echo "  LOCAL_DEV_URL: {{.LOCAL_DEV_URL}}"
         echo "  LOCAL_WORKER_URL: {{.LOCAL_WORKER_URL}}"
         echo "  DOCS_PROD_URL:   {{.DOCS_PROD_URL}}"
         echo ""
@@ -68,7 +68,7 @@ tasks:
     deps: ["deps:install"]
     dir: '{{.WEBSITE_DIR}}'
     cmds:
-      - echo "Pages server starting at {{.LOCAL_PAGES_URL}}"
+      - echo "VitePress dev server at {{.LOCAL_DEV_URL}}"
       - cd {{.WEBSITE_DIR}} && bun run dev
 
   build:
@@ -92,9 +92,9 @@ tasks:
   # Open in browser
   # ===========================================================================
   open:
-    desc: Open pages site in browser (local)
+    desc: Open docs dev site in browser (local)
     cmds:
-      - open {{.LOCAL_PAGES_URL}}
+      - open {{.LOCAL_DEV_URL}}
 
   "open:prod":
     desc: Open production docs site in browser
@@ -144,22 +144,22 @@ tasks:
   "worker:dev":
     desc: Serve docs via Worker locally (port 5174)
     deps: ["worker:deps", "build"]
-    dir: '{{.DOCS_WORKER_DIR}}'
+    dir: '{{.ROOT_DIR}}'
     cmds:
       - echo "Docs Worker starting at {{.LOCAL_WORKER_URL}}"
-      - bun x wrangler dev
+      - bun x wrangler dev --config {{.DOCS_WORKER_DIR}}/wrangler.toml
 
   "worker:deploy":
     desc: Deploy docs Worker to Cloudflare
     deps: ["worker:deps", "build"]
-    dir: '{{.DOCS_WORKER_DIR}}'
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - bun x wrangler deploy
+      - bun x wrangler deploy --config {{.DOCS_WORKER_DIR}}/wrangler.toml
       - echo "Deployed → {{.DOCS_PROD_URL}}"
 
   "worker:status":
     desc: Show docs Worker deployment info
     deps: ["worker:deps"]
-    dir: '{{.DOCS_WORKER_DIR}}'
+    dir: '{{.ROOT_DIR}}'
     cmds:
-      - bun x wrangler deployments list
+      - bun x wrangler deployments list --config {{.DOCS_WORKER_DIR}}/wrangler.toml

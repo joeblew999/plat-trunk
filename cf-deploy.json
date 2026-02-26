@@ -9,18 +9,11 @@
     "name": "docs-worker",
     "domain": "gedw99.workers.dev",
     "dir": "systems/docs/worker",
-    "production": "https://docs.ubuntusoftware.net"
-  },
-  "pages": {
-    "project": "cad-docs",
-    "domain": "cad-docs.pages.dev",
-    "dir": "systems/docs/website",
-    "production": "https://docs.ubuntusoftware.net"
+    "production": "https://cad.ubuntusoftware.net/docs"
   },
   "local": {
     "worker": "http://localhost:8788",
-    "docs": "http://localhost:5174",
-    "pages": "http://localhost:5173"
+    "docs": "http://localhost:5174"
   },
   "account": "7384af54e33b8a54ff240371ea368440",
   "github": "joeblew999/plat-trunk",
@@ -33,7 +26,7 @@
     "mcp": "/mcp",
     "schema": "/api/cad/schema",
     "gui": "/",
-    "docs": "https://docs.ubuntusoftware.net"
+    "docs": "/docs/"
   },
   "r2": {
     "pages": "cad-docs",

@@ -9,6 +9,7 @@ type Bindings = {
   MY_VAR: string;
   PAGES_BUCKET: R2Bucket;
   CAD_DOCS_BUCKET: R2Bucket;
+  DOCS: Fetcher;
 };
 
 const app = new OpenAPIHono<{ Bindings: Bindings }>();
@@ -520,7 +521,7 @@ app.post('/mcp', async (c) => {
         }
 
         // Documentation tools (ADR-0027 Phase 6)
-        const DOCS_URL = cfDeploy.pages.production;
+        const DOCS_URL = cfDeploy.docs.production;
         if (name === 'cad_docs_index') {
           try {
             const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());
@@ -805,7 +806,13 @@ app.get('/model/*', async (c) => {
   return c.redirect('/');
 });
 
-const MIME: Record<string,string> = { '.webm': 'video/webm', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.mp4': 'video/mp4' };
-app.get('/docs/*', async (c, next) => { const k = c.req.path.slice(1); const e = k.slice(k.lastIndexOf('.')); if (!MIME[e]) return next(); const o = await c.env.PAGES_BUCKET.get(k); if (!o) return c.notFound(); return new Response(o.body, { headers: { 'content-type': MIME[e], 'cache-control': 'public, max-age=86400' } }); });
+// Docs: forward /docs/* to docs-worker via service binding (ADR-0031)
+// Strips /docs prefix so docs-worker sees root-relative paths.
+app.all('/docs', (c) => c.redirect('/docs/', 301));
+app.all('/docs/*', async (c) => {
+  const url = new URL(c.req.url);
+  url.pathname = url.pathname.replace(/^\/docs/, '') || '/';
+  return c.env.DOCS.fetch(new Request(url.toString(), c.req.raw));
+});
 
 export default app;

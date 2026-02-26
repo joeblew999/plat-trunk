@@ -1,15 +1,10 @@
-# Docs Worker — serves VitePress static site via Workers Static Assets
-# Replaces the Cloudflare Pages "cad-docs" project (ADR-0031)
+# Docs Worker — serves VitePress static site via Workers Static Assets (ADR-0031)
+# Accessed via service binding from truck-cad Worker at /docs/*
 name = "docs-worker"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = true
-
-# Custom domain (same as current Pages custom domain)
-routes = [
-  { pattern = "docs.ubuntusoftware.net", custom_domain = true },
-]
+workers_dev = false
 
 # Serve VitePress build output as static assets
 [assets]

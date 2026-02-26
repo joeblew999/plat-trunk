@@ -26,6 +26,10 @@ bucket_name = "cad-docs"
 binding = "CAD_DOCS_BUCKET"
 bucket_name = "cad-documents"
 
+[[services]]
+binding = "DOCS"
+service = "docs-worker"
+
 [vars]
 MY_VAR = "hello world"
 

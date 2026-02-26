@@ -1,15 +1,14 @@
 version: '3'
 
 # ============================================================================
-# Reusable Cloudflare deploy lifecycle (Workers + Pages).
+# Reusable Cloudflare deploy lifecycle (Workers).
 #
 # All config is read from cf-deploy.json via scripts/cf-deploy.ts.
 # The parent include only needs to pass ROOT_DIR.
 #
 # Task namespaces:
 #   cf:worker:*  — Worker versioned deploy lifecycle
-#   cf:pages:*   — Pages versioned deploy lifecycle
-#   cf:versions  — Unified manifest (Worker + Pages)
+#   cf:versions  — Version manifest
 #   cf:d1:*      — D1 databases (account resource)
 #   cf:r2:*      — R2 storage (account resource)
 #   cf:whoami    — Account info
@@ -37,14 +36,10 @@ vars:
     sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.production
   WORKER_OUTPUT_FILE:
     sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config output)"
-  PAGES_PROJECT:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.project
-  PAGES_DOMAIN:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.domain
-  PAGES_DIR:
-    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.dir)"
-  PAGES_PRODUCTION_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.production
+  DOCS_NAME:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.name 2>/dev/null || echo ""
+  DOCS_PRODUCTION_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo ""
   APP_VERSION:
     sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version)" 2>/dev/null || echo "0.0.0"
   VERSION_SLUG:
@@ -129,11 +124,11 @@ tasks:
       - bun x wrangler deploy --env staging
 
   # ==========================================================================
-  # Versions & Status (unified Worker + Pages)
+  # Versions & Status
   # ==========================================================================
 
   versions:
-    desc: Generate unified cf-versions.json (Worker + Pages)
+    desc: Generate cf-versions.json from Worker deployments
     dir: '{{.ROOT_DIR}}'
     cmds:
       - bun scripts/cf-deploy.ts versions
@@ -145,7 +140,7 @@ tasks:
       - bun scripts/cf-deploy.ts status
 
   list:
-    desc: List all versions and previews (Worker + Pages)
+    desc: List all versions and previews
     dir: '{{.ROOT_DIR}}'
     cmds:
       - bun scripts/cf-deploy.ts list
@@ -196,80 +191,6 @@ tasks:
     dir: '{{.WORKER_DIR}}'
     cmds:
       - bun x wrangler tail
-
-  # ==========================================================================
-  # Pages: Versioned Deploy Lifecycle
-  # ==========================================================================
-
-  # Internal helper — all Pages deploys go through here.
-  # Runs wrangler from WORKER_DIR (where it's installed) with absolute path to dist.
-  "pages:_deploy":
-    internal: true
-    deps: ["_ensure:wrangler"]
-    preconditions:
-      - sh: test -d {{.PAGES_DIR}}/.vitepress/dist
-        msg: "No build found — run task vitepress:build first"
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler pages deploy {{.PAGES_DIR}}/.vitepress/dist --project-name={{.PAGES_PROJECT}} --branch {{.BRANCH}} --commit-dirty=true
-
-  "pages:upload":
-    desc: "Upload versioned Pages deploy (v{{.VERSION_SLUG}}.{{.PAGES_DOMAIN}}) — does NOT update production"
-    cmds:
-      - task: "pages:_deploy"
-        vars: { BRANCH: 'v{{.VERSION_SLUG}}' }
-      - task: "versions"
-      - 'echo "Uploaded v{{.APP_VERSION}} → https://v{{.VERSION_SLUG}}.{{.PAGES_DOMAIN}}"'
-      - 'echo "To promote to production: task cf:pages:promote"'
-
-  "pages:promote":
-    desc: Deploy latest Pages build to production (updates custom domain)
-    cmds:
-      - task: "pages:_deploy"
-        vars: { BRANCH: 'main' }
-      - 'echo "Promoted to production → {{.PAGES_PRODUCTION_URL}}"'
-
-  "pages:deploy":
-    desc: "Deploy Pages (upload v{{.VERSION_SLUG}} + promote to production)"
-    cmds:
-      - task: "pages:upload"
-      - task: "pages:promote"
-      - 'echo "Deployed v{{.APP_VERSION}} → {{.PAGES_PRODUCTION_URL}}"'
-
-  "pages:preview":
-    desc: "Upload PR preview Pages deploy"
-    vars:
-      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
-    cmds:
-      - task: "pages:_deploy"
-        vars: { BRANCH: 'pr-{{.PR_NUMBER}}' }
-      - 'echo "Preview → https://pr-{{.PR_NUMBER}}.{{.PAGES_DOMAIN}}"'
-
-  "pages:smoke":
-    desc: Smoke test a deployed Pages URL
-    vars:
-      SMOKE_URL: '{{.SMOKE_URL | default .PAGES_PRODUCTION_URL}}'
-    cmds:
-      - |
-        URL="{{.SMOKE_URL}}"
-        echo "Smoke testing: $URL"
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
-        SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL/")
-        if [ "$STATUS" = "200" ]; then
-          echo "  index:  OK (HTTP ${STATUS}, ${SIZE} bytes)"
-        else
-          echo "  FAIL:   HTTP ${STATUS}"
-          exit 1
-        fi
-        LLMS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/llms.txt")
-        echo "  llms:   OK (HTTP ${LLMS_STATUS})"
-        echo ""
-        echo "PASS: $URL"
-
-  "pages:versions:list":
-    desc: List recent Pages deployments
-    deps: ["_ensure:wrangler"]
-    cmds:
-      - cd {{.WORKER_DIR}} && bun x wrangler pages deployment list --project-name={{.PAGES_PROJECT}}
 
   # ==========================================================================
   # D1 Database (account resource)
@@ -422,11 +343,9 @@ tasks:
         echo "  WORKER_PRODUCTION_URL: {{.WORKER_PRODUCTION_URL}}"
         echo "  WORKER_OUTPUT_FILE:    {{.WORKER_OUTPUT_FILE}}"
         echo ""
-        echo "=== Pages ==="
-        echo "  PAGES_DIR:             {{.PAGES_DIR}}"
-        echo "  PAGES_PROJECT:         {{.PAGES_PROJECT}}"
-        echo "  PAGES_DOMAIN:          {{.PAGES_DOMAIN}}"
-        echo "  PAGES_PRODUCTION_URL:  {{.PAGES_PRODUCTION_URL}}"
+        echo "=== Docs ==="
+        echo "  DOCS_NAME:             {{.DOCS_NAME}}"
+        echo "  DOCS_PRODUCTION_URL:   {{.DOCS_PRODUCTION_URL}}"
         echo ""
         echo "=== Auth ==="
         echo "  CLOUDFLARE_API_TOKEN:      ${CLOUDFLARE_API_TOKEN:+set (${#CLOUDFLARE_API_TOKEN} chars)}"
