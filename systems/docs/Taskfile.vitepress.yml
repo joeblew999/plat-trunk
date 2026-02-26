@@ -1,24 +1,27 @@
 version: '3'
 
 # ============================================================================
-# Pages - VitePress Documentation Site on Cloudflare Pages (ADR-0027)
+# Docs — VitePress site on Workers Static Assets (ADR-0027, ADR-0031)
 # https://vitepress.dev/ — same setup as hono.dev
 #
 # Quick start:
-#   task vitepress:serve       # Local preview
+#   task vitepress:serve       # Local preview (VitePress HMR, port 5173)
 #   task vitepress:build       # Build for production
+#   task vitepress:worker:dev  # Serve via docs Worker (port 5174)
+#   task vitepress:worker:deploy # Deploy to Cloudflare
 #   task vitepress:screenshots # Generate screenshots + videos from E2E tests
-#
-# Deploy lifecycle lives in taskfiles/Taskfile.cloudflare.yml (cf:pages:*)
 #
 # Required var: ROOT_DIR (passed by parent include)
 # ============================================================================
 
 vars:
+  DOCS_DIR: '{{.ROOT_DIR}}/systems/docs'
   WEBSITE_DIR: '{{.ROOT_DIR}}/systems/docs/website'
+  DOCS_WORKER_DIR: '{{.ROOT_DIR}}/systems/docs/worker'
   LOCAL_PAGES_URL: 'http://localhost:5173'
-  PAGES_PROD_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.production
+  LOCAL_WORKER_URL: 'http://localhost:5174'
+  DOCS_PROD_URL:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo "https://docs.ubuntusoftware.net"
 
 tasks:
   default:
@@ -35,10 +38,13 @@ tasks:
     cmds:
       - |
         echo "=== Pages ==="
-        echo "  ROOT_DIR:       {{.ROOT_DIR}}"
-        echo "  WEBSITE_DIR:    {{.WEBSITE_DIR}}"
+        echo "  ROOT_DIR:        {{.ROOT_DIR}}"
+        echo "  DOCS_DIR:        {{.DOCS_DIR}}"
+        echo "  WEBSITE_DIR:     {{.WEBSITE_DIR}}"
+        echo "  DOCS_WORKER_DIR: {{.DOCS_WORKER_DIR}}"
         echo "  LOCAL_PAGES_URL: {{.LOCAL_PAGES_URL}}"
-        echo "  PAGES_PROD_URL: {{.PAGES_PROD_URL}}"
+        echo "  LOCAL_WORKER_URL: {{.LOCAL_WORKER_URL}}"
+        echo "  DOCS_PROD_URL:   {{.DOCS_PROD_URL}}"
         echo ""
         echo "=== VitePress ==="
         cd {{.WEBSITE_DIR}} && bun -e "console.log('  version:', require('vitepress/package.json').version)" 2>/dev/null || echo "  not installed (run: cd website && bun install)"
@@ -91,9 +97,9 @@ tasks:
       - open {{.LOCAL_PAGES_URL}}
 
   "open:prod":
-    desc: Open production pages site in browser
+    desc: Open production docs site in browser
     cmds:
-      - open {{.PAGES_PROD_URL}}
+      - open {{.DOCS_PROD_URL}}
 
   # ===========================================================================
   # List
@@ -120,3 +126,40 @@ tasks:
     cmds:
       - rm -rf {{.WEBSITE_DIR}}/.vitepress/dist
       - rm -rf {{.WEBSITE_DIR}}/.vitepress/cache
+
+  # ===========================================================================
+  # Worker — Workers Static Assets (ADR-0031)
+  # Serves VitePress dist via a Cloudflare Worker instead of Pages.
+  # ===========================================================================
+
+  "worker:deps":
+    desc: Install docs Worker dependencies
+    internal: true
+    dir: '{{.DOCS_WORKER_DIR}}'
+    cmds:
+      - bun install --silent
+    status:
+      - test -d {{.DOCS_WORKER_DIR}}/node_modules/wrangler
+
+  "worker:dev":
+    desc: Serve docs via Worker locally (port 5174)
+    deps: ["worker:deps", "build"]
+    dir: '{{.DOCS_WORKER_DIR}}'
+    cmds:
+      - echo "Docs Worker starting at {{.LOCAL_WORKER_URL}}"
+      - bun x wrangler dev
+
+  "worker:deploy":
+    desc: Deploy docs Worker to Cloudflare
+    deps: ["worker:deps", "build"]
+    dir: '{{.DOCS_WORKER_DIR}}'
+    cmds:
+      - bun x wrangler deploy
+      - echo "Deployed → {{.DOCS_PROD_URL}}"
+
+  "worker:status":
+    desc: Show docs Worker deployment info
+    deps: ["worker:deps"]
+    dir: '{{.DOCS_WORKER_DIR}}'
+    cmds:
+      - bun x wrangler deployments list

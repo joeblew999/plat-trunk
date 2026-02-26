@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitepress'
 import type { DefaultTheme } from 'vitepress'
-import cfDeploy from '../../cf-deploy.json'
+import cfDeploy from '../../../../cf-deploy.json'
 import {
   groupIconMdPlugin,
   groupIconVitePlugin,
@@ -84,7 +84,7 @@ export default defineConfig({
       { icon: 'github', link: `https://github.com/${cfDeploy.github}` },
     ],
     editLink: {
-      pattern: `https://github.com/${cfDeploy.github}/edit/main/website/:path`,
+      pattern: `https://github.com/${cfDeploy.github}/edit/main/systems/docs/website/:path`,
       text: 'Edit this page on GitHub',
     },
     footer: {

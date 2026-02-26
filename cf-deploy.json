@@ -5,6 +5,12 @@
     "dir": "systems/truck/worker",
     "production": "https://cad.ubuntusoftware.net"
   },
+  "docs": {
+    "name": "docs-worker",
+    "domain": "gedw99.workers.dev",
+    "dir": "systems/docs/worker",
+    "production": "https://docs.ubuntusoftware.net"
+  },
   "pages": {
     "project": "cad-docs",
     "domain": "cad-docs.pages.dev",
@@ -13,6 +19,7 @@
   },
   "local": {
     "worker": "http://localhost:8788",
+    "docs": "http://localhost:5174",
     "pages": "http://localhost:5173"
   },
   "account": "7384af54e33b8a54ff240371ea368440",
@@ -26,7 +33,7 @@
     "mcp": "/mcp",
     "schema": "/api/cad/schema",
     "gui": "/",
-    "pages": "https://docs.ubuntusoftware.net"
+    "docs": "https://docs.ubuntusoftware.net"
   },
   "r2": {
     "pages": "cad-docs",
