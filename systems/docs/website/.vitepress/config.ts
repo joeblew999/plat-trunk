@@ -96,7 +96,7 @@ export default defineConfig({
     nav: [
       { text: 'Docs', link: '/user/getting-started' },
       { text: 'Technical', link: '/technical/architecture' },
-      { text: 'CAD App', link: cfDeploy.worker.production },
+      { text: 'CAD App', link: '/' },
     ],
     sidebar: {
       '/': sidebars(),
