@@ -45,10 +45,6 @@
             }
         })();
     </script>
-    <script>
-        // Cache-bust version for local dev (Safari aggressively caches WASM/JS modules)
-        window.__cbv = Date.now();
-    </script>
     <script type="module" src="vendor/datastar.js"></script>
     <script type="module">
         import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js';
@@ -445,9 +441,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <live-signals collapsed></live-signals>
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-    <!-- All module imports use ?v= cache-busting (Safari aggressively caches WASM/JS) -->
     <script type="module">
-        const v = window.__cbv;
 
         // ADR-0026 Phase 4: Clean browser-side state before init when ?reset=1
         if (window.__resetRequested) {
@@ -459,24 +453,24 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         }
 
         // 0. Register <live-signals> debug panel + version picker (no WASM dependency)
-        await import('./live-signals.js?v=' + v);
-        await import('./cf-control-plane.js?v=' + v);
+        await import('./live-signals.js');
+        await import('./cf-control-plane.js');
 
         // 1. Export WASM modules as globals (cad-viewport does the actual init)
-        const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js?v=' + v);
+        const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js');
         window.__wasmInit = wasm.default;
         window.__SceneController = wasm.SceneController;
 
         // 2. Register custom elements
-        await import('./cad-viewport.js?v=' + v);
-        await import('./cad-outliner.js?v=' + v);
+        await import('./cad-viewport.js');
+        await import('./cad-outliner.js');
 
         // 3. Load state, history, UI, keyboard, sketch modules
-        await import('./state.js?v=' + v);
-        await import('./history.js?v=' + v);
-        await import('./ui.js?v=' + v);
-        await import('./keyboard.js?v=' + v);
-        await import('./sketch.js?v=' + v);
+        await import('./state.js');
+        await import('./history.js');
+        await import('./ui.js');
+        await import('./keyboard.js');
+        await import('./sketch.js');
 
         // 4. Post-WASM-init: wait for sceneController, then mode indicator + Automerge
         let retries = 0;
@@ -530,7 +524,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         if (!window.__cadLocalMode) {
             var s = document.createElement('script');
             s.type = 'module';
-            s.src = 'worker-relay.js?v=' + (window.__cbv || Date.now());
+            s.src = 'worker-relay.js';
             document.body.appendChild(s);
         }
     </script>
