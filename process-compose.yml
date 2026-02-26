@@ -5,18 +5,24 @@
 # Stop:   task down
 # Attach: task attach        (reconnect to running TUI)
 #
-# URL:  http://localhost:8788  (GUI, API, MCP, /docs/* via service binding)
-# TUI:  http://localhost:8000
+# URLs:
+#   CAD app + docs:  http://localhost:8788  (/docs/* via service binding)
+#   TUI:             http://localhost:8000
 # ============================================================================
 
 version: "0.5"
 
 processes:
-  # ── CAD Worker ─────────────────────────────────────────────────────────────
-  # wrangler dev — serves everything: GUI, API, MCP, /docs/*
-  # Service binding to docs-worker resolved automatically by wrangler
+  # ── Workers ───────────────────────────────────────────────────────────────
+  # truck-cad: main worker — GUI, API, MCP, /docs/* (service binding)
+  # docs-worker: serves VitePress static site (required for service binding)
   gui-worker:
     command: task truck:gui:serve
+    availability:
+      restart: on_failure
+
+  docs-worker:
+    command: task vitepress:worker:dev
     availability:
       restart: on_failure
 
