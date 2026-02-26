@@ -143,9 +143,9 @@ tasks:
         echo "PASS: $URL"
 
   "versions:json":
-    desc: Generate docs-versions.json (parallel to web/gui/versions.json)
+    desc: Generate pages-versions.json (parallel to web/gui/versions.json)
     cmds:
-      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} PAGES_PROJECT={{.PAGES_PROJECT}} PRODUCTION_URL={{.PRODUCTION_URL}} GITHUB_REPO={{.GITHUB_REPO}} OUTPUT_FILE={{.ROOT_DIR}}/website/docs-versions.json bun scripts/pages-versions-json.ts
+      - cd {{.ROOT_DIR}} && ROOT_DIR={{.ROOT_DIR}} PAGES_PROJECT={{.PAGES_PROJECT}} PRODUCTION_URL={{.PRODUCTION_URL}} GITHUB_REPO={{.GITHUB_REPO}} OUTPUT_FILE={{.ROOT_DIR}}/website/pages-versions.json bun scripts/pages-versions-json.ts
     silent: true
 
   "versions:list":

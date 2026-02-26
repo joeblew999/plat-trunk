@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Generate docs-versions.json for the docs version picker / audit trail.
+ * Generate pages-versions.json for the docs version picker / audit trail.
  *
  * Parallel to versions-json.ts (Worker versions), but for Cloudflare Pages.
  * Pages uses branch-based deployments instead of Worker version IDs.
  *
  * Subcommands:
- *   (none)        — Generate docs-versions.json from wrangler + git metadata
+ *   (none)        — Generate pages-versions.json from wrangler + git metadata
  *   --latest      — Print latest version info as JSON
  *   --latest-env  — Print latest version as shell variables (eval-able)
  *
@@ -15,7 +15,7 @@
  *   PAGES_PROJECT    — Cloudflare Pages project name (default: cad-docs)
  *   APP_VERSION      — current app version (falls back to SCHEMA_FILE .version)
  *   SCHEMA_FILE      — path to JSON file with .version (default: web/cad-schema.json)
- *   OUTPUT_FILE      — output path (default: website/docs-versions.json)
+ *   OUTPUT_FILE      — output path (default: website/pages-versions.json)
  *   PRODUCTION_URL   — production URL (default: https://docs.ubuntusoftware.net)
  *   GITHUB_REPO      — owner/repo (default: joeblew999/plat-trunk)
  */
@@ -49,7 +49,10 @@ interface DocsPreview {
   tag: string;
   date: string;
   deploymentId: string;
-  url: string;
+  source: string;         // git commit short SHA
+  url: string;            // branch alias or immutable URL
+  environment: string;    // Production or Preview
+  branch: string;
 }
 
 interface DocsVersionsJson {
@@ -73,7 +76,7 @@ const pagesUrl = (branch: string) => `https://${branch}.${PAGES_PROJECT}.pages.d
 const ROOT_DIR =
   process.env.ROOT_DIR || execSync("git rev-parse --show-toplevel", { encoding: "utf8" }).trim();
 const schemaPath = process.env.SCHEMA_FILE || join(ROOT_DIR, "web/cad-schema.json");
-const outPath = process.env.OUTPUT_FILE || join(ROOT_DIR, "website/docs-versions.json");
+const outPath = process.env.OUTPUT_FILE || join(ROOT_DIR, "website/pages-versions.json");
 
 // --- Subcommand: --latest ---
 
@@ -81,7 +84,7 @@ if (process.argv.includes("--latest")) {
   const data: DocsVersionsJson = JSON.parse(readFileSync(outPath, "utf8"));
   const latest = data.versions[0];
   if (!latest) {
-    console.error("No versions found in docs-versions.json");
+    console.error("No versions found in pages-versions.json");
     process.exit(1);
   }
   console.log(JSON.stringify(latest));
@@ -94,7 +97,7 @@ if (process.argv.includes("--latest-env")) {
   const data: DocsVersionsJson = JSON.parse(readFileSync(outPath, "utf8"));
   const latest = data.versions[0];
   if (!latest) {
-    console.error("No versions found in docs-versions.json");
+    console.error("No versions found in pages-versions.json");
     process.exit(1);
   }
   console.log(`VERSION="${latest.version}"`);
@@ -105,7 +108,7 @@ if (process.argv.includes("--latest-env")) {
   process.exit(0);
 }
 
-// --- Generate docs-versions.json ---
+// --- Generate pages-versions.json ---
 
 // Git metadata
 const commitSha = execSync("git rev-parse --short HEAD", { cwd: ROOT_DIR, encoding: "utf8" }).trim();
@@ -160,20 +163,13 @@ for (const line of raw.split("\n")) {
   }
 }
 
-// Build releases + previews from deployments
+// Build releases + previews from all deploys
 const releases: DocsRelease[] = [];
 const previews: DocsPreview[] = [];
 
 for (const d of deploys) {
-  if (d.branch.startsWith("pr-")) {
-    previews.push({
-      label: `PR #${d.branch.replace("pr-", "")}`,
-      tag: d.branch,
-      date: new Date().toISOString(), // wrangler doesn't give exact timestamp in table
-      deploymentId: d.id,
-      url: pagesUrl(d.branch),
-    });
-  } else if (/^v\d/.test(d.branch)) {
+  if (/^v\d/.test(d.branch)) {
+    // Tagged release → versions[]
     const ver = d.branch.replace(/^v/, "").replaceAll("-", ".");
     releases.push({
       version: ver,
@@ -184,6 +180,23 @@ for (const d of deploys) {
       deploymentUrl: d.deploymentUrl,
     });
   }
+
+  // Every deploy (main, v*, pr-*) → previews[]
+  const label = d.branch.startsWith("pr-")
+    ? `PR #${d.branch.replace("pr-", "")}`
+    : d.branch === "main"
+      ? `Production (${d.source})`
+      : d.branch;
+  previews.push({
+    label,
+    tag: d.branch,
+    date: new Date().toISOString(),
+    deploymentId: d.id,
+    source: d.source,
+    url: d.deploymentUrl,
+    environment: d.environment,
+    branch: d.branch,
+  });
 }
 
 // Dedupe by version (keep first = latest), sort descending
@@ -208,8 +221,8 @@ if (!deduped.find((v) => v.version === appVersion)) {
   if (current) current.git = gitInfo;
 }
 
-// Dedupe previews
-const dedupedPreviews = [...new Map(previews.map((p) => [p.tag, p])).values()];
+// Dedupe previews by deploymentId (keep all unique deploys)
+const dedupedPreviews = [...new Map(previews.map((p) => [p.deploymentId, p])).values()];
 
 const out: DocsVersionsJson = {
   production: PRODUCTION_URL,
@@ -220,4 +233,4 @@ const out: DocsVersionsJson = {
 };
 
 writeFileSync(outPath, JSON.stringify(out, null, 2) + "\n");
-console.log(`docs-versions.json: ${deduped.length} versions, ${dedupedPreviews.length} PR previews · ${commitSha} · ${branch}`);
+console.log(`pages-versions.json: ${deduped.length} versions, ${dedupedPreviews.length} previews · ${commitSha} · ${branch}`);
