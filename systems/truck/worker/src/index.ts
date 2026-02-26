@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import cadSchema from '../../../../web/cad-schema.json';
+import cadSchema from '../../web/cad-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm';
 
@@ -630,7 +630,7 @@ app.get('/llms.txt', async (c) => {
     const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
     if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
   } catch {}
-  return c.redirect(`https://raw.githubusercontent.com/${cfDeploy.github}/main/web/llms.txt`);
+  return c.redirect(`https://raw.githubusercontent.com/${cfDeploy.github}/main/systems/truck/llms.txt`);
 });
 
 // llms-full.txt — full context for LLMs: llms.txt + complete tool catalog from schema

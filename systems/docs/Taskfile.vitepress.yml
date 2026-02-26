@@ -15,7 +15,7 @@ version: '3'
 # ============================================================================
 
 vars:
-  WEBSITE_DIR: '{{.ROOT_DIR}}/website'
+  WEBSITE_DIR: '{{.ROOT_DIR}}/systems/docs/website'
   LOCAL_PAGES_URL: 'http://localhost:5173'
   PAGES_PROD_URL:
     sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config pages.production
@@ -80,7 +80,7 @@ tasks:
   screenshots:
     desc: Generate doc screenshots + videos from E2E tests
     cmds:
-      - cd {{.ROOT_DIR}}/tests && DOCS=1 SLOW=1 bun x playwright test --project=e2e
+      - cd {{.ROOT_DIR}}/systems/truck/tests && DOCS=1 SLOW=1 bun x playwright test --project=e2e
 
   # ===========================================================================
   # Open in browser

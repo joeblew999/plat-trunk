@@ -3,11 +3,11 @@ import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 
 /** VitePress static asset directories (ADR-0027) */
-export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../website/public/screenshots');
-export const VIDEOS_DIR = path.resolve(__dirname, '../../website/public/videos');
+export const SCREENSHOTS_DIR = path.resolve(__dirname, '../../../../systems/docs/website/public/screenshots');
+export const VIDEOS_DIR = path.resolve(__dirname, '../../../../systems/docs/website/public/videos');
 
 /** Directory where example scene JSON files are saved */
-export const EXAMPLES_DIR = path.resolve(__dirname, '../../web/gui/examples');
+export const EXAMPLES_DIR = path.resolve(__dirname, '../../web/examples');
 
 /** Env flags — all gated so normal test runs produce no side effects */
 export const CAPTURE_SCREENSHOTS = !!process.env.SCREENSHOTS;

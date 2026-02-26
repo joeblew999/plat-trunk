@@ -12,7 +12,7 @@ test.describe('BIM / IFC Operations', () => {
   });
 
   test('import IFC and verify BIM metadata', async ({ page }) => {
-    const ifcPath = path.resolve(__dirname, '../../.src/ifc-lite/tests/models/ara3d/AC20-FZK-Haus.ifc');
+    const ifcPath = path.resolve(__dirname, '../../../../.src/ifc-lite/tests/models/ara3d/AC20-FZK-Haus.ifc');
     const ifcData = fs.readFileSync(ifcPath, 'utf-8');
 
     // 1. Import IFC

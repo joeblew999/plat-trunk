@@ -12,10 +12,10 @@ routes = [
   { pattern = "cad.ubuntusoftware.net", custom_domain = true },
 ]
 
-# Serve web/gui/ as static assets — HTML, JS, WASM all served from the edge
+# Serve systems/truck/web/ as static assets — HTML, JS, WASM all served from the edge
 # SPA routing: /model/:id paths serve index.html (JS reads pathname for modelId)
 [assets]
-directory = "../../../web/gui"
+directory = "../web"
 not_found_handling = "single-page-application"
 
 [[r2_buckets]]

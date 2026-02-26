@@ -23,17 +23,9 @@ includes:
     vars:
       ROOT_DIR: '{{.PWD}}'
 
-  # Local systems
-  envsubst:
-    taskfile: ./systems/envsubst/Taskfile.envsubst.yml
-    vars:
-      ROOT_DIR: '{{.PWD}}'
+  # Deployable systems
   truck:
     taskfile: ./systems/truck/Taskfile.truck.yml
-    vars:
-      ROOT_DIR: '{{.PWD}}'
-  gh:
-    taskfile: ./systems/gh/Taskfile.gh.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
   ezpz:
@@ -42,6 +34,16 @@ includes:
       ROOT_DIR: '{{.PWD}}'
   vitepress:
     taskfile: ./systems/docs/Taskfile.vitepress.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+
+  # Dev tools
+  envsubst:
+    taskfile: ./tools/envsubst/Taskfile.envsubst.yml
+    vars:
+      ROOT_DIR: '{{.PWD}}'
+  gh:
+    taskfile: ./tools/gh/Taskfile.gh.yml
     vars:
       ROOT_DIR: '{{.PWD}}'
   skills:

@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import cfDeploy from '../cf-deploy.json';
+import cfDeploy from '../../../cf-deploy.json';
 
 // Dev server must be running before tests start.
 // Start it with: task truck:test:serve:start
