@@ -14,6 +14,9 @@ version: '3'
 #   cf:r2:*      — R2 storage (account resource)
 #   cf:whoami    — Account info
 #
+# Pattern: all wrangler tasks depend on _ensure:wrangler (idempotent install).
+# Uses `bun x wrangler` (local install), never `bunx` (downloads temp copy).
+#
 # Required var: ROOT_DIR (passed by parent include)
 # Optional vars: DB_NAME, BUCKET_NAME (for d1/r2 tasks)
 # ============================================================================
@@ -50,6 +53,19 @@ vars:
 tasks:
 
   # ==========================================================================
+  # Internal: shared dependency — ensures wrangler is installed in WORKER_DIR
+  # All tasks that call `bun x wrangler` must depend on this.
+  # ==========================================================================
+
+  "_ensure:wrangler":
+    internal: true
+    dir: '{{.WORKER_DIR}}'
+    cmds:
+      - bun install --silent
+    status:
+      - test -d {{.WORKER_DIR}}/node_modules/wrangler
+
+  # ==========================================================================
   # Worker: Versioned Deploy Lifecycle (delegates to cf-deploy.ts)
   # ==========================================================================
 
@@ -67,9 +83,10 @@ tasks:
 
   "worker:canary":
     desc: Deploy with gradual traffic split (interactive)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler versions deploy
+      - bun x wrangler versions deploy
 
   "worker:rollback":
     desc: Roll back to previous version
@@ -85,11 +102,12 @@ tasks:
 
   "worker:preview":
     desc: "Upload PR preview version"
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     vars:
       PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
     cmds:
-      - 'bun install && bunx wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
+      - 'bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
       - 'echo "Preview: https://pr-{{.PR_NUMBER}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
 
   # ==========================================================================
@@ -98,15 +116,17 @@ tasks:
 
   "worker:deploy":
     desc: Deploy worker to Cloudflare (simple, non-versioned)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bun install && bunx wrangler deploy
+      - bun x wrangler deploy
 
   "worker:deploy:staging":
     desc: Deploy to staging environment
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler deploy --env staging
+      - bun x wrangler deploy --env staging
 
   # ==========================================================================
   # Versions & Status (unified Worker + Pages)
@@ -151,41 +171,46 @@ tasks:
   # Keep individual wrangler commands for direct access
   "worker:versions:list":
     desc: List recent Worker versions (tags, dates)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler versions list
+      - bun x wrangler versions list
 
   "worker:status":
     desc: Show current Worker deployment (traffic split)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler deployments list
+      - bun x wrangler deployments list
 
   "worker:secret:list":
     desc: List Worker secrets
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler secret list
+      - bun x wrangler secret list
 
   "worker:tail":
     desc: Tail live Worker logs
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler tail
+      - bun x wrangler tail
 
   # ==========================================================================
   # Pages: Versioned Deploy Lifecycle
   # ==========================================================================
 
-  # Internal helper — all Pages deploys go through here
+  # Internal helper — all Pages deploys go through here.
+  # Runs wrangler from WORKER_DIR (where it's installed) with absolute path to dist.
   "pages:_deploy":
     internal: true
-    dir: '{{.PAGES_DIR}}'
+    deps: ["_ensure:wrangler"]
     preconditions:
       - sh: test -d {{.PAGES_DIR}}/.vitepress/dist
         msg: "No build found — run task vitepress:build first"
     cmds:
-      - bunx wrangler pages deploy .vitepress/dist --project-name={{.PAGES_PROJECT}} --branch {{.BRANCH}} --commit-dirty=true
+      - cd {{.WORKER_DIR}} && bun x wrangler pages deploy {{.PAGES_DIR}}/.vitepress/dist --project-name={{.PAGES_PROJECT}} --branch {{.BRANCH}} --commit-dirty=true
 
   "pages:upload":
     desc: "Upload versioned Pages deploy (v{{.VERSION_SLUG}}.{{.PAGES_DOMAIN}}) — does NOT update production"
@@ -242,8 +267,9 @@ tasks:
 
   "pages:versions:list":
     desc: List recent Pages deployments
+    deps: ["_ensure:wrangler"]
     cmds:
-      - bunx wrangler pages deployment list --project-name={{.PAGES_PROJECT}}
+      - cd {{.WORKER_DIR}} && bun x wrangler pages deployment list --project-name={{.PAGES_PROJECT}}
 
   # ==========================================================================
   # D1 Database (account resource)
@@ -251,41 +277,47 @@ tasks:
 
   "d1:list":
     desc: List D1 databases
+    deps: ["_ensure:wrangler"]
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 list
+      - bun x wrangler d1 list
 
   "d1:create":
     desc: Create the project D1 database
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 create {{.DB_NAME}}
+      - bun x wrangler d1 create {{.DB_NAME}}
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:tables":
     desc: List tables in local D1
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 execute {{.DB_NAME}} --local --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      - bun x wrangler d1 execute {{.DB_NAME}} --local --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:tables:remote":
     desc: List tables in remote D1
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 execute {{.DB_NAME}} --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+      - bun x wrangler d1 execute {{.DB_NAME}} --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:execute":
     desc: Execute SQL against local D1
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 execute {{.DB_NAME}} --local --command "{{.SQL}}"
+      - bun x wrangler d1 execute {{.DB_NAME}} --local --command "{{.SQL}}"
     requires:
       vars: [SQL]
     preconditions:
@@ -294,9 +326,10 @@ tasks:
 
   "d1:execute:remote":
     desc: Execute SQL against remote D1
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 execute {{.DB_NAME}} --remote --command "{{.SQL}}"
+      - bun x wrangler d1 execute {{.DB_NAME}} --remote --command "{{.SQL}}"
     requires:
       vars: [SQL]
     preconditions:
@@ -305,9 +338,10 @@ tasks:
 
   "d1:migrations:create":
     desc: Create a new D1 migration
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 migrations create {{.DB_NAME}} "{{.NAME}}"
+      - bun x wrangler d1 migrations create {{.DB_NAME}} "{{.NAME}}"
     requires:
       vars: [NAME]
     preconditions:
@@ -316,18 +350,20 @@ tasks:
 
   "d1:migrations:apply":
     desc: Apply D1 migrations locally (idempotent)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 migrations apply {{.DB_NAME}} --local
+      - bun x wrangler d1 migrations apply {{.DB_NAME}} --local
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
 
   "d1:migrations:apply:remote":
     desc: Apply D1 migrations to remote (idempotent)
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler d1 migrations apply {{.DB_NAME}} --remote
+      - bun x wrangler d1 migrations apply {{.DB_NAME}} --remote
     preconditions:
       - sh: '[ -n "{{.DB_NAME}}" ]'
         msg: "DB_NAME is required"
@@ -338,23 +374,27 @@ tasks:
 
   "r2:list":
     desc: List R2 buckets
+    deps: ["_ensure:wrangler"]
+    dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler r2 bucket list
+      - bun x wrangler r2 bucket list
 
   "r2:create":
     desc: Create the project R2 bucket
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler r2 bucket create {{.BUCKET_NAME}}
+      - bun x wrangler r2 bucket create {{.BUCKET_NAME}}
     preconditions:
       - sh: '[ -n "{{.BUCKET_NAME}}" ]'
         msg: "BUCKET_NAME is required"
 
   "r2:objects":
     desc: List objects in the project R2 bucket
+    deps: ["_ensure:wrangler"]
     dir: '{{.WORKER_DIR}}'
     cmds:
-      - bunx wrangler r2 object list {{.BUCKET_NAME}}
+      - bun x wrangler r2 object list {{.BUCKET_NAME}}
     preconditions:
       - sh: '[ -n "{{.BUCKET_NAME}}" ]'
         msg: "BUCKET_NAME is required"

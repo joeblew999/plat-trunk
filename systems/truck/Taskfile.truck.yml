@@ -58,6 +58,7 @@ tasks:
       - task: deps:clone:ezpz
 
   "deps:clone:truck":
+    internal: true
     desc: Clone truck fork
     status:
       - test -f {{.TRUCK_SRC_DIR}}/Cargo.toml
@@ -69,6 +70,7 @@ tasks:
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
   "deps:clone:ifc-lite":
+    internal: true
     desc: Clone ifc-lite (skips LFS — large IFC test models not needed for build)
     status:
       - test -d {{.IFC_LITE_SRC_DIR}}/.git
@@ -77,6 +79,7 @@ tasks:
       - GIT_LFS_SKIP_SMUDGE=1 git clone https://{{.IFC_LITE_REPO}}.git {{.IFC_LITE_SRC_DIR}}
 
   "deps:clone:ezpz":
+    internal: true
     desc: Clone ezpz (KittyCAD kcl-ezpz dependency)
     status:
       - test -d {{.EZPZ_SRC_DIR}}/.git
@@ -423,6 +426,7 @@ tasks:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
 
   "test:preflight":
+    internal: true
     desc: "Verify dev server is running and serving fresh assets"
     silent: true
     cmds:
@@ -593,6 +597,7 @@ tasks:
   # Flow: gui:deploy → version:check → cf:worker:upload → cf:worker:smoke → tag → cf:worker:promote
 
   "deploy:tag":
+    internal: true
     desc: "Create git tag v{{.CAD_VERSION}} + GitHub release (idempotent)"
     deps: [":gh:deps:install"]
     cmds:
@@ -620,6 +625,7 @@ tasks:
         fi
 
   "deploy:setup":
+    internal: true
     desc: Ensure Cloudflare auth + GitHub CI secret (idempotent, runs once)
     cmds:
       - task: :gh:secret:set:cloudflare
@@ -631,6 +637,7 @@ tasks:
       - task: smoke:extra
 
   "smoke:extra":
+    internal: true
     desc: "Truck-specific smoke checks (schema + MCP)"
     dir: '{{.ROOT_DIR}}'
     cmds:
