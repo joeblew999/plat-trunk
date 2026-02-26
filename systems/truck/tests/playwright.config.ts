@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
-import cfDeploy from '../../../cf-deploy.json';
+import path from 'path';
+import { ROOT_DIR } from './paths';
+
+// cf-deploy.json is the shared config at repo root
+const cfDeploy = require(path.join(ROOT_DIR, 'cf-deploy.json'));
 
 // Dev server must be running before tests start.
 // Start it with: task truck:test:serve:start

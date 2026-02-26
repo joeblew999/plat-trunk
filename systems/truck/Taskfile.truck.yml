@@ -4,6 +4,7 @@ version: '3'
 
 vars:
   # ROOT_DIR passed by parent include — do NOT redefine
+  SYSTEM_DIR: '{{.ROOT_DIR}}/systems/truck'
   BIN_DIR: '{{.ROOT_DIR}}/.bin'
   SRC_DIR: '{{.ROOT_DIR}}/.src'
   TRUCK_SRC_DIR: '{{.SRC_DIR}}/truck'
@@ -159,13 +160,13 @@ tasks:
     desc: Compile headless truck-webgpu-gui WASM (for Worker, no rendering)
     deps: ["deps:wasm-pack"]
     cmds:
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target bundler --no-default-features --out-dir {{.ROOT_DIR}}/systems/truck/worker/pkg
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target bundler --no-default-features --out-dir {{.SYSTEM_DIR}}/worker/pkg
 
   "wasm:build-browser":
     desc: Compile truck-webgpu-gui WASM (for browser)
     deps: ["deps:clone", "deps:wasm-pack"]
     cmds:
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/systems/truck/web/pkg-browser-renderer
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.SYSTEM_DIR}}/web/pkg-browser-renderer
 
   # --- Watch ---
 
@@ -207,7 +208,7 @@ tasks:
     deps: ["wasm:build-browser"]
     cmds:
       - task: gui:schema
-      - cp {{.ROOT_DIR}}/systems/truck/llms.txt {{.ROOT_DIR}}/systems/truck/web/llms.txt
+      - cp {{.SYSTEM_DIR}}/llms.txt {{.SYSTEM_DIR}}/web/llms.txt
 
   "mcp:bootstrap":
     desc: "Bootstrap all MCP components: schema, deps, configs"
@@ -295,12 +296,12 @@ tasks:
     desc: Local dev server
     deps: ["gui:build", "mcp:bootstrap"]
     preconditions:
-      - sh: test -f {{.ROOT_DIR}}/systems/truck/web/vendor/lit.js
+      - sh: test -f {{.SYSTEM_DIR}}/web/vendor/lit.js
         msg: "vendor/lit.js missing — run: git checkout HEAD -- systems/truck/web/vendor/lit.js"
-      - sh: test -f {{.ROOT_DIR}}/systems/truck/web/vendor/three.js
+      - sh: test -f {{.SYSTEM_DIR}}/web/vendor/three.js
         msg: "vendor/three.js missing — run: git checkout HEAD -- systems/truck/web/vendor/three.js"
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
+      - cd {{.SYSTEM_DIR}}/worker && bun install && bun x wrangler dev
 
   "gui:restart":
     desc: Restart local dev server (kills wrangler, starts fresh)
@@ -363,10 +364,10 @@ tasks:
   "test:install":
     desc: Install Playwright + Chrome
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun install
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright install chromium
+      - cd {{.SYSTEM_DIR}}/tests && bun install
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright install chromium
     status:
-      - test -d {{.ROOT_DIR}}/systems/truck/tests/node_modules
+      - test -d {{.SYSTEM_DIR}}/tests/node_modules
 
   "test:status":
     desc: Check if dev server + CAD MCP are running
@@ -423,7 +424,7 @@ tasks:
   "test:api":
     desc: "L2: Worker API + MCP contract tests (vitest, no server needed)"
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
+      - cd {{.SYSTEM_DIR}}/worker && bun x vitest run
 
   "test:preflight":
     internal: true
@@ -447,47 +448,47 @@ tasks:
     desc: "L3: cadCommand integration tests (requires: gui:serve running)"
     deps: ["test:install", "test:preflight"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=e2e
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=e2e
 
   "test:ui":
     desc: "L4: UI wiring tests — toolbar, outliner, canvas (requires: gui:serve running)"
     deps: ["test:install", "test:preflight"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=ui
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=ui
 
   "test:e2e:slow":
     desc: E2E tests (slow + video)
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && SLOW=1 bun x playwright test --project=e2e
+      - cd {{.SYSTEM_DIR}}/tests && SLOW=1 bun x playwright test --project=e2e
 
   "test:sketch":
     desc: "L1: Sketch WASM kernel tests (requires: gui:serve running)"
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test e2e/sketch.spec.ts --project=e2e
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test e2e/sketch.spec.ts --project=e2e
 
   "test:sync":
     desc: "Cross-tab Automerge sync tests (runs alone, requires gui:serve running)"
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=sync
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=sync
 
   "test:videos":
     desc: Record doc videos (webm)
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=docs
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=docs
 
   "test:all":
     desc: "All tests (requires gui:serve running in another terminal)"
     deps: ["test:install", "test:preflight"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
-      - cd {{.ROOT_DIR}}/systems/truck/tests && SCREENSHOTS=1 EXAMPLES=1 bun x playwright test --project=e2e
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=ui
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=sync
-      - cd {{.ROOT_DIR}}/systems/truck/tests && bun x playwright test --project=docs
+      - cd {{.SYSTEM_DIR}}/worker && bun x vitest run
+      - cd {{.SYSTEM_DIR}}/tests && SCREENSHOTS=1 EXAMPLES=1 bun x playwright test --project=e2e
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=ui
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=sync
+      - cd {{.SYSTEM_DIR}}/tests && bun x playwright test --project=docs
 
   "test:full":
     desc: "Build, start server, run all tests, then stop"
@@ -518,16 +519,16 @@ tasks:
       # Exclude GPU-dependent crates (need Vulkan) and truck-base (flaky proptest newton solver)
       - cd {{.TRUCK_SRC_DIR}} && cargo test --workspace --exclude truck-platform --exclude truck-rendimpl --exclude truck-base
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.ROOT_DIR}}/systems/truck/web/pkg-browser-renderer
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.SYSTEM_DIR}}/web/pkg-browser-renderer
 
   "docs:publish":
     desc: Generate screenshots + videos against BASE_URL + upload to R2
     deps: ["test:install"]
     cmds:
-      - cd {{.ROOT_DIR}}/systems/truck/tests && BASE_URL={{.BASE_URL}} SCREENSHOTS=1 bun x playwright test --project=e2e
-      - cd {{.ROOT_DIR}}/systems/truck/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=docs
+      - cd {{.SYSTEM_DIR}}/tests && BASE_URL={{.BASE_URL}} SCREENSHOTS=1 bun x playwright test --project=e2e
+      - cd {{.SYSTEM_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=docs
       - |
-        cd {{.ROOT_DIR}}/systems/truck/worker
+        cd {{.SYSTEM_DIR}}/worker
         for f in ../../../docs/hugo/static/screenshots/*.png; do
           [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "$(bun scripts/cf-deploy.ts config r2.pages)/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
         done

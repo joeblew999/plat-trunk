@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import app from './index';
-import cadSchema from '../../web/cad-schema.json';
+import cadSchema from '../../cad-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 
 // Helper: make a request to the Hono app

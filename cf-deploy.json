@@ -18,7 +18,7 @@
   "account": "7384af54e33b8a54ff240371ea368440",
   "github": "joeblew999/plat-trunk",
   "version": {
-    "source": "systems/truck/web/cad-schema.json"
+    "source": "systems/truck/cad-schema.json"
   },
   "output": "systems/truck/web/cf-versions.json",
   "endpoints": {
