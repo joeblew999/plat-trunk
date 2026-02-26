@@ -299,6 +299,13 @@ tasks:
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun install && bun x wrangler dev
 
+  "gui:restart":
+    desc: Restart local dev server (kills wrangler, starts fresh)
+    cmds:
+      - pkill -f "wrangler dev" 2>/dev/null || true
+      - sleep 1
+      - task: gui:serve
+
   "gui:deploy":
     desc: "Build + upload + smoke + git tag v{{.CAD_VERSION}} (does NOT promote — use cf:worker:promote when ready)"
     deps: ["gui:build", "deploy:setup", "version:check"]
@@ -415,15 +422,32 @@ tasks:
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
 
+  "test:preflight":
+    desc: "Verify dev server is running and serving fresh assets"
+    silent: true
+    cmds:
+      - |
+        if ! curl -sf {{.LOCAL_URL}}/api/health > /dev/null 2>&1; then
+          echo "FAIL: dev server not running at {{.LOCAL_URL}}"
+          echo "  → run: task up:detached"
+          exit 1
+        fi
+        if ! curl -sf {{.LOCAL_URL}}/vendor/lit.js > /dev/null 2>&1; then
+          echo "FAIL: vendor/lit.js not served (missing or 404)"
+          echo "  → run: git checkout HEAD -- web/gui/vendor/lit.js && task truck:gui:restart"
+          exit 1
+        fi
+        echo "Preflight OK: dev server healthy at {{.LOCAL_URL}}"
+
   "test:e2e":
     desc: "L3: cadCommand integration tests (requires: gui:serve running)"
-    deps: ["test:install"]
+    deps: ["test:install", "test:preflight"]
     cmds:
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=e2e
 
   "test:ui":
     desc: "L4: UI wiring tests — toolbar, outliner, canvas (requires: gui:serve running)"
-    deps: ["test:install"]
+    deps: ["test:install", "test:preflight"]
     cmds:
       - cd {{.ROOT_DIR}}/tests && bun x playwright test --project=ui
 
@@ -453,7 +477,7 @@ tasks:
 
   "test:all":
     desc: "All tests (requires gui:serve running in another terminal)"
-    deps: ["test:install"]
+    deps: ["test:install", "test:preflight"]
     cmds:
       - cd {{.ROOT_DIR}}/systems/truck/worker && bun x vitest run
       - cd {{.ROOT_DIR}}/tests && SCREENSHOTS=1 EXAMPLES=1 bun x playwright test --project=e2e
