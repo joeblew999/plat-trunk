@@ -6,8 +6,10 @@
 # Attach: task attach        (reconnect to running TUI)
 #
 # URLs:
-#   CAD app + docs:  http://localhost:8788  (/docs/* via service binding)
-#   TUI:             http://localhost:8000
+#   CAD app:   http://localhost:8788
+#   Docs:      http://localhost:8788/docs/
+#   MCP:       http://localhost:8788/mcp
+#   TUI:       http://localhost:8000
 # ============================================================================
 
 version: "0.5"
