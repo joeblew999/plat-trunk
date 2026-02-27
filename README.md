@@ -103,7 +103,7 @@ cad.spec.ts + sketch.spec.ts  ──SCREENSHOTS=1──→  website/public/scree
                                ──EXAMPLES=1────→  web/gui/examples/*.json
                                ──DOCS=1────────→  website/public/videos/*.webm
                                                           ↓
-                                                    VitePress → Cloudflare Pages
+                                                    VitePress → docs Worker
 ```
 
 Docs site built with VitePress (same as hono.dev). LLM docs auto-generated at build time (`llms.txt`, `llms-full.txt`, `llms-small.txt`).

@@ -37,7 +37,7 @@ systems/           Deployable subsystems (each has its own Taskfile + SYSTEM_DIR
     worker/        Hono + Zod Worker (TypeScript, wrangler)
     tests/         Playwright E2E + UI tests (paths.ts anchors ROOT_DIR/SYSTEM_DIR)
     cad-schema.json  Generated schema (Rust → JSON, checked in)
-  docs/            Documentation site (VitePress on Cloudflare Pages)
+  docs/            Documentation site (VitePress on Workers Static Assets)
     website/       VitePress source + public assets
   ezpz/            KittyCAD kcl-ezpz integration
 tools/             Dev utilities (not deployed)
