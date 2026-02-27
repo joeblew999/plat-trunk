@@ -625,7 +625,6 @@ function cmdVerify(rootDir: string, cfg: Config) {
     checks.push({ label: "local.docs", value: cfg.local.docs, glob: "*.{ts,js,sh,yml}" });
   }
 
-  if (cfg.r2?.pages) checks.push({ label: "r2.pages", value: cfg.r2.pages, glob: "*.{ts,toml,yml}" });
   if (cfg.r2?.documents) checks.push({ label: "r2.documents", value: cfg.r2.documents, glob: "*.{ts,toml,yml}" });
 
   const filtered = checks.filter((c) => c.value);

@@ -7,7 +7,6 @@ import { initHeadlessWasm } from './truck-wasm';
 
 type Bindings = {
   MY_VAR: string;
-  PAGES_BUCKET: R2Bucket;
   CAD_DOCS_BUCKET: R2Bucket;
   DOCS: Fetcher;
 };

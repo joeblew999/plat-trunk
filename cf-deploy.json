@@ -29,7 +29,6 @@
     "docs": "/docs/"
   },
   "r2": {
-    "pages": "cad-docs",
     "documents": "cad-documents"
   },
   "smoke": {

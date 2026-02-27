@@ -9,7 +9,6 @@ async function req(path: string, init?: RequestInit) {
   return app.request(url, init, {
     // Stub R2 bindings (not used by CAD API routes)
     MY_VAR: 'test',
-    PAGES_BUCKET: {} as any,
     CAD_DOCS_BUCKET: {} as any,
   });
 }

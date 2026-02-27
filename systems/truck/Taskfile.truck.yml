@@ -521,21 +521,6 @@ tasks:
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
       - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && wasm-pack build --target web --release --out-dir {{.SYSTEM_DIR}}/web/pkg-browser-renderer
 
-  "docs:publish":
-    desc: Generate screenshots + videos against BASE_URL + upload to R2
-    deps: ["test:install"]
-    cmds:
-      - cd {{.SYSTEM_DIR}}/tests && BASE_URL={{.BASE_URL}} SCREENSHOTS=1 bun x playwright test --project=e2e
-      - cd {{.SYSTEM_DIR}}/tests && BASE_URL={{.BASE_URL}} bun x playwright test --project=docs
-      - |
-        cd {{.SYSTEM_DIR}}/worker
-        for f in ../../../docs/hugo/static/screenshots/*.png; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "$(bun scripts/cf-deploy.ts config r2.pages)/docs/screenshots/$(basename $f)" --file="$f" --ct="image/png" --remote
-        done
-        for f in ../../../docs/hugo/static/videos/*.webm; do
-          [ -s "$f" ] && echo "Uploading $(basename $f)..." && bun x wrangler r2 object put "$(bun scripts/cf-deploy.ts config r2.pages)/docs/videos/$(basename $f)" --file="$f" --ct="video/webm" --remote
-        done
-
   # --- Version Management ---
   # Source of truth: commands/mod.rs → build_schema() → cad-schema.json → CAD_VERSION
   # Flow: version:bump → gui:deploy (upload + promote + tag)
