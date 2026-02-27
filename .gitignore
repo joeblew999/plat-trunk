@@ -128,3 +128,6 @@ systems/docs/website/public/videos/*.webm
 .data/
 .src/
 test-results/
+
+# Private (local-only, never committed)
+.private/

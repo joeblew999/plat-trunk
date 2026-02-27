@@ -10,6 +10,8 @@ vars:
   TRUCK_SRC_DIR: '{{.SRC_DIR}}/truck'
   TRUCK_UPSTREAM: 'github.com/ricosjp/truck'
   TRUCK_FORK: 'github.com/joeblew999/truck'
+  TRUCK_FORK_VIRTUALRITZ: 'github.com/virtualritz/truck'
+  TRUCK_FORK_OVOTIM: 'github.com/ovo-Tim/truck'
   TRUCK_REPO: '{{.TRUCK_FORK}}'
   TRUCK_RELEASE_REPO: 'joeblew999/plat-trunk'
   TRUCK_VERSION: 'v0.1.0'
@@ -68,6 +70,10 @@ tasks:
       - rm -rf {{.TRUCK_SRC_DIR}}
       - git clone https://{{.TRUCK_FORK}}.git {{.TRUCK_SRC_DIR}}
       - cd {{.TRUCK_SRC_DIR}} && git remote add upstream https://{{.TRUCK_UPSTREAM}}.git || true
+      - cd {{.TRUCK_SRC_DIR}} && git remote add virtualritz https://{{.TRUCK_FORK_VIRTUALRITZ}}.git || true
+      - cd {{.TRUCK_SRC_DIR}} && git remote add ovo-tim https://{{.TRUCK_FORK_OVOTIM}}.git || true
+      - cd {{.TRUCK_SRC_DIR}} && git fetch virtualritz --no-recurse-submodules || true
+      - cd {{.TRUCK_SRC_DIR}} && git fetch ovo-tim --no-recurse-submodules || true
       - cd {{.TRUCK_SRC_DIR}} && git submodule update --init
 
   "deps:clone:ifc-lite":
@@ -131,6 +137,113 @@ tasks:
         BEHIND=$(git rev-list --count origin/master..upstream/master)
         echo "Fork: $AHEAD ahead, $BEHIND behind upstream"
     silent: true
+
+  "fork:branches":
+    desc: Show available branches from all fork remotes
+    deps: ["deps:clone"]
+    cmds:
+      - |
+        cd {{.TRUCK_SRC_DIR}}
+        echo "=== Current branch ==="
+        git branch --show-current
+        echo ""
+        echo "=== ovo-tim branches ==="
+        git branch -r --list 'ovo-tim/*' 2>/dev/null || echo "  (none — run: task truck:deps:clone)"
+        echo ""
+        echo "=== virtualritz branches ==="
+        git branch -r --list 'virtualritz/*' 2>/dev/null || echo "  (none — run: task truck:deps:clone)"
+        echo ""
+        echo "=== our fork (origin) ==="
+        git branch -r --list 'origin/*' 2>/dev/null
+    silent: true
+
+  "fork:switch":
+    desc: "Switch .src/truck to a fork branch (usage: task truck:fork:switch -- ovo-tim/fix-OR3)"
+    deps: ["deps:clone"]
+    preconditions:
+      - sh: '[ -n "{{.CLI_ARGS}}" ]'
+        msg: "Usage: task truck:fork:switch -- <remote/branch>  (e.g. ovo-tim/fix-OR3)"
+    cmds:
+      - |
+        cd {{.TRUCK_SRC_DIR}}
+        BRANCH="test/$(echo '{{.CLI_ARGS}}' | tr '/' '-')"
+        echo "Switching .src/truck to {{.CLI_ARGS}} (local branch: $BRANCH)..."
+        git checkout -b "$BRANCH" "{{.CLI_ARGS}}" 2>/dev/null || git checkout "$BRANCH"
+        echo ""
+        echo "Now on: $(git branch --show-current) @ $(git rev-parse --short HEAD)"
+        echo "Your crates/truck-webgpu-gui will build against this branch."
+        echo ""
+        echo "Next steps:"
+        echo "  task truck:check        — cargo check (fast)"
+        echo "  task truck:test          — run truck tests"
+        echo "  task truck:test:crate    — run your crate tests"
+        echo "  task truck:fork:reset    — switch back to our fork"
+
+  "fork:reset":
+    desc: Switch .src/truck back to our fork (origin/master)
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git checkout master
+      - echo "Back on master @ $(cd {{.TRUCK_SRC_DIR}} && git rev-parse --short HEAD)"
+
+  "fork:test:boolean":
+    desc: "Test ovo-Tim's coplanar boolean fix (fix-OR3 branch)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch ovo-tim --no-recurse-submodules
+      - task: fork:switch
+        vars:
+          CLI_ARGS: ovo-tim/fix-OR3
+      - echo "Running truck-shapeops tests..."
+      - cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops
+      - echo ""
+      - echo "Running your crate tests..."
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+      - echo ""
+      - echo "DONE. If tests pass, the coplanar boolean fix works with your code."
+      - echo "To switch back: task truck:fork:reset"
+
+  "fork:test:step":
+    desc: "Test ovo-Tim's STEP boolean fix (fix-91-2 branch)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch ovo-tim --no-recurse-submodules
+      - task: fork:switch
+        vars:
+          CLI_ARGS: ovo-tim/fix-91-2
+      - echo "Running truck-shapeops + truck-stepio tests..."
+      - cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops -p truck-stepio
+      - echo ""
+      - echo "Running your crate tests..."
+      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+      - echo ""
+      - echo "DONE. If tests pass, the STEP boolean fix works with your code."
+      - echo "To switch back: task truck:fork:reset"
+
+  "fork:test:fillet":
+    desc: "Explore virtualritz's fillet engine (virtualritz/master)"
+    deps: ["deps:clone"]
+    cmds:
+      - cd {{.TRUCK_SRC_DIR}} && git fetch virtualritz --no-recurse-submodules
+      - task: fork:switch
+        vars:
+          CLI_ARGS: virtualritz/master
+      - echo "Checking what's new in virtualritz fork..."
+      - |
+        cd {{.TRUCK_SRC_DIR}}
+        echo ""
+        echo "=== New/modified crates ==="
+        git diff --stat master..HEAD -- '*.toml' | head -20
+        echo ""
+        echo "=== Fillet-related files ==="
+        find . -name '*.rs' -path '*fillet*' 2>/dev/null | head -20
+        echo ""
+        echo "=== Running cargo check (will show if it compiles)... ==="
+      - cd {{.TRUCK_SRC_DIR}} && cargo check 2>&1 | tail -5
+      - echo ""
+      - echo "NOTE: virtualritz's fork may have different crate versions."
+      - echo "If cargo check fails, it means API differences need manual integration."
+      - echo "To switch back: task truck:fork:reset"
 
   "upgrade":
     desc: Pull latest truck
