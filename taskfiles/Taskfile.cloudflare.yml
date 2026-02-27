@@ -180,12 +180,40 @@ tasks:
       - task: docs:rollback
 
   "deploy:all":
-    desc: "Full deploy lifecycle: upload → smoke → promote → versions (all workers)"
+    desc: "Full deploy lifecycle: upload → smoke → promote → versions → tag (all workers)"
     cmds:
       - task: upload:all
       - task: smoke:all
       - task: promote:all
       - task: versions
+      - task: deploy:tag
+
+  "deploy:tag":
+    desc: "Create git tag v{{.APP_VERSION}} + GitHub release with release notes (idempotent)"
+    deps: [":gh:deps:install"]
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - |
+        VERSION="v{{.APP_VERSION}}"
+        if git rev-parse "$VERSION" >/dev/null 2>&1; then
+          echo "Tag $VERSION already exists"
+        else
+          git tag "$VERSION"
+          echo "Created tag $VERSION"
+        fi
+        if git remote get-url origin >/dev/null 2>&1; then
+          git push origin "$VERSION" 2>/dev/null || echo "Tag $VERSION already pushed"
+        fi
+      - |
+        VERSION="v{{.APP_VERSION}}"
+        GH={{.BIN_DIR}}/gh
+        if $GH release view "$VERSION" >/dev/null 2>&1; then
+          echo "Release $VERSION already exists"
+        else
+          BODY=$(bun scripts/cf-deploy.ts release-notes)
+          $GH release create "$VERSION" --title "$VERSION" --notes "$BODY"
+          echo "Created GitHub release $VERSION"
+        fi
 
   # ==========================================================================
   # Versions & Status

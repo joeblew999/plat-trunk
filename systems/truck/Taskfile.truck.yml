@@ -584,31 +584,9 @@ tasks:
 
   "deploy:tag":
     internal: true
-    desc: "Create git tag v{{.CAD_VERSION}} + GitHub release (idempotent)"
-    deps: [":gh:deps:install"]
+    desc: "Create git tag + GitHub release (delegates to cf:deploy:tag)"
     cmds:
-      - |
-        VERSION="v{{.CAD_VERSION}}"
-        cd {{.ROOT_DIR}}
-        if git rev-parse "$VERSION" >/dev/null 2>&1; then
-          echo "Tag $VERSION already exists"
-        else
-          git tag "$VERSION"
-          echo "Created tag $VERSION"
-        fi
-        if git remote get-url origin >/dev/null 2>&1; then
-          git push origin "$VERSION" 2>/dev/null || echo "Tag $VERSION already pushed"
-        fi
-      - |
-        VERSION="v{{.CAD_VERSION}}"
-        GH={{.BIN_DIR}}/gh
-        if $GH release view "$VERSION" >/dev/null 2>&1; then
-          echo "Release $VERSION already exists"
-        else
-          BODY=$(bun scripts/cf-deploy.ts release-notes)
-          $GH release create "$VERSION" --title "$VERSION" --notes "$BODY"
-          echo "Created GitHub release $VERSION"
-        fi
+      - task: :cf:deploy:tag
 
   "deploy:setup":
     internal: true
