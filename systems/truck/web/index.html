@@ -99,6 +99,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                     data-on:click="window.cadCommand('get_status').then(r => alert(JSON.stringify(r, null, 2)))">Status</button>
             <button data-testid="clear-data" class="btn btn-ghost btn-xs text-error opacity-60 hover:opacity-100" title="Wipe all local data"
                     data-on:click="window.cadCommand('clear_data')">Wipe</button>
+            <a href="/docs/" class="btn btn-ghost btn-xs opacity-40" title="Documentation">Docs</a>
             <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
         </div>
     </header>
