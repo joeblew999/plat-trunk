@@ -18,17 +18,17 @@ js-sys = "0.3.83"
 wgpu = { version = "27.0.1", optional = true }
 winit = { version = "0.30.12", optional = true }
 web-sys = { version = "0.3.83", features = ["HtmlCanvasElement", "Window", "Document", "Element"], optional = true }
-truck-platform = { version = "0.6.0", path = "../../.src/truck/truck-platform", optional = true }
-truck-rendimpl = { version = "0.6.0", path = "../../.src/truck/truck-rendimpl", optional = true }
+truck-platform = { version = "0.6.0", path = "../../../.src/truck/truck-platform", optional = true }
+truck-rendimpl = { version = "0.6.0", path = "../../../.src/truck/truck-rendimpl", optional = true }
 
 # Truck CAD kernel (modeling primitives, tessellation, booleans) — always compiled
-truck-modeling = { version = "0.6.0", path = "../../.src/truck/truck-modeling" }
-truck-meshalgo = { version = "0.4.0", path = "../../.src/truck/truck-meshalgo" }
-truck-polymesh = { version = "0.6.0", path = "../../.src/truck/truck-polymesh" }
-truck-topology = { version = "0.6.0", path = "../../.src/truck/truck-topology" }
-truck-shapeops = { version = "0.4.0", path = "../../.src/truck/truck-shapeops", default-features = false }
-truck-stepio = { version = "0.3.0", path = "../../.src/truck/truck-stepio" }
-truck-assembly = { version = "0.1.0", path = "../../.src/truck/truck-assembly" }
+truck-modeling = { version = "0.6.0", path = "../../../.src/truck/truck-modeling" }
+truck-meshalgo = { version = "0.4.0", path = "../../../.src/truck/truck-meshalgo" }
+truck-polymesh = { version = "0.6.0", path = "../../../.src/truck/truck-polymesh" }
+truck-topology = { version = "0.6.0", path = "../../../.src/truck/truck-topology" }
+truck-shapeops = { version = "0.4.0", path = "../../../.src/truck/truck-shapeops", default-features = false }
+truck-stepio = { version = "0.3.0", path = "../../../.src/truck/truck-stepio" }
+truck-assembly = { version = "0.1.0", path = "../../../.src/truck/truck-assembly" }
 
 # Serialization (save/load solids as JSON)
 serde_json = "1.0"
@@ -44,11 +44,11 @@ uuid = { version = "1", features = ["v4", "js", "serde"] }
 nalgebra = "0.33"
 
 # Semantic BIM Layer (IFC parsing)
-ifc-lite-core = { path = "../../.src/ifc-lite/rust/core" }
-ifc-lite-geometry = { path = "../../.src/ifc-lite/rust/geometry" }
+ifc-lite-core = { path = "../../../.src/ifc-lite/rust/core" }
+ifc-lite-geometry = { path = "../../../.src/ifc-lite/rust/geometry" }
 
 # 2D constraint solver for parametric sketching
-kcl-ezpz = { path = "../../.src/ezpz/kcl-ezpz" }
+kcl-ezpz = { path = "../../../.src/ezpz/kcl-ezpz" }
 
 # Optional features
 geozero = { version = "0.15.1", features = ["with-mvt"], optional = true }

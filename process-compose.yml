@@ -1,35 +1,25 @@
-# ============================================================================
 # Process Compose — local dev orchestrator
 #
 # Start:  task up:detached   (background)  or  task up  (TUI)
 # Stop:   task down
 # Attach: task attach        (reconnect to running TUI)
 #
-# URLs:
-#   CAD app:   http://localhost:8788
-#   Docs:      http://localhost:8788/docs/
-#   MCP:       http://localhost:8788/mcp
-#   TUI:       http://localhost:8000
-# ============================================================================
+# All workers run on one port via service bindings:
+#   http://localhost:8788       — CAD app, API, MCP
+#   http://localhost:8788/docs/ — Docs (service binding → docs-worker)
+#   env.TEST binding            — Test worker (service binding → test-worker)
+#   http://localhost:8000       — TUI
 
 version: "0.5"
 
 processes:
-  # ── Workers ───────────────────────────────────────────────────────────────
-  # truck-cad: main worker — GUI, API, MCP, /docs/* (service binding)
-  # docs-worker: serves VitePress static site (required for service binding)
-  gui-worker:
+  # All workers: truck-cad + docs-worker + test-worker (via service bindings)
+  workers:
     command: task truck:gui:serve
     availability:
       restart: on_failure
 
-  docs-worker:
-    command: task vitepress:worker:dev
-    availability:
-      restart: on_failure
-
-  # ── File Watchers ──────────────────────────────────────────────────────────
-  # Auto-rebuild on source changes
+  # Rust WASM rebuilds on source change
   watch-gui:
     command: task truck:watch:gui
     availability:
@@ -45,9 +35,7 @@ processes:
     availability:
       restart: on_failure
 
-  # ── Optional ───────────────────────────────────────────────────────────────
-  # Start from TUI when needed (disabled by default)
-
+  # Optional (start from TUI when needed)
   shape-viewer:
     command: task truck:run:shape-viewer
     disabled: true

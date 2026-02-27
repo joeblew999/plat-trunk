@@ -112,7 +112,7 @@ describe('MCP Initialize', () => {
     expect(body.jsonrpc).toBe('2.0');
     expect(body.id).toBe(1);
     expect(body.result.protocolVersion).toBe('2025-03-26');
-    expect(body.result.serverInfo.name).toBe(cfDeploy.worker.name);
+    expect(body.result.serverInfo.name).toBe(cfDeploy.workers.worker.name);
     expect(body.result.capabilities.tools).toBeDefined();
   });
 });

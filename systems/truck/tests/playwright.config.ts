@@ -1,14 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
-import path from 'path';
-import { ROOT_DIR } from './paths';
-
-// cf-deploy.json is the shared config at repo root
-const cfDeploy = require(path.join(ROOT_DIR, 'cf-deploy.json'));
-
 // Dev server must be running before tests start.
 // Start it with: task truck:test:serve:start
 // Or run the full pipeline: task truck:test:all
-const BASE_URL = process.env.BASE_URL || cfDeploy.local.worker;
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8788';
 const IS_SLOW = !!process.env.SLOW;
 
 // WebGPU requires specific Chrome flags on macOS

@@ -42,9 +42,9 @@ const cfConfig = (() => {
   return null;
 })();
 
-const LOCAL_URL = cfConfig?.local?.worker || 'http://localhost:8788';
-const WORKER_NAME = cfConfig?.worker?.name || 'truck-cad';
-const WORKER_DOMAIN = cfConfig?.worker?.domain || 'gedw99.workers.dev';
+const LOCAL_URL = 'http://localhost:8788';
+const WORKER_NAME = cfConfig?.workers?.worker?.name || 'truck-cad';
+const WORKER_DOMAIN = cfConfig?.workers?.worker?.domain || 'gedw99.workers.dev';
 
 const RETRY_ATTEMPTS = 6;
 const RETRY_BASE_MS = 1000;

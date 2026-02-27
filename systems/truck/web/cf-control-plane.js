@@ -2,10 +2,9 @@
  * <cf-control-plane> — Vanilla Web Component: deployment control plane banner.
  *
  * Zero dependencies. Light DOM (inherits page CSS / DaisyUI classes).
- * Replaces <cf-versions-picker> (which depended on Lit).
  *
  * Shows:
- *   - Version badge with Worker/Docs deploy indicators [W● D●]
+ *   - Version badge with per-worker deploy indicators
  *   - Dropdown with all versions + preview URLs
  *   - Endpoint links (API, MCP, Schema, Docs)
  *   - Cross-links (Worker GUI ↔ Docs ↔ GitHub)
@@ -54,11 +53,14 @@ class CfControlPlane extends HTMLElement {
     const v = this._version;
     const current = m.versions?.find(ver => ver.version === v);
 
-    // W/P indicators for current version
-    const hasWorker = !!current?.worker?.id;
-    const hasDocs = !!current?.docs?.id;
-    const indicators = this._isLocal ? '' :
-      ` <span class="opacity-40" style="font-size:0.6rem; letter-spacing:1px">${hasWorker ? 'W' : '·'}${hasDocs ? 'D' : '·'}</span>`;
+    // Per-worker indicators from platforms map
+    const platforms = current?.platforms || {};
+    const indicatorParts = Object.keys(platforms).map(name => {
+      const initial = name.charAt(0).toUpperCase();
+      return platforms[name]?.id ? initial : '·';
+    });
+    const indicators = this._isLocal || !indicatorParts.length ? '' :
+      ` <span class="opacity-40" style="font-size:0.6rem; letter-spacing:1px">${indicatorParts.join('')}</span>`;
 
     const label = this._isLocal ? 'local' : `v${v}`;
     const title = (this._isLocal ? 'Local dev' : `v${v}`) + ' — click for versions & links';
@@ -74,15 +76,21 @@ class CfControlPlane extends HTMLElement {
   }
 
   _renderDropdown(m, currentVersion) {
-    const workerProd = m.production?.worker || '';
-    const docsProd = m.production?.docs || '';
+    const production = m.production || {};
     const github = m.github || '';
+    const platformNames = Object.keys(production);
 
     // --- Versions section ---
     const versionItems = (m.versions || []).map(v => {
       const isCurrent = v.version === currentVersion;
-      const w = v.worker?.id ? '●' : '○';
-      const d = v.docs?.id ? '●' : '○';
+      const platforms = v.platforms || {};
+
+      // Build per-platform indicators
+      const pIndicators = platformNames.map(name => {
+        const initial = name.charAt(0).toUpperCase();
+        return (platforms[name]?.id ? '●' : '○') + initial;
+      }).join(' ');
+
       const date = v.date ? new Date(v.date).toLocaleDateString() : '';
       const git = v.git;
       const meta = [date, git?.branch, v.commandCount ? `${v.commandCount} cmds` : ''].filter(Boolean).join(' · ');
@@ -90,17 +98,22 @@ class CfControlPlane extends HTMLElement {
         ? `<a href="${git.commitUrl}" target="_blank" title="${this._esc(git.commitMessage || '')}" class="underline" onclick="event.stopPropagation()">${git.commitSha}</a>`
         : '';
 
-      // Primary link: Worker preview URL (or Docs if no Worker)
-      const href = v.worker?.url || v.docs?.url || '#';
+      // Primary link: first platform with a URL
+      const firstPlatformWithUrl = platformNames.find(n => platforms[n]?.url);
+      const href = firstPlatformWithUrl ? platforms[firstPlatformWithUrl].url : '#';
+
+      // Immutable link: first platform with an immutable URL
+      const firstWithImmutable = platformNames.find(n => platforms[n]?.immutableUrl);
+      const immutableUrl = firstWithImmutable ? platforms[firstWithImmutable].immutableUrl : null;
 
       return `<li>
         <a href="${href}" ${isCurrent ? '' : 'target="_blank"'}
            class="${isCurrent ? 'active font-bold' : ''} flex justify-between items-center gap-2">
           <span>
-            <span>v${v.version}${isCurrent ? ' ✓' : ''} <span class="opacity-40" style="font-size:0.6rem">${w}W ${d}D</span></span>
+            <span>v${v.version}${isCurrent ? ' ✓' : ''} <span class="opacity-40" style="font-size:0.6rem">${pIndicators}</span></span>
             ${meta || commitLink ? `<br><span class="opacity-50" style="font-size:0.65rem">${meta}${commitLink ? (meta ? ' · ' : '') + commitLink : ''}</span>` : ''}
           </span>
-          ${v.worker?.immutableUrl ? `<a href="${v.worker.immutableUrl}" target="_blank" title="Immutable Worker URL" class="opacity-30 hover:opacity-80" onclick="event.stopPropagation()">⧉</a>` : ''}
+          ${immutableUrl ? `<a href="${immutableUrl}" target="_blank" title="Immutable URL" class="opacity-30 hover:opacity-80" onclick="event.stopPropagation()">⧉</a>` : ''}
         </a>
       </li>`;
     }).join('');
@@ -111,11 +124,18 @@ class CfControlPlane extends HTMLElement {
     ).join('');
 
     // --- Endpoints section ---
-    const base = this._workerUrl || workerProd;
+    const firstProdUrl = production[platformNames[0]] || '';
+    const base = this._workerUrl || firstProdUrl;
     const endpointItems = Object.entries(m.endpoints || {}).map(([name, path]) => {
       const url = String(path).startsWith('http') ? path : `${base}${path}`;
       return `<li><a href="${url}" target="_blank">${name}</a></li>`;
     }).join('');
+
+    // --- Production links ---
+    const prodLinks = platformNames.map(name => {
+      const label = name.charAt(0).toUpperCase() + name.slice(1);
+      return production[name] ? `<li><a href="${production[name]}" target="_blank">Production (${label})</a></li>` : '';
+    }).filter(Boolean).join('');
 
     return `
       <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-50 w-72 p-2 shadow-xl text-xs">
@@ -129,8 +149,7 @@ class CfControlPlane extends HTMLElement {
         ${endpointItems}
         <li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>
         <li><a href="${this._isLocal ? location.origin : 'http://localhost:8788'}" class="${this._isLocal ? 'active font-bold' : ''}">Local Dev${this._isLocal ? ' (current)' : ''}</a></li>
-        ${workerProd ? `<li><a href="${workerProd}" target="_blank">Production (Worker)</a></li>` : ''}
-        ${docsProd ? `<li><a href="${docsProd}" target="_blank">Production (Docs)</a></li>` : ''}
+        ${prodLinks}
         ${github ? `<li><a href="${github}/releases" target="_blank">GitHub Releases</a></li>` : ''}
       </ul>
     `;

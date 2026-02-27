@@ -21,7 +21,7 @@ vars:
   LOCAL_DEV_URL: 'http://localhost:5173'
   LOCAL_WORKER_URL: 'http://localhost:5174'
   DOCS_PROD_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo "https://cad.ubuntusoftware.net/docs"
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config workers.docs.production 2>/dev/null || echo "https://cad.ubuntusoftware.net/docs"
 
 tasks:
   default:

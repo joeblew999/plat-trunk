@@ -1,228 +1,76 @@
 version: '3'
 
-# ============================================================================
-# Reusable Cloudflare deploy lifecycle (Workers).
-#
-# All config is read from cf-deploy.json via scripts/cf-deploy.ts.
-# The parent include only needs to pass ROOT_DIR.
-#
-# Task namespaces:
-#   cf:worker:*  — Worker versioned deploy lifecycle
-#   cf:versions  — Version manifest
-#   cf:d1:*      — D1 databases (account resource)
-#   cf:r2:*      — R2 storage (account resource)
-#   cf:whoami    — Account info
-#
-# Pattern: all wrangler tasks depend on _ensure:wrangler (idempotent install).
-# Uses `bun x wrangler` (local install), never `bunx` (downloads temp copy).
-#
-# Required var: ROOT_DIR (passed by parent include)
-# Optional vars: DB_NAME, BUCKET_NAME (for d1/r2 tasks)
-# ============================================================================
+# Cloudflare deploy lifecycle.
+# Config: cf-deploy.json. Adding a worker = one entry there.
+# All tasks delegate to scripts/cf-deploy.ts.
 
 vars:
-  # All vars resolved from cf-deploy.json — single source of truth
-  GITHUB_REPO:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config github
-  SCHEMA_FILE:
-    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config version.source)"
-  WORKER_NAME:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.name
-  WORKER_DOMAIN:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.domain
-  WORKER_DIR:
-    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.dir)"
-  WORKER_PRODUCTION_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config worker.production
-  WORKER_OUTPUT_FILE:
-    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config output)"
-  DOCS_NAME:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.name 2>/dev/null || echo ""
-  DOCS_DOMAIN:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.domain 2>/dev/null || echo ""
-  DOCS_DIR:
-    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.dir 2>/dev/null || echo "")"
-  DOCS_PRODUCTION_URL:
-    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo ""
   APP_VERSION:
-    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version)" 2>/dev/null || echo "0.0.0"
-  VERSION_SLUG:
-    sh: bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.SCHEMA_FILE}}','utf8')).version.replaceAll('.','-'))" 2>/dev/null || echo "0-0-0"
+    sh: cd {{.ROOT_DIR}} && bun -e "process.stdout.write(JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/'+JSON.parse(require('fs').readFileSync('{{.ROOT_DIR}}/cf-deploy.json','utf8')).version.source,'utf8')).version||'0.0.0')" 2>/dev/null || echo "0.0.0"
 
 tasks:
 
-  # ==========================================================================
-  # Internal: shared dependency — ensures wrangler is installed in WORKER_DIR
-  # All tasks that call `bun x wrangler` must depend on this.
-  # ==========================================================================
-
-  "_ensure:wrangler":
-    internal: true
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun install --silent
-    status:
-      - test -d {{.WORKER_DIR}}/node_modules/wrangler
-
-  # ==========================================================================
-  # Worker: Versioned Deploy Lifecycle (delegates to cf-deploy.ts)
-  # ==========================================================================
-
-  "worker:upload":
-    desc: "Upload new Worker version (does NOT deploy to production)"
+  # Single target (use TARGET=<name> to pick worker, default: first)
+  upload:
+    desc: Upload worker version
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts upload
+    cmd: bun scripts/cf-deploy.ts upload {{if .TARGET}}--target {{.TARGET}}{{end}}
 
-  "worker:promote":
-    desc: Deploy latest uploaded version to 100% traffic
+  promote:
+    desc: Promote latest version to production
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts promote
+    cmd: bun scripts/cf-deploy.ts promote {{if .TARGET}}--target {{.TARGET}}{{end}}
 
-  "worker:canary":
-    desc: Deploy with gradual traffic split (interactive)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler versions deploy
-
-  "worker:rollback":
+  rollback:
     desc: Roll back to previous version
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts rollback
+    cmd: bun scripts/cf-deploy.ts rollback {{if .TARGET}}--target {{.TARGET}}{{end}}
 
-  "worker:smoke":
-    desc: Smoke test a deployed URL (health + index + optional extra checks)
+  smoke:
+    desc: Smoke test deployed URL
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts smoke
+    cmd: bun scripts/cf-deploy.ts smoke {{if .TARGET}}--target {{.TARGET}}{{end}}
 
-  "worker:preview":
-    desc: "Upload PR preview version"
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    vars:
-      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
-    cmds:
-      - 'bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
-      - 'echo "Preview: https://pr-{{.PR_NUMBER}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
-
-  # ==========================================================================
-  # Worker: Simple Deploy (for projects not using versioned flow)
-  # ==========================================================================
-
-  "worker:deploy":
-    desc: Deploy worker to Cloudflare (simple, non-versioned)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler deploy
-
-  "worker:deploy:staging":
-    desc: Deploy to staging environment
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler deploy --env staging
-
-  # ==========================================================================
-  # Docs Worker: Versioned Deploy Lifecycle (delegates to cf-deploy.ts --target docs)
-  # ==========================================================================
-
-  "docs:upload":
-    desc: "Upload new docs Worker version (does NOT deploy to production)"
+  release:
+    desc: Stamp release alias
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts upload --target docs
+    cmd: bun scripts/cf-deploy.ts release {{if .TARGET}}--target {{.TARGET}}{{end}}
 
-  "docs:promote":
-    desc: Deploy latest docs version to 100% traffic
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts promote --target docs
-
-  "docs:rollback":
-    desc: Roll back to previous docs Worker version
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts rollback --target docs
-
-  "docs:smoke":
-    desc: Smoke test the docs Worker
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts smoke --target docs
-
-  "docs:preview":
-    desc: "Upload PR preview docs version"
-    deps: ["_ensure:wrangler"]
-    dir: '{{.DOCS_DIR}}'
-    vars:
-      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
-    cmds:
-      - 'bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
-      - 'echo "Docs Preview: https://pr-{{.PR_NUMBER}}-{{.DOCS_NAME}}.{{.DOCS_DOMAIN}}"'
-
-  # ==========================================================================
-  # All Workers: Top-level tasks (deploy everything)
-  # ==========================================================================
-
+  # All workers
   "upload:all":
-    desc: Upload all workers (truck + docs)
-    cmds:
-      - task: worker:upload
-      - task: docs:upload
+    desc: Upload all workers
+    dir: '{{.ROOT_DIR}}'
+    cmd: bun scripts/cf-deploy.ts foreach upload
 
   "promote:all":
-    desc: Promote all workers to production
-    cmds:
-      - task: worker:promote
-      - task: docs:promote
+    desc: Promote all workers
+    dir: '{{.ROOT_DIR}}'
+    cmd: bun scripts/cf-deploy.ts foreach promote
 
   "smoke:all":
     desc: Smoke test all workers
-    cmds:
-      - task: worker:smoke
-      - task: docs:smoke
+    dir: '{{.ROOT_DIR}}'
+    cmd: bun scripts/cf-deploy.ts foreach smoke
 
-  "rollback:all":
-    desc: Roll back all workers
-    cmds:
-      - task: worker:rollback
-      - task: docs:rollback
+  "release:all":
+    desc: Release all workers
+    dir: '{{.ROOT_DIR}}'
+    cmd: bun scripts/cf-deploy.ts foreach release
 
+  # Full lifecycle
   "deploy:all":
-    desc: "Full deploy lifecycle: upload → smoke → promote → release alias → versions → tag (all workers)"
+    desc: "upload → versions → smoke → promote → release → tag"
     cmds:
       - task: upload:all
+      - task: versions
       - task: smoke:all
       - task: promote:all
       - task: release:all
       - task: versions
       - task: deploy:tag
 
-  "release:all":
-    desc: "Stamp release aliases on promoted versions (both workers)"
-    cmds:
-      - task: worker:release
-      - task: docs:release
-
-  "worker:release":
-    desc: "Create version alias for current release"
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts release
-
-  "docs:release":
-    desc: "Create version alias for current docs release"
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts release --target docs
-
   "deploy:tag":
-    desc: "Create git tag v{{.APP_VERSION}} + GitHub release with release notes (idempotent)"
+    desc: Create git tag + GitHub release
     deps: [":gh:deps:install"]
     dir: '{{.ROOT_DIR}}'
     cmds:
@@ -243,241 +91,11 @@ tasks:
         if $GH release view "$VERSION" >/dev/null 2>&1; then
           echo "Release $VERSION already exists"
         else
-          BODY=$(bun scripts/cf-deploy.ts release-notes)
-          $GH release create "$VERSION" --title "$VERSION" --notes "$BODY"
+          $GH release create "$VERSION" --title "$VERSION" --generate-notes
           echo "Created GitHub release $VERSION"
         fi
 
-  # ==========================================================================
-  # Versions & Status
-  # ==========================================================================
-
   versions:
-    desc: Generate cf-versions.json from Worker deployments
+    desc: Generate cf-versions.json
     dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts versions
-
-  status:
-    desc: Show current deployment info
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts status
-
-  list:
-    desc: List all versions and previews
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts list
-
-  release-notes:
-    desc: Generate GitHub release markdown from manifest
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts release-notes
-
-  readme-urls:
-    desc: Generate/update README URL table from config
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts readme-urls
-
-  verify:
-    desc: Audit codebase for stale hardcoded values (should read from cf-deploy.json)
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts verify
-
-  # Keep individual wrangler commands for direct access
-  "worker:versions:list":
-    desc: List recent Worker versions (tags, dates)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler versions list
-
-  "worker:status":
-    desc: Show current Worker deployment (traffic split)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler deployments list
-
-  "worker:secret:list":
-    desc: List Worker secrets
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler secret list
-
-  "worker:tail":
-    desc: Tail live Worker logs
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler tail
-
-  # ==========================================================================
-  # D1 Database (account resource)
-  # ==========================================================================
-
-  "d1:list":
-    desc: List D1 databases
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 list
-
-  "d1:create":
-    desc: Create the project D1 database
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 create {{.DB_NAME}}
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:tables":
-    desc: List tables in local D1
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 execute {{.DB_NAME}} --local --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:tables:remote":
-    desc: List tables in remote D1
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 execute {{.DB_NAME}} --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:execute":
-    desc: Execute SQL against local D1
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 execute {{.DB_NAME}} --local --command "{{.SQL}}"
-    requires:
-      vars: [SQL]
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:execute:remote":
-    desc: Execute SQL against remote D1
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 execute {{.DB_NAME}} --remote --command "{{.SQL}}"
-    requires:
-      vars: [SQL]
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:migrations:create":
-    desc: Create a new D1 migration
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 migrations create {{.DB_NAME}} "{{.NAME}}"
-    requires:
-      vars: [NAME]
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:migrations:apply":
-    desc: Apply D1 migrations locally (idempotent)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 migrations apply {{.DB_NAME}} --local
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  "d1:migrations:apply:remote":
-    desc: Apply D1 migrations to remote (idempotent)
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler d1 migrations apply {{.DB_NAME}} --remote
-    preconditions:
-      - sh: '[ -n "{{.DB_NAME}}" ]'
-        msg: "DB_NAME is required"
-
-  # ==========================================================================
-  # R2 Storage (account resource)
-  # ==========================================================================
-
-  "r2:list":
-    desc: List R2 buckets
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler r2 bucket list
-
-  "r2:create":
-    desc: Create the project R2 bucket
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler r2 bucket create {{.BUCKET_NAME}}
-    preconditions:
-      - sh: '[ -n "{{.BUCKET_NAME}}" ]'
-        msg: "BUCKET_NAME is required"
-
-  "r2:objects":
-    desc: List objects in the project R2 bucket
-    deps: ["_ensure:wrangler"]
-    dir: '{{.WORKER_DIR}}'
-    cmds:
-      - bun x wrangler r2 object list {{.BUCKET_NAME}}
-    preconditions:
-      - sh: '[ -n "{{.BUCKET_NAME}}" ]'
-        msg: "BUCKET_NAME is required"
-
-  # ==========================================================================
-  # Account
-  # ==========================================================================
-
-  debug:
-    desc: Show all Cloudflare vars and env (verify config is correct)
-    silent: true
-    cmds:
-      - |
-        echo "=== Shared ==="
-        echo "  ROOT_DIR:       {{.ROOT_DIR}}"
-        echo "  GITHUB_REPO:    {{.GITHUB_REPO}}"
-        echo "  SCHEMA_FILE:    {{.SCHEMA_FILE}}"
-        echo "  APP_VERSION:    {{.APP_VERSION}}"
-        echo "  VERSION_SLUG:   {{.VERSION_SLUG}}"
-        echo ""
-        echo "=== Worker ==="
-        echo "  WORKER_DIR:            {{.WORKER_DIR}}"
-        echo "  WORKER_NAME:           {{.WORKER_NAME}}"
-        echo "  WORKER_DOMAIN:         {{.WORKER_DOMAIN}}"
-        echo "  WORKER_PRODUCTION_URL: {{.WORKER_PRODUCTION_URL}}"
-        echo "  WORKER_OUTPUT_FILE:    {{.WORKER_OUTPUT_FILE}}"
-        echo ""
-        echo "=== Docs ==="
-        echo "  DOCS_NAME:             {{.DOCS_NAME}}"
-        echo "  DOCS_PRODUCTION_URL:   {{.DOCS_PRODUCTION_URL}}"
-        echo ""
-        echo "=== Auth ==="
-        echo "  CLOUDFLARE_API_TOKEN:      ${CLOUDFLARE_API_TOKEN:+set (${#CLOUDFLARE_API_TOKEN} chars)}"
-        echo "  CLOUDFLARE_API_TOKEN_NAME: ${CLOUDFLARE_API_TOKEN_NAME:-<not set>}"
-
-  whoami:
-    desc: Show current Cloudflare auth info
-    dir: '{{.ROOT_DIR}}'
-    cmds:
-      - bun scripts/cf-deploy.ts whoami
+    cmd: bun scripts/cf-deploy.ts versions

@@ -75,12 +75,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: placeholder
         run: |
-          echo "worker_name=$(bun scripts/cf-deploy.ts config worker.name)" >> $GITHUB_OUTPUT
-          echo "worker_domain=$(bun scripts/cf-deploy.ts config worker.domain)" >> $GITHUB_OUTPUT
-          echo "worker_prod=$(bun scripts/cf-deploy.ts config worker.production)" >> $GITHUB_OUTPUT
-          echo "docs_name=$(bun scripts/cf-deploy.ts config docs.name)" >> $GITHUB_OUTPUT
-          echo "docs_domain=$(bun scripts/cf-deploy.ts config docs.domain)" >> $GITHUB_OUTPUT
-          echo "docs_prod=$(bun scripts/cf-deploy.ts config docs.production)" >> $GITHUB_OUTPUT
+          echo "worker_name=$(bun scripts/cf-deploy.ts config workers.worker.name)" >> $GITHUB_OUTPUT
+          echo "worker_domain=$(bun scripts/cf-deploy.ts config workers.worker.domain)" >> $GITHUB_OUTPUT
+          echo "worker_prod=$(bun scripts/cf-deploy.ts config workers.worker.production)" >> $GITHUB_OUTPUT
+          echo "docs_name=$(bun scripts/cf-deploy.ts config workers.docs.name)" >> $GITHUB_OUTPUT
+          echo "docs_domain=$(bun scripts/cf-deploy.ts config workers.docs.domain)" >> $GITHUB_OUTPUT
+          echo "docs_prod=$(bun scripts/cf-deploy.ts config workers.docs.production)" >> $GITHUB_OUTPUT
 
       # Post preview URLs as PR comment
       - if: github.event_name == 'pull_request'

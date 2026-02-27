@@ -131,3 +131,4 @@ test-results/
 
 # Private (local-only, never committed)
 .private/
+.cf-deploy-state/

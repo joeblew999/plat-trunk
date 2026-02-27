@@ -43,7 +43,6 @@ systems/           Deployable subsystems (each has its own Taskfile + SYSTEM_DIR
 tools/             Dev utilities (not deployed)
   envsubst/        Template substitution tool
   gh/              GitHub CLI wrapper
-crates/            Rust crates (truck-webgpu-gui WASM kernel)
 taskfiles/         Reusable Taskfile includes (Cloudflare deploy lifecycle)
 scripts/           Build scripts (cf-deploy.ts, mcp-bridge.ts, mcp-setup.sh)
 docs/adr/          Architecture Decision Records
@@ -89,9 +88,9 @@ Everything → cadCommand(type, params, opts) → ctrl.execute(type, json) [WASM
 ## Key Files
 
 ### Rust (kernel + schema)
-- `crates/truck-webgpu-gui/src/wasm_app.rs` — SceneController + `execute()` dispatch
-- `crates/truck-webgpu-gui/src/commands.rs` — Typed param structs + `build_schema()`
-- `crates/truck-webgpu-gui/src/bin/generate_schema.rs` — Native binary for schema generation
+- `systems/truck/crate/src/wasm_app.rs` — SceneController + `execute()` dispatch
+- `systems/truck/crate/src/commands.rs` — Typed param structs + `build_schema()`
+- `systems/truck/crate/src/bin/generate_schema.rs` — Native binary for schema generation
 
 ### JavaScript (browser)
 - `systems/truck/web/state.js` — `cadCommand()`, `reconcile()`, `executeWasm()`, `renderObjectList()`
