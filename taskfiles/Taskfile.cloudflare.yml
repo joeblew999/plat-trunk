@@ -38,6 +38,10 @@ vars:
     sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config output)"
   DOCS_NAME:
     sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.name 2>/dev/null || echo ""
+  DOCS_DOMAIN:
+    sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.domain 2>/dev/null || echo ""
+  DOCS_DIR:
+    sh: echo "{{.ROOT_DIR}}/$(cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.dir 2>/dev/null || echo "")"
   DOCS_PRODUCTION_URL:
     sh: cd {{.ROOT_DIR}} && bun scripts/cf-deploy.ts config docs.production 2>/dev/null || echo ""
   APP_VERSION:
@@ -150,6 +154,16 @@ tasks:
     dir: '{{.ROOT_DIR}}'
     cmds:
       - bun scripts/cf-deploy.ts smoke --target docs
+
+  "docs:preview":
+    desc: "Upload PR preview docs version"
+    deps: ["_ensure:wrangler"]
+    dir: '{{.DOCS_DIR}}'
+    vars:
+      PR_NUMBER: '{{.PR_NUMBER | default "preview"}}'
+    cmds:
+      - 'bun x wrangler versions upload --tag "pr-{{.PR_NUMBER}}" --message "PR #{{.PR_NUMBER}}" --preview-alias "pr-{{.PR_NUMBER}}"'
+      - 'echo "Docs Preview: https://pr-{{.PR_NUMBER}}-{{.DOCS_NAME}}.{{.DOCS_DOMAIN}}"'
 
   # ==========================================================================
   # All Workers: Top-level tasks (deploy everything)
