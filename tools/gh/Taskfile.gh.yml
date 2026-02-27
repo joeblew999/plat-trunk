@@ -130,14 +130,17 @@ tasks:
       - '{{.GH_BIN}} secret list'
 
   "secret:set:cloudflare":
-    desc: Set CLOUDFLARE_API_TOKEN secret (idempotent — skips if already set)
+    desc: Set CLOUDFLARE_API_TOKEN secret from env or .env.local (always updates)
     deps: ["deps:install"]
-    status:
-      - '{{.GH_BIN}} secret list 2>/dev/null | grep -q CLOUDFLARE_API_TOKEN'
     cmds:
       - |
-        if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-          echo "$CLOUDFLARE_API_TOKEN" | {{.GH_BIN}} secret set CLOUDFLARE_API_TOKEN
+        TOKEN="$CLOUDFLARE_API_TOKEN"
+        if [ -z "$TOKEN" ] && [ -f "{{.ROOT_DIR}}/.env.local" ]; then
+          TOKEN=$(grep "^CLOUDFLARE_API_TOKEN=" "{{.ROOT_DIR}}/.env.local" | cut -d= -f2)
+        fi
+        if [ -n "$TOKEN" ]; then
+          echo "$TOKEN" | {{.GH_BIN}} secret set CLOUDFLARE_API_TOKEN
+          echo "Set CLOUDFLARE_API_TOKEN (${#TOKEN} chars) from {{if .CLOUDFLARE_API_TOKEN}}env{{else}}.env.local{{end}}"
         else
           echo "Paste your Cloudflare API token (get one at https://dash.cloudflare.com/profile/api-tokens):"
           {{.GH_BIN}} secret set CLOUDFLARE_API_TOKEN
