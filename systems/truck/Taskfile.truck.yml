@@ -311,7 +311,7 @@ tasks:
       - task: gui:serve
 
   "gui:deploy":
-    desc: "Build + upload + smoke + git tag v{{.CAD_VERSION}} (does NOT promote — use cf:worker:promote when ready)"
+    desc: "Build + upload + smoke (truck only, does NOT tag — use cf:deploy:all for full release)"
     deps: ["gui:build", "deploy:setup", "version:check"]
     cmds:
       - task: :cf:worker:upload
@@ -319,11 +319,10 @@ tasks:
           APP_VERSION: '{{.CAD_VERSION}}'
           VERSION_SLUG: '{{.CAD_VERSION_SLUG}}'
       - task: :cf:versions
-      # Smoke test the preview URL before tagging — catches broken uploads
+      # Smoke test the preview URL — catches broken uploads
       - task: :cf:worker:smoke
-      - task: deploy:tag
       - 'echo "Uploaded v{{.CAD_VERSION}} → https://v{{.CAD_VERSION_SLUG}}-{{.WORKER_NAME}}.{{.WORKER_DOMAIN}}"'
-      - 'echo "To promote to production: task cf:worker:promote"'
+      - 'echo "For full release (both workers + tag): task cf:deploy:all"'
 
   # --- Tests & Docs ---
   #
@@ -580,13 +579,8 @@ tasks:
   # --- Deploy ---
   # Generic CF tasks are in cf: include (taskfiles/Taskfile.cloudflare.yml).
   # Truck-specific: tag (GitHub release), setup (gh secret), smoke:extra (schema + MCP).
-  # Flow: gui:deploy → version:check → cf:worker:upload → cf:worker:smoke → tag → cf:worker:promote
-
-  "deploy:tag":
-    internal: true
-    desc: "Create git tag + GitHub release (delegates to cf:deploy:tag)"
-    cmds:
-      - task: :cf:deploy:tag
+  # Flow: gui:deploy → version:check → cf:worker:upload → cf:worker:smoke
+  # Tagging + GitHub release moved to cf:deploy:tag (platform-level concern)
 
   "deploy:setup":
     internal: true
