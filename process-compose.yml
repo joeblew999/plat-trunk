@@ -41,7 +41,7 @@ processes:
       restart: on_failure
 
   watch-docs:
-    command: watchexec -w systems/docs/website/docs -w systems/docs/website/.vitepress/config.ts -e md,ts -- task vitepress:build
+    command: task vitepress:watch
     availability:
       restart: on_failure
 

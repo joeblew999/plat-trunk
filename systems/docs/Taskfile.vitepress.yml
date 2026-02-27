@@ -71,6 +71,11 @@ tasks:
       - echo "VitePress dev server at {{.LOCAL_DEV_URL}}"
       - cd {{.WEBSITE_DIR}} && bun run dev
 
+  watch:
+    desc: Watch docs and rebuild on changes
+    cmds:
+      - watchexec -w {{.WEBSITE_DIR}}/docs -w {{.WEBSITE_DIR}}/.vitepress/config.ts -e md,ts -- task vitepress:build
+
   build:
     desc: Build VitePress static site for production
     deps: ["deps:install"]
