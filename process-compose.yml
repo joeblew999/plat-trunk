@@ -29,7 +29,7 @@ processes:
       restart: on_failure
 
   # ── File Watchers ──────────────────────────────────────────────────────────
-  # Auto-rebuild WASM on Rust source changes
+  # Auto-rebuild on source changes
   watch-gui:
     command: task truck:watch:gui
     availability:
@@ -40,15 +40,13 @@ processes:
     availability:
       restart: on_failure
 
-  # ── Optional ───────────────────────────────────────────────────────────────
-  # Start from TUI when needed (disabled by default)
-
-  docs-hmr:
-    command: task vitepress:serve
-    disabled: true
-    description: "VitePress HMR on :5173 (doc authoring)"
+  watch-docs:
+    command: watchexec -w systems/docs/website/docs -w systems/docs/website/.vitepress/config.ts -e md,ts -- task vitepress:build
     availability:
       restart: on_failure
+
+  # ── Optional ───────────────────────────────────────────────────────────────
+  # Start from TUI when needed (disabled by default)
 
   shape-viewer:
     command: task truck:run:shape-viewer
