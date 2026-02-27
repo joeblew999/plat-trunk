@@ -491,8 +491,10 @@ function cmdReleaseNotes(rootDir: string, cfg: Config) {
   ];
 
   if (cfg.docs) {
+    const docsPreview = `https://v${slug}-${cfg.docs.name}.${cfg.docs.domain}`;
     lines.push(
-      `| **Docs** | [${new URL(cfg.docs.production).hostname}](${cfg.docs.production}) |`,
+      `| **Docs preview** | [v${slug}-${cfg.docs.name}](${docsPreview}) |`,
+      `| **Docs production** | [${new URL(cfg.docs.production).hostname}](${cfg.docs.production}) |`,
     );
   }
 
