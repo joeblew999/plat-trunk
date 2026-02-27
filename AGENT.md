@@ -229,7 +229,7 @@ curl -sf https://cad.ubuntusoftware.net/api/cad/schema   # full schema with vers
 
 **CI pipeline** (`.github/workflows/ci.yml`):
 - All branches: `task truck:ci` (build + test)
-- Push to main: `task cf:worker:upload` (tagged Worker version, manual promote) + `task vitepress:build && task cf:pages:upload` (VitePress → Cloudflare Pages)
+- Push to main: `task truck:deploy:full` (gui:deploy + vitepress:build + vitepress:worker:deploy)
 - PR opened: `task cf:worker:preview PR_NUMBER={N}` (per-PR preview alias + sticky PR comment)
 - PR previews are versions on the same Worker — no cleanup needed
 

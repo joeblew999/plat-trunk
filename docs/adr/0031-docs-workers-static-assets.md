@@ -5,7 +5,7 @@
 
 ## Status
 
-**Proposed** — can be implemented immediately, independent of ADR-0030 (Router Worker).
+**Implemented** — deployed and live. Docs served via Workers Static Assets + service binding from truck-cad.
 
 ## Problem
 

@@ -127,7 +127,7 @@ task truck:test:all           # All tests + screenshots + examples
 # Docs
 task vitepress:serve               # VitePress dev server (localhost:5173)
 task vitepress:build               # Build static site
-task cf:pages:deploy          # Deploy to Cloudflare Pages
+task vitepress:worker:deploy        # Deploy docs to Cloudflare Workers
 task vitepress:screenshots         # Generate screenshots + videos from E2E tests
 task truck:ci                 # Full CI: cargo check + test + WASM build
 ```
@@ -140,7 +140,7 @@ Env flags: `SLOW=1` `SCREENSHOTS=1` `EXAMPLES=1` `BASE_URL=https://...`
 task truck:gui:build          # WASM → web/gui/pkg-browser-renderer/
 task truck:gui:serve          # Local dev (localhost:8788)
 task truck:gui:deploy         # Deploy to Cloudflare Workers
-task truck:deploy:full        # gui:deploy + vitepress:build + cf:pages:deploy
+task truck:deploy:full        # gui:deploy + vitepress:build + vitepress:worker:deploy
 ```
 
 ## Requirements
