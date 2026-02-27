@@ -180,11 +180,13 @@ tasks:
       - task: docs:rollback
 
   "deploy:all":
-    desc: "Full deploy lifecycle: upload → smoke → promote (all workers)"
+    desc: "Full deploy lifecycle: upload → smoke → promote → update README (all workers)"
     cmds:
       - task: upload:all
       - task: smoke:all
       - task: promote:all
+      - task: versions
+      - task: readme-urls
 
   # ==========================================================================
   # Versions & Status
