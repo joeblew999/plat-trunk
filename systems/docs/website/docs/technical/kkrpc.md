@@ -1,6 +1,10 @@
-# kkrpc — WASM Boundary Layer
+# kkrpc — WASM Boundary Layer <Badge type="warning" text="Planned" />
 
 Typed bidirectional RPC for JS/TS ↔ WASM communication.
+
+::: info Status
+Not yet implemented. The current WASM boundary uses direct wasm-bindgen calls. kkrpc is planned as the typed RPC layer for future multi-transport support.
+:::
 
 ## Role
 
