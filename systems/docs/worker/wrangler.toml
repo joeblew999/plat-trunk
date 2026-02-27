@@ -4,7 +4,7 @@ name = "docs-worker"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = false
+workers_dev = true
 
 # Serve VitePress build output as static assets
 [assets]

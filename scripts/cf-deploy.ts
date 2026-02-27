@@ -6,18 +6,18 @@
  * Manages: truck-cad Worker (versioned) + docs-worker (static assets).
  *
  * Usage:
- *   bun scripts/cf-deploy.ts versions          # Generate cf-versions.json
- *   bun scripts/cf-deploy.ts upload             # Upload new Worker version
- *   bun scripts/cf-deploy.ts promote            # Promote latest to 100% traffic
- *   bun scripts/cf-deploy.ts rollback           # Roll back to previous version
- *   bun scripts/cf-deploy.ts smoke [URL]        # Smoke test a deployed URL
- *   bun scripts/cf-deploy.ts release-notes      # Markdown for GitHub releases
- *   bun scripts/cf-deploy.ts readme-urls        # URL table for README
- *   bun scripts/cf-deploy.ts status [--env]     # Current deployment info
- *   bun scripts/cf-deploy.ts list               # All versions + previews
- *   bun scripts/cf-deploy.ts config [path]      # Read config value
- *   bun scripts/cf-deploy.ts verify             # Audit for stale hardcodes
- *   bun scripts/cf-deploy.ts whoami             # Cloudflare auth info
+ *   bun scripts/cf-deploy.ts versions                  # Generate cf-versions.json (both workers)
+ *   bun scripts/cf-deploy.ts upload [--target docs]    # Upload new Worker version
+ *   bun scripts/cf-deploy.ts promote [--target docs]   # Promote latest to 100% traffic
+ *   bun scripts/cf-deploy.ts rollback [--target docs]  # Roll back to previous version
+ *   bun scripts/cf-deploy.ts smoke [URL] [--target docs] # Smoke test a deployed URL
+ *   bun scripts/cf-deploy.ts release-notes              # Markdown for GitHub releases
+ *   bun scripts/cf-deploy.ts readme-urls                # URL table for README
+ *   bun scripts/cf-deploy.ts status [--env]             # Current deployment info
+ *   bun scripts/cf-deploy.ts list                       # All versions + previews
+ *   bun scripts/cf-deploy.ts config [path]              # Read config value
+ *   bun scripts/cf-deploy.ts verify                     # Audit for stale hardcodes
+ *   bun scripts/cf-deploy.ts whoami [--target docs]     # Cloudflare auth info
  *
  * See ADR-0022 (v2) for design rationale.
  */
@@ -81,6 +81,45 @@ function getRootDir(): string {
 }
 
 // ============================================================================
+// Target Resolution — maps --target flag to config section
+// ============================================================================
+
+type TargetName = "worker" | "docs";
+type TargetConfig = { name: string; domain: string; dir: string; production: string };
+
+function resolveTarget(cfg: Config, args: string[]): { targetName: TargetName; target: TargetConfig } {
+  const targetIdx = args.indexOf("--target");
+  let targetName: TargetName = "worker";
+
+  if (targetIdx !== -1 && args[targetIdx + 1]) {
+    const raw = args[targetIdx + 1];
+    if (raw === "worker" || raw === "truck" || raw === "truck-cad") {
+      targetName = "worker";
+    } else if (raw === "docs" || raw === "docs-worker") {
+      targetName = "docs";
+    } else {
+      console.error(`ERROR: Unknown target '${raw}'. Valid: worker, docs`);
+      process.exit(1);
+    }
+  }
+
+  const target = targetName === "worker" ? cfg.worker : cfg.docs;
+  if (!target) {
+    console.error(`ERROR: Target '${targetName}' not configured in cf-deploy.json`);
+    process.exit(1);
+  }
+
+  return { targetName, target: target as TargetConfig };
+}
+
+/** Strip --target and its value from args so they don't interfere with positional args */
+function stripTargetFlag(args: string[]): string[] {
+  const idx = args.indexOf("--target");
+  if (idx === -1) return args;
+  return [...args.slice(0, idx), ...args.slice(idx + 2)];
+}
+
+// ============================================================================
 // Version + Git Metadata
 // ============================================================================
 
@@ -123,13 +162,14 @@ interface VersionEntry {
   tag: string;
   date: string;
   worker?: { id: string; url: string; immutableUrl: string };
+  docs?: { id: string; url: string; immutableUrl: string };
   git?: GitInfo;
   commandCount?: number;
 }
 
 interface PreviewEntry {
   label: string;
-  platform: "worker";
+  platform: "worker" | "docs";
   tag: string;
   date: string;
   id: string;
@@ -146,10 +186,10 @@ interface Manifest {
 }
 
 // ============================================================================
-// Worker: Parse wrangler versions list
+// Parse wrangler versions list (works for any worker target)
 // ============================================================================
 
-function parseWorkerVersions(raw: string, cfg: Config) {
+function parseVersionsList(raw: string, target: TargetConfig, platform: "worker" | "docs") {
   const releases: { version: string; tag: string; date: string; id: string; url: string; immutableUrl: string }[] = [];
   const previews: PreviewEntry[] = [];
 
@@ -164,16 +204,16 @@ function parseWorkerVersions(raw: string, cfg: Config) {
     else if (tagMatch && cur.id) {
       cur.tag = tagMatch[1].trim();
       if (cur.tag !== "-" && cur.created) {
-        const workerUrl = (prefix: string) => `https://${prefix}-${cfg.worker.name}.${cfg.worker.domain}`;
+        const makeUrl = (prefix: string) => `https://${prefix}-${target.name}.${target.domain}`;
 
         if (cur.tag.startsWith("pr-")) {
           previews.push({
             label: `PR #${cur.tag.replace("pr-", "")}`,
-            platform: "worker",
+            platform,
             tag: cur.tag,
             date: cur.created,
             id: cur.id,
-            url: workerUrl(cur.tag),
+            url: makeUrl(cur.tag),
           });
         } else if (/^v\d/.test(cur.tag)) {
           const ver = cur.tag.replace("v", "");
@@ -183,8 +223,8 @@ function parseWorkerVersions(raw: string, cfg: Config) {
             tag: cur.tag,
             date: cur.created,
             id: cur.id,
-            url: workerUrl(`v${slug}`),
-            immutableUrl: workerUrl(cur.id),
+            url: makeUrl(`v${slug}`),
+            immutableUrl: makeUrl(cur.id),
           });
         }
       }
@@ -203,24 +243,43 @@ async function cmdVersions(rootDir: string, cfg: Config) {
   const gitInfo = getGitInfo(rootDir, cfg.github);
   const { version: appVersion, commandCount } = readAppVersion(rootDir, cfg.version.source);
 
-  // Query Worker versions
+  // Query truck Worker versions
   let workerData = { releases: [] as any[], previews: [] as PreviewEntry[] };
-
   try {
     const workerDir = resolve(rootDir, cfg.worker.dir);
     const raw = execSync("bun x wrangler versions list 2>&1", { cwd: workerDir, encoding: "utf8" });
-    workerData = parseWorkerVersions(raw, cfg);
+    workerData = parseVersionsList(raw, cfg.worker, "worker");
     console.log(`  worker: ${workerData.releases.length} versions, ${workerData.previews.length} previews`);
   } catch (e) {
     console.log("  worker: skipped (wrangler failed)");
   }
 
-  // Build version map
+  // Query docs Worker versions
+  let docsData = { releases: [] as any[], previews: [] as PreviewEntry[] };
+  if (cfg.docs) {
+    try {
+      const docsDir = resolve(rootDir, cfg.docs.dir);
+      const raw = execSync("bun x wrangler versions list 2>&1", { cwd: docsDir, encoding: "utf8" });
+      docsData = parseVersionsList(raw, cfg.docs, "docs");
+      console.log(`  docs:   ${docsData.releases.length} versions, ${docsData.previews.length} previews`);
+    } catch (e) {
+      console.log("  docs:   skipped (wrangler failed)");
+    }
+  }
+
+  // Build version map — merge worker + docs
   const versionMap = new Map<string, VersionEntry>();
 
   for (const r of workerData.releases) {
     const existing: VersionEntry = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
     existing.worker = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    if (!existing.date || r.date > existing.date) existing.date = r.date;
+    versionMap.set(r.version, existing);
+  }
+
+  for (const r of docsData.releases) {
+    const existing: VersionEntry = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
+    existing.docs = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
     if (!existing.date || r.date > existing.date) existing.date = r.date;
     versionMap.set(r.version, existing);
   }
@@ -252,6 +311,9 @@ async function cmdVersions(rootDir: string, cfg: Config) {
     b.version.localeCompare(a.version, undefined, { numeric: true })
   );
 
+  // Merge previews from both workers
+  const allPreviews = [...workerData.previews, ...docsData.previews];
+
   // Build manifest
   const manifest: Manifest = {
     production: {
@@ -262,37 +324,37 @@ async function cmdVersions(rootDir: string, cfg: Config) {
     endpoints: cfg.endpoints,
     generated: new Date().toISOString(),
     versions,
-    previews: workerData.previews,
+    previews: allPreviews,
   };
 
   const outPath = resolve(rootDir, cfg.output);
   writeFileSync(outPath, JSON.stringify(manifest, null, 2) + "\n");
-  console.log(`\nWrote ${outPath}: ${versions.length} versions, ${workerData.previews.length} previews (${gitInfo.commitSha})`);
+  console.log(`\nWrote ${outPath}: ${versions.length} versions, ${allPreviews.length} previews (${gitInfo.commitSha})`);
 }
 
 // ============================================================================
 // Subcommand: upload — Upload new Worker version
 // ============================================================================
 
-function cmdUpload(rootDir: string, cfg: Config) {
+function cmdUpload(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName) {
   const { version } = readAppVersion(rootDir, cfg.version.source);
   const slug = version.replaceAll(".", "-");
-  const workerDir = resolve(rootDir, cfg.worker.dir);
+  const workerDir = resolve(rootDir, target.dir);
 
-  console.log(`Uploading Worker version v${version}...`);
+  console.log(`Uploading ${targetName} version v${version}...`);
   execSync(
     `bun install && bunx wrangler versions upload --tag "v${version}" --message "v${version}" --preview-alias "v${slug}"`,
     { cwd: workerDir, stdio: "inherit" }
   );
-  console.log(`\nUploaded v${version}`);
-  console.log(`  Preview: https://v${slug}-${cfg.worker.name}.${cfg.worker.domain}`);
+  console.log(`\nUploaded v${version} (${targetName})`);
+  console.log(`  Preview: https://v${slug}-${target.name}.${target.domain}`);
 }
 
 // ============================================================================
 // Subcommand: promote — Promote latest to 100% traffic
 // ============================================================================
 
-function cmdPromote(rootDir: string, cfg: Config) {
+function cmdPromote(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName) {
   const manifest = readManifest(rootDir, cfg);
   const latest = manifest.versions[0];
   if (!latest) {
@@ -300,27 +362,29 @@ function cmdPromote(rootDir: string, cfg: Config) {
     process.exit(1);
   }
 
-  const versionId = latest.worker?.id;
+  const platformData = targetName === "worker" ? latest.worker : latest.docs;
+  const versionId = platformData?.id;
   if (!versionId) {
-    console.error("ERROR: No Worker version ID — upload first");
+    console.error(`ERROR: No ${targetName} version ID — upload first`);
     process.exit(1);
   }
 
-  console.log(`Promoting ${versionId} (v${latest.version}) to 100% traffic...`);
-  const workerDir = resolve(rootDir, cfg.worker.dir);
+  console.log(`Promoting ${versionId} (v${latest.version}) to 100% traffic (${targetName})...`);
+  const workerDir = resolve(rootDir, target.dir);
   execSync(`bunx wrangler versions deploy "${versionId}@100%" --yes`, {
     cwd: workerDir,
     stdio: "inherit",
   });
-  console.log(`\nPromoted v${latest.version} to production`);
+  console.log(`\nPromoted v${latest.version} to production (${targetName})`);
 }
 
 // ============================================================================
 // Subcommand: rollback
 // ============================================================================
 
-function cmdRollback(rootDir: string, cfg: Config) {
-  const workerDir = resolve(rootDir, cfg.worker.dir);
+function cmdRollback(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName) {
+  const workerDir = resolve(rootDir, target.dir);
+  console.log(`Rolling back ${targetName}...`);
   execSync("bunx wrangler rollback", { cwd: workerDir, stdio: "inherit" });
 }
 
@@ -328,12 +392,40 @@ function cmdRollback(rootDir: string, cfg: Config) {
 // Subcommand: smoke — Smoke test a deployed URL
 // ============================================================================
 
-function cmdSmoke(rootDir: string, cfg: Config, targetUrl?: string) {
+function cmdSmoke(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName, targetUrl?: string) {
   const manifest = readManifest(rootDir, cfg);
   const latest = manifest.versions[0];
-  const url = targetUrl || latest?.worker?.immutableUrl || latest?.worker?.url || cfg.worker.production;
 
-  console.log(`Smoke testing: ${url}\n`);
+  if (targetName === "docs") {
+    // Docs worker: static site smoke test
+    const platformData = latest?.docs;
+    const url = targetUrl || platformData?.immutableUrl || platformData?.url || target.production;
+    console.log(`Smoke testing docs: ${url}\n`);
+
+    // 1. Index page
+    try {
+      const status = execSync(`curl -sf -o /dev/null -w "%{http_code}" "${url}/"`, { encoding: "utf8" }).trim();
+      console.log(`  index:   OK (HTTP ${status})`);
+    } catch {
+      console.error("  FAIL:    Index page unreachable");
+      process.exit(1);
+    }
+
+    // 2. llms.txt (docs-specific)
+    try {
+      const status = execSync(`curl -sf -o /dev/null -w "%{http_code}" "${url}/llms.txt"`, { encoding: "utf8" }).trim();
+      console.log(`  llms:    OK (HTTP ${status})`);
+    } catch {
+      console.log(`  llms:    SKIP (not found)`);
+    }
+
+    console.log(`\nPASS: Docs smoke checks passed`);
+    return;
+  }
+
+  // Worker (truck): full smoke test
+  const url = targetUrl || latest?.worker?.immutableUrl || latest?.worker?.url || target.production;
+  console.log(`Smoke testing worker: ${url}\n`);
 
   // 1. Health check
   try {
@@ -558,9 +650,11 @@ function cmdList(rootDir: string, cfg: Config) {
   console.log("=== Versions ===\n");
   for (const v of manifest.versions) {
     const w = v.worker?.url ? "W" : " ";
+    const d = v.docs?.url ? "D" : " ";
     const date = v.date ? new Date(v.date).toLocaleDateString() : "";
-    console.log(`  v${v.version}  [${w}]  ${date}`);
+    console.log(`  v${v.version}  [${w}${d}]  ${date}`);
     if (v.worker?.url) console.log(`    Worker: ${v.worker.url}`);
+    if (v.docs?.url) console.log(`    Docs:   ${v.docs.url}`);
   }
 
   if (manifest.previews.length > 0) {
@@ -704,8 +798,8 @@ function cmdVerify(rootDir: string, cfg: Config) {
 // Subcommand: whoami
 // ============================================================================
 
-function cmdWhoami(rootDir: string, cfg: Config) {
-  const workerDir = resolve(rootDir, cfg.worker.dir);
+function cmdWhoami(rootDir: string, cfg: Config, target: TargetConfig) {
+  const workerDir = resolve(rootDir, target.dir);
   execSync("bunx wrangler whoami", { cwd: workerDir, stdio: "inherit" });
 }
 
@@ -728,7 +822,7 @@ function printHelp() {
 Usage: bun scripts/cf-deploy.ts <command> [options]
 
 Commands:
-  versions          Generate cf-versions.json from Worker deployments
+  versions          Generate cf-versions.json (queries all workers)
   upload            Upload new Worker version (does not promote)
   promote           Promote latest uploaded version to 100% traffic
   rollback          Roll back to previous Worker version
@@ -740,6 +834,11 @@ Commands:
   config [path]     Read config value (e.g. worker.name, docs.production)
   verify            Audit codebase for stale hardcoded values
   whoami            Show Cloudflare auth info
+
+Options:
+  --target <name>   Target worker: worker (default), docs
+                    Aliases: truck, truck-cad → worker; docs-worker → docs
+                    Applies to: upload, promote, rollback, smoke, whoami
 
 Config: reads cf-deploy.json from repo root.
 See ADR-0022 (v2) for design rationale.`);
@@ -760,21 +859,25 @@ if (!command || command === "--help" || command === "-h") {
 const rootDir = getRootDir();
 const cfg = loadConfig(rootDir);
 
+// Resolve --target for commands that need it (default: worker)
+const { targetName, target } = resolveTarget(cfg, args);
+const cleanArgs = stripTargetFlag(args);
+
 switch (command) {
   case "versions":
     await cmdVersions(rootDir, cfg);
     break;
   case "upload":
-    cmdUpload(rootDir, cfg);
+    cmdUpload(rootDir, cfg, target, targetName);
     break;
   case "promote":
-    cmdPromote(rootDir, cfg);
+    cmdPromote(rootDir, cfg, target, targetName);
     break;
   case "rollback":
-    cmdRollback(rootDir, cfg);
+    cmdRollback(rootDir, cfg, target, targetName);
     break;
   case "smoke":
-    cmdSmoke(rootDir, cfg, args[1]);
+    cmdSmoke(rootDir, cfg, target, targetName, cleanArgs[1]);
     break;
   case "release-notes":
     cmdReleaseNotes(rootDir, cfg);
@@ -789,13 +892,13 @@ switch (command) {
     cmdList(rootDir, cfg);
     break;
   case "config":
-    cmdConfig(cfg, args[1]);
+    cmdConfig(cfg, cleanArgs[1]);
     break;
   case "verify":
     cmdVerify(rootDir, cfg);
     break;
   case "whoami":
-    cmdWhoami(rootDir, cfg);
+    cmdWhoami(rootDir, cfg, target);
     break;
   default:
     console.error(`Unknown command: ${command}`);

@@ -124,6 +124,62 @@ tasks:
       - bun x wrangler deploy --env staging
 
   # ==========================================================================
+  # Docs Worker: Versioned Deploy Lifecycle (delegates to cf-deploy.ts --target docs)
+  # ==========================================================================
+
+  "docs:upload":
+    desc: "Upload new docs Worker version (does NOT deploy to production)"
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts upload --target docs
+
+  "docs:promote":
+    desc: Deploy latest docs version to 100% traffic
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts promote --target docs
+
+  "docs:rollback":
+    desc: Roll back to previous docs Worker version
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts rollback --target docs
+
+  "docs:smoke":
+    desc: Smoke test the docs Worker
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts smoke --target docs
+
+  # ==========================================================================
+  # All Workers: Top-level tasks (deploy everything)
+  # ==========================================================================
+
+  "upload:all":
+    desc: Upload all workers (truck + docs)
+    cmds:
+      - task: worker:upload
+      - task: docs:upload
+
+  "promote:all":
+    desc: Promote all workers to production
+    cmds:
+      - task: worker:promote
+      - task: docs:promote
+
+  "smoke:all":
+    desc: Smoke test all workers
+    cmds:
+      - task: worker:smoke
+      - task: docs:smoke
+
+  "rollback:all":
+    desc: Roll back all workers
+    cmds:
+      - task: worker:rollback
+      - task: docs:rollback
+
+  # ==========================================================================
   # Versions & Status
   # ==========================================================================
 

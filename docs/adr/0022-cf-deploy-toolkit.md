@@ -5,7 +5,7 @@
 
 ## Status
 
-**Proposed** (v2 — from-scratch redesign, supersedes original ADR-0022 and absorbs ADR-0028)
+**Implemented** (v2 — deployment layer complete; application layer deferred)
 
 ## Problem
 

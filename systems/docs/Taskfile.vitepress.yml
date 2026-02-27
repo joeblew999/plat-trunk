@@ -155,12 +155,19 @@ tasks:
       - bun x wrangler dev --config {{.DOCS_WORKER_DIR}}/wrangler.toml
 
   "worker:deploy":
-    desc: Deploy docs Worker to Cloudflare
+    desc: Deploy docs Worker to Cloudflare (simple, non-versioned)
     deps: ["worker:deps", "build"]
     dir: '{{.ROOT_DIR}}'
     cmds:
       - bun x wrangler deploy --config {{.DOCS_WORKER_DIR}}/wrangler.toml
       - echo "Deployed → {{.DOCS_PROD_URL}}"
+
+  "worker:upload":
+    desc: Upload docs Worker version (versioned, does not promote)
+    deps: ["worker:deps", "build"]
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts upload --target docs
 
   "worker:status":
     desc: Show docs Worker deployment info
