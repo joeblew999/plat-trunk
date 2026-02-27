@@ -194,13 +194,32 @@ tasks:
       - task: docs:rollback
 
   "deploy:all":
-    desc: "Full deploy lifecycle: upload → smoke → promote → versions → tag (all workers)"
+    desc: "Full deploy lifecycle: upload → smoke → promote → release alias → versions → tag (all workers)"
     cmds:
       - task: upload:all
       - task: smoke:all
       - task: promote:all
+      - task: release:all
       - task: versions
       - task: deploy:tag
+
+  "release:all":
+    desc: "Stamp release aliases on promoted versions (both workers)"
+    cmds:
+      - task: worker:release
+      - task: docs:release
+
+  "worker:release":
+    desc: "Create version alias for current release"
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts release
+
+  "docs:release":
+    desc: "Create version alias for current docs release"
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - bun scripts/cf-deploy.ts release --target docs
 
   "deploy:tag":
     desc: "Create git tag v{{.APP_VERSION}} + GitHub release with release notes (idempotent)"

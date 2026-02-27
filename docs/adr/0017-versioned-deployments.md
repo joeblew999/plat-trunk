@@ -9,7 +9,7 @@
 
 ## Status
 
-**Implemented** (v0.4.0 deployed and verified 2026-02-22).
+**Superseded** — see AGENT.md deploy section for current model. Key change: aliases are only created at release time, not on every upload. Dev uploads get immutable UUID URLs only.
 
 ## Problem
 

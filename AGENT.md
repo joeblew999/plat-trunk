@@ -167,71 +167,58 @@ task truck:version:bump -- 0.7.0  # Bump version in Rust + schema + commit + git
 Version source chain: `commands.rs` → `task truck:gui:schema` → `cad-schema.json` → everything.
 After bumping, run `task truck:gui:deploy` to deploy the new version.
 
-### Deploy (versioned — Cloudflare Workers Gradual Deployments)
+### Deploy (versioned — Cloudflare Workers)
 
-**IMPORTANT**: Deploy does NOT auto-promote. Upload first, verify, then promote.
+Every upload gets an **immutable UUID URL** automatically (`preview_urls = true` in wrangler.toml).
+Named aliases are only created at two moments: **PR previews** and **releases**.
 
-Every deploy is a **tagged version** using `cad-schema.json` version as the release tag.
-Each version gets its own preview URL. PR branches get per-PR preview URLs.
+| Action | Command | URL you get |
+|--------|---------|-------------|
+| Dev upload | `task cf:worker:upload` | `{uuid}-truck-cad.gedw99.workers.dev` (immutable) |
+| PR preview | `task cf:worker:preview PR_NUMBER=42` | `pr-42-truck-cad.gedw99.workers.dev` (alias) |
+| Release | `task cf:deploy:all` | `v0-7-0-truck-cad.gedw99.workers.dev` (alias) + UUID |
+| Production | `task cf:worker:promote` | `cad.ubuntusoftware.net` |
 
 **Standard workflow (upload → verify → promote):**
 ```sh
-# Step 1: Build + upload (creates preview URL, no traffic change)
-task truck:gui:deploy
-# Output tells you the preview URL, e.g.: https://v0-6-0-truck-cad.gedw99.workers.dev
+task truck:gui:deploy          # Build + upload → immutable UUID preview URL
+# Verify: curl -sf https://{uuid}-truck-cad.gedw99.workers.dev/api/health
+task cf:worker:promote         # Promote to production
+task cf:worker:rollback        # Instant rollback if needed
+```
 
-# Step 2: Verify the preview works
-curl -sf https://v0-6-0-truck-cad.gedw99.workers.dev/api/health
-# Should return {"version":"0.6.0"}
-
-# Step 3: Only when verified, promote to production
-task cf:worker:promote
-
-# Something wrong? Instant rollback
-task cf:worker:rollback
+**Full release (upload → smoke → promote → alias → git tag):**
+```sh
+task cf:deploy:all             # Does everything: upload, smoke, promote, release alias, versions, git tag
 ```
 
 **Version bumping** (before deploy):
 ```sh
-task truck:version:bump -- 0.6.0   # Bumps Rust + schema + commit + git tag
+task truck:version:bump -- 0.8.0   # Bumps Rust + schema + commit + git tag
 task truck:gui:deploy               # Then deploy the new version
 ```
 
 **All deploy commands:**
 ```sh
-# Production (versioned, tagged with schema version from cad-schema.json)
-task truck:gui:deploy          # Build + upload + tag (does NOT promote)
-task cf:worker:promote          # Deploy latest upload to 100% traffic
-task cf:worker:rollback         # Roll back to previous version (instant)
-task cf:worker:list             # Show all versions + PR previews with URLs
-task cf:worker:status           # Show current deployment and traffic split
-task cf:worker:upload           # Upload version only (no traffic change)
-task truck:deploy:tag           # Create git tag + GitHub release (idempotent)
-task cf:worker:canary           # Deploy with gradual traffic split (interactive)
-task cf:worker:versions:list    # List recent versions (raw wrangler output)
-task truck:smoke               # Full smoke test (generic + truck schema/MCP checks)
+task truck:gui:deploy          # Build + upload (does NOT promote)
+task cf:worker:upload          # Upload only (no build)
+task cf:worker:promote         # Promote latest upload to 100% traffic
+task cf:worker:rollback        # Roll back to previous version (instant)
+task cf:deploy:all             # Full release: upload → smoke → promote → alias → git tag
+task cf:deploy:tag             # Git tag + GitHub release only (idempotent)
+task cf:list                   # All versions + PR previews with URLs
+task cf:status                 # Current deployment info
+task cf:worker:canary          # Gradual traffic split (interactive)
+task truck:smoke               # Full smoke test (health + schema + MCP)
 
 # PR preview (per-PR alias on main Worker — no separate Worker needed)
-task cf:worker:preview PR_NUMBER=42  # Upload preview → pr-42-truck-cad.gedw99.workers.dev
-
-# CI secrets (idempotent — skips if already set)
-task gh:secret:set:cloudflare  # Set CLOUDFLARE_API_TOKEN in GitHub repo secrets
-task gh:secret:list            # Verify secrets
-```
-
-**Version validation:**
-```sh
-task truck:version:current                               # local: v0.6.0
-curl -sf https://cad.ubuntusoftware.net/api/health       # {"version":"0.6.0"}
-curl -sf https://cad.ubuntusoftware.net/api/cad/schema   # full schema with version
-# GUI: version dropdown in header shows all versions + PR previews
+task cf:worker:preview PR_NUMBER=42  # → pr-42-truck-cad.gedw99.workers.dev
 ```
 
 **CI pipeline** (`.github/workflows/ci.yml`):
 - All branches: `task truck:ci` (build + test)
 - Push to main: `task truck:deploy:full` (gui:deploy + vitepress:build + vitepress:worker:deploy)
 - PR opened: `task cf:worker:preview PR_NUMBER={N}` (per-PR preview alias + sticky PR comment)
-- PR previews are versions on the same Worker — no cleanup needed
 
 ## MCP Architecture
 

@@ -193,20 +193,23 @@ function parseVersionsList(raw: string, target: TargetConfig, platform: "worker"
   const releases: { version: string; tag: string; date: string; id: string; url: string; immutableUrl: string }[] = [];
   const previews: PreviewEntry[] = [];
 
-  let cur: { id?: string; created?: string; tag?: string } = {};
+  const makeUrl = (prefix: string) => `https://${prefix}-${target.name}.${target.domain}`;
+
+  let cur: { id?: string; created?: string; tag?: string; message?: string } = {};
   for (const line of raw.split("\n")) {
     const idMatch = line.match(/^Version ID:\s+(.+)/);
     const createdMatch = line.match(/^Created:\s+(.+)/);
     const tagMatch = line.match(/^Tag:\s+(.+)/);
+    const messageMatch = line.match(/^Message:\s+(.+)/);
 
     if (idMatch) cur = { id: idMatch[1].trim() };
     else if (createdMatch && cur.id) cur.created = createdMatch[1].trim();
+    else if (messageMatch && cur.id) cur.message = messageMatch[1].trim();
     else if (tagMatch && cur.id) {
       cur.tag = tagMatch[1].trim();
-      if (cur.tag !== "-" && cur.created) {
-        const makeUrl = (prefix: string) => `https://${prefix}-${target.name}.${target.domain}`;
-
-        if (cur.tag.startsWith("pr-")) {
+      if (cur.created) {
+        if (cur.tag !== "-" && cur.tag.startsWith("pr-")) {
+          // PR preview — has alias
           previews.push({
             label: `PR #${cur.tag.replace("pr-", "")}`,
             platform,
@@ -215,7 +218,8 @@ function parseVersionsList(raw: string, target: TargetConfig, platform: "worker"
             id: cur.id,
             url: makeUrl(cur.tag),
           });
-        } else if (/^v\d/.test(cur.tag)) {
+        } else if (cur.tag !== "-" && /^v\d/.test(cur.tag)) {
+          // Tagged release — has alias + immutable
           const ver = cur.tag.replace("v", "");
           const slug = ver.replaceAll(".", "-");
           releases.push({
@@ -224,8 +228,22 @@ function parseVersionsList(raw: string, target: TargetConfig, platform: "worker"
             date: cur.created,
             id: cur.id,
             url: makeUrl(`v${slug}`),
-            immutableUrl: makeUrl(cur.id),
+            immutableUrl: makeUrl(cur.id.split("-")[0]),
           });
+        } else {
+          // Untagged dev upload — immutable URL only
+          // Extract version from message (e.g. "v0.7.0" → "0.7.0")
+          const msgVer = cur.message?.match(/^v?(\d+\.\d+\.\d+.*)$/)?.[1];
+          if (msgVer) {
+            releases.push({
+              version: msgVer,
+              tag: "",
+              date: cur.created,
+              id: cur.id,
+              url: "",
+              immutableUrl: makeUrl(cur.id.split("-")[0]),
+            });
+          }
         }
       }
       cur = {};
@@ -272,30 +290,30 @@ async function cmdVersions(rootDir: string, cfg: Config) {
 
   for (const r of workerData.releases) {
     const existing: VersionEntry = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
-    existing.worker = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    // Prefer tagged (released) entries over untagged dev uploads
+    if (!existing.worker || (!existing.worker.url && r.url) || !existing.worker.id) {
+      existing.worker = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    }
+    if (r.tag && !existing.tag) existing.tag = r.tag;
     if (!existing.date || r.date > existing.date) existing.date = r.date;
     versionMap.set(r.version, existing);
   }
 
   for (const r of docsData.releases) {
     const existing: VersionEntry = versionMap.get(r.version) || { version: r.version, tag: r.tag, date: r.date };
-    existing.docs = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    if (!existing.docs || (!existing.docs.url && r.url) || !existing.docs.id) {
+      existing.docs = { id: r.id, url: r.url, immutableUrl: r.immutableUrl };
+    }
     if (!existing.date || r.date > existing.date) existing.date = r.date;
     versionMap.set(r.version, existing);
   }
 
   // Ensure current version is present
   if (!versionMap.has(appVersion)) {
-    const slug = appVersion.replaceAll(".", "-");
     versionMap.set(appVersion, {
       version: appVersion,
-      tag: `v${appVersion}`,
+      tag: "",
       date: new Date().toISOString(),
-      worker: {
-        id: "",
-        url: `https://v${slug}-${cfg.worker.name}.${cfg.worker.domain}`,
-        immutableUrl: "",
-      },
     });
   }
 
@@ -338,16 +356,37 @@ async function cmdVersions(rootDir: string, cfg: Config) {
 
 function cmdUpload(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName) {
   const { version } = readAppVersion(rootDir, cfg.version.source);
-  const slug = version.replaceAll(".", "-");
   const workerDir = resolve(rootDir, target.dir);
 
   console.log(`Uploading ${targetName} version v${version}...`);
+  const output = execSync(
+    `bun install && bunx wrangler versions upload --message "v${version}"`,
+    { cwd: workerDir, encoding: "utf8" }
+  );
+  process.stdout.write(output);
+
+  // Extract version ID from wrangler output
+  const idMatch = output.match(/Worker Version ID:\s+([0-9a-f-]+)/);
+  const uuid = idMatch?.[1];
+  const shortId = uuid?.split("-")[0];
+
+  console.log(`\nUploaded v${version} (${targetName})`);
+  if (shortId) {
+    console.log(`  Preview: https://${shortId}-${target.name}.${target.domain}`);
+  }
+}
+
+function cmdRelease(rootDir: string, cfg: Config, target: TargetConfig, targetName: TargetName) {
+  const { version } = readAppVersion(rootDir, cfg.version.source);
+  const slug = version.replaceAll(".", "-");
+  const workerDir = resolve(rootDir, target.dir);
+
+  console.log(`Stamping release alias v${slug} (${targetName})...`);
   execSync(
-    `bun install && bunx wrangler versions upload --tag "v${version}" --message "v${version}" --preview-alias "v${slug}"`,
+    `bunx wrangler versions upload --tag "v${version}" --message "v${version}" --preview-alias "v${slug}"`,
     { cwd: workerDir, stdio: "inherit" }
   );
-  console.log(`\nUploaded v${version} (${targetName})`);
-  console.log(`  Preview: https://v${slug}-${target.name}.${target.domain}`);
+  console.log(`\nRelease: https://v${slug}-${target.name}.${target.domain}`);
 }
 
 // ============================================================================
@@ -652,12 +691,11 @@ function cmdList(rootDir: string, cfg: Config) {
 
   console.log("=== Versions ===\n");
   for (const v of manifest.versions) {
-    const w = v.worker?.url ? "W" : " ";
-    const d = v.docs?.url ? "D" : " ";
+    const released = v.worker?.url ? "  (released)" : "";
     const date = v.date ? new Date(v.date).toLocaleDateString() : "";
-    console.log(`  v${v.version}  [${w}${d}]  ${date}`);
-    if (v.worker?.url) console.log(`    Worker: ${v.worker.url}`);
-    if (v.docs?.url) console.log(`    Docs:   ${v.docs.url}`);
+    console.log(`  v${v.version}  ${date}${released}`);
+    if (v.worker?.url) console.log(`    Release:   ${v.worker.url}`);
+    if (v.worker?.immutableUrl) console.log(`    Immutable: ${v.worker.immutableUrl}`);
   }
 
   if (manifest.previews.length > 0) {
@@ -875,6 +913,9 @@ switch (command) {
     break;
   case "promote":
     cmdPromote(rootDir, cfg, target, targetName);
+    break;
+  case "release":
+    cmdRelease(rootDir, cfg, target, targetName);
     break;
   case "rollback":
     cmdRollback(rootDir, cfg, target, targetName);

@@ -5,7 +5,7 @@
 
 ## Status
 
-**Implemented** (v2 — deployment layer complete; application layer deferred)
+**Superseded** — see AGENT.md deploy section for current model. The 3-file architecture (cf-deploy.json + cf-deploy.ts + web component) remains, but the alias model changed: aliases only at release/PR time, not every upload.
 
 ## Problem
 
