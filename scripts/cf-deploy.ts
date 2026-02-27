@@ -306,9 +306,9 @@ async function cmdVersions(rootDir: string, cfg: Config) {
     if (commandCount !== undefined) current.commandCount = commandCount;
   }
 
-  // Sort by version descending
+  // Sort by date descending (most recently deployed first)
   const versions = [...versionMap.values()].sort((a, b) =>
-    b.version.localeCompare(a.version, undefined, { numeric: true })
+    (b.date || "").localeCompare(a.date || "")
   );
 
   // Merge previews from both workers
@@ -399,7 +399,7 @@ function cmdSmoke(rootDir: string, cfg: Config, target: TargetConfig, targetName
   if (targetName === "docs") {
     // Docs worker: static site smoke test
     const platformData = latest?.docs;
-    const url = targetUrl || platformData?.immutableUrl || platformData?.url || target.production;
+    const url = targetUrl || platformData?.url || platformData?.immutableUrl || target.production;
     console.log(`Smoke testing docs: ${url}\n`);
 
     // 1. Index page
@@ -424,7 +424,8 @@ function cmdSmoke(rootDir: string, cfg: Config, target: TargetConfig, targetName
   }
 
   // Worker (truck): full smoke test
-  const url = targetUrl || latest?.worker?.immutableUrl || latest?.worker?.url || target.production;
+  // Prefer alias URL (v0-7-0-...) over immutable UUID URL (which may not be routable)
+  const url = targetUrl || latest?.worker?.url || latest?.worker?.immutableUrl || target.production;
   console.log(`Smoke testing worker: ${url}\n`);
 
   // 1. Health check

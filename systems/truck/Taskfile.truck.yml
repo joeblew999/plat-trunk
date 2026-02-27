@@ -194,14 +194,15 @@ tasks:
       - task: fork:switch
         vars:
           CLI_ARGS: ovo-tim/fix-OR3
-      - echo "Running truck-shapeops tests..."
-      - cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops
-      - echo ""
-      - echo "Running your crate tests..."
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
-      - echo ""
-      - echo "DONE. If tests pass, the coplanar boolean fix works with your code."
-      - echo "To switch back: task truck:fork:reset"
+      - |
+        echo "Running truck-shapeops tests..."
+        cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops
+        echo ""
+        echo "Running your crate tests..."
+        cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+        echo ""
+        echo "DONE. If tests pass, the coplanar boolean fix works with your code."
+        echo "To switch back: task truck:fork:reset"
 
   "fork:test:step":
     desc: "Test ovo-Tim's STEP boolean fix (fix-91-2 branch)"
@@ -211,14 +212,15 @@ tasks:
       - task: fork:switch
         vars:
           CLI_ARGS: ovo-tim/fix-91-2
-      - echo "Running truck-shapeops + truck-stepio tests..."
-      - cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops -p truck-stepio
-      - echo ""
-      - echo "Running your crate tests..."
-      - cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
-      - echo ""
-      - echo "DONE. If tests pass, the STEP boolean fix works with your code."
-      - echo "To switch back: task truck:fork:reset"
+      - |
+        echo "Running truck-shapeops + truck-stepio tests..."
+        cd {{.TRUCK_SRC_DIR}} && cargo test -p truck-shapeops -p truck-stepio
+        echo ""
+        echo "Running your crate tests..."
+        cd {{.ROOT_DIR}}/crates/truck-webgpu-gui && cargo test
+        echo ""
+        echo "DONE. If tests pass, the STEP boolean fix works with your code."
+        echo "To switch back: task truck:fork:reset"
 
   "fork:test:fillet":
     desc: "Explore virtualritz's fillet engine (virtualritz/master)"
@@ -228,8 +230,8 @@ tasks:
       - task: fork:switch
         vars:
           CLI_ARGS: virtualritz/master
-      - echo "Checking what's new in virtualritz fork..."
       - |
+        echo "Checking what's new in virtualritz fork..."
         cd {{.TRUCK_SRC_DIR}}
         echo ""
         echo "=== New/modified crates ==="
@@ -239,11 +241,11 @@ tasks:
         find . -name '*.rs' -path '*fillet*' 2>/dev/null | head -20
         echo ""
         echo "=== Running cargo check (will show if it compiles)... ==="
-      - cd {{.TRUCK_SRC_DIR}} && cargo check 2>&1 | tail -5
-      - echo ""
-      - echo "NOTE: virtualritz's fork may have different crate versions."
-      - echo "If cargo check fails, it means API differences need manual integration."
-      - echo "To switch back: task truck:fork:reset"
+        cargo check 2>&1 | tail -5
+        echo ""
+        echo "NOTE: virtualritz's fork may have different crate versions."
+        echo "If cargo check fails, it means API differences need manual integration."
+        echo "To switch back: task truck:fork:reset"
 
   "upgrade":
     desc: Pull latest truck
@@ -708,13 +710,12 @@ tasks:
       - task: smoke:extra
 
   "smoke:extra":
-    internal: true
     desc: "Truck-specific smoke checks (schema + MCP)"
     dir: '{{.ROOT_DIR}}'
     cmds:
       - |
         eval $(bun scripts/cf-deploy.ts status --env)
-        URL="${WORKER_IMMUTABLE_URL:-${WORKER_URL:-{{.BASE_URL}}}}"
+        URL="${SMOKE_URL:-${WORKER_URL:-${WORKER_IMMUTABLE_URL:-{{.BASE_URL}}}}}"
         echo "Truck-specific checks: $URL"
         # Schema check
         SCHEMA=$(curl -sf "$URL/api/cad/schema" 2>&1) || { echo "FAIL: /api/cad/schema unreachable"; exit 1; }
