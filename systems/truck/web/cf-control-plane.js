@@ -5,7 +5,7 @@
  * Replaces <cf-versions-picker> (which depended on Lit).
  *
  * Shows:
- *   - Version badge with Worker/Pages deploy indicators [W● P●]
+ *   - Version badge with Worker/Docs deploy indicators [W● D●]
  *   - Dropdown with all versions + preview URLs
  *   - Endpoint links (API, MCP, Schema, Docs)
  *   - Cross-links (Worker GUI ↔ Docs ↔ GitHub)
@@ -13,7 +13,7 @@
  * Usage:
  *   <cf-control-plane></cf-control-plane>
  *
- *   <!-- On Pages docs (deployment info only, links to Worker) -->
+ *   <!-- On docs worker (deployment info only, links to Worker) -->
  *   <cf-control-plane
  *     worker-url="https://cad.ubuntusoftware.net"
  *     manifest-url="https://cad.ubuntusoftware.net/cf-versions.json"
@@ -56,9 +56,9 @@ class CfControlPlane extends HTMLElement {
 
     // W/P indicators for current version
     const hasWorker = !!current?.worker?.id;
-    const hasPages = !!current?.pages?.id;
+    const hasDocs = !!current?.docs?.id;
     const indicators = this._isLocal ? '' :
-      ` <span class="opacity-40" style="font-size:0.6rem; letter-spacing:1px">${hasWorker ? 'W' : '·'}${hasPages ? 'P' : '·'}</span>`;
+      ` <span class="opacity-40" style="font-size:0.6rem; letter-spacing:1px">${hasWorker ? 'W' : '·'}${hasDocs ? 'D' : '·'}</span>`;
 
     const label = this._isLocal ? 'local' : `v${v}`;
     const title = (this._isLocal ? 'Local dev' : `v${v}`) + ' — click for versions & links';
@@ -75,14 +75,14 @@ class CfControlPlane extends HTMLElement {
 
   _renderDropdown(m, currentVersion) {
     const workerProd = m.production?.worker || '';
-    const pagesProd = m.production?.pages || '';
+    const docsProd = m.production?.docs || '';
     const github = m.github || '';
 
     // --- Versions section ---
     const versionItems = (m.versions || []).map(v => {
       const isCurrent = v.version === currentVersion;
       const w = v.worker?.id ? '●' : '○';
-      const p = v.pages?.id ? '●' : '○';
+      const d = v.docs?.id ? '●' : '○';
       const date = v.date ? new Date(v.date).toLocaleDateString() : '';
       const git = v.git;
       const meta = [date, git?.branch, v.commandCount ? `${v.commandCount} cmds` : ''].filter(Boolean).join(' · ');
@@ -90,14 +90,14 @@ class CfControlPlane extends HTMLElement {
         ? `<a href="${git.commitUrl}" target="_blank" title="${this._esc(git.commitMessage || '')}" class="underline" onclick="event.stopPropagation()">${git.commitSha}</a>`
         : '';
 
-      // Primary link: Worker preview URL (or Pages if no Worker)
-      const href = v.worker?.url || v.pages?.url || '#';
+      // Primary link: Worker preview URL (or Docs if no Worker)
+      const href = v.worker?.url || v.docs?.url || '#';
 
       return `<li>
         <a href="${href}" ${isCurrent ? '' : 'target="_blank"'}
            class="${isCurrent ? 'active font-bold' : ''} flex justify-between items-center gap-2">
           <span>
-            <span>v${v.version}${isCurrent ? ' ✓' : ''} <span class="opacity-40" style="font-size:0.6rem">${w}W ${p}P</span></span>
+            <span>v${v.version}${isCurrent ? ' ✓' : ''} <span class="opacity-40" style="font-size:0.6rem">${w}W ${d}D</span></span>
             ${meta || commitLink ? `<br><span class="opacity-50" style="font-size:0.65rem">${meta}${commitLink ? (meta ? ' · ' : '') + commitLink : ''}</span>` : ''}
           </span>
           ${v.worker?.immutableUrl ? `<a href="${v.worker.immutableUrl}" target="_blank" title="Immutable Worker URL" class="opacity-30 hover:opacity-80" onclick="event.stopPropagation()">⧉</a>` : ''}
@@ -130,7 +130,7 @@ class CfControlPlane extends HTMLElement {
         <li class="menu-title mt-2 pt-2 border-t border-base-300">Links</li>
         <li><a href="${this._isLocal ? location.origin : 'http://localhost:8788'}" class="${this._isLocal ? 'active font-bold' : ''}">Local Dev${this._isLocal ? ' (current)' : ''}</a></li>
         ${workerProd ? `<li><a href="${workerProd}" target="_blank">Production (Worker)</a></li>` : ''}
-        ${pagesProd ? `<li><a href="${pagesProd}" target="_blank">Production (Pages)</a></li>` : ''}
+        ${docsProd ? `<li><a href="${docsProd}" target="_blank">Production (Docs)</a></li>` : ''}
         ${github ? `<li><a href="${github}/releases" target="_blank">GitHub Releases</a></li>` : ''}
       </ul>
     `;
