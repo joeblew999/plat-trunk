@@ -397,9 +397,9 @@ function cmdSmoke(rootDir: string, cfg: Config, target: TargetConfig, targetName
   const latest = manifest.versions[0];
 
   if (targetName === "docs") {
-    // Docs worker: static site smoke test
-    const platformData = latest?.docs;
-    const url = targetUrl || platformData?.url || platformData?.immutableUrl || target.production;
+    // Docs worker is a service binding — smoke test via the main worker's /docs/ path
+    const workerUrl = latest?.worker?.url;
+    const url = targetUrl || (workerUrl ? `${workerUrl}/docs` : null) || target.production;
     console.log(`Smoke testing docs: ${url}\n`);
 
     // 1. Index page
