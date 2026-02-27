@@ -179,6 +179,13 @@ tasks:
       - task: worker:rollback
       - task: docs:rollback
 
+  "deploy:all":
+    desc: "Full deploy lifecycle: upload → smoke → promote (all workers)"
+    cmds:
+      - task: upload:all
+      - task: smoke:all
+      - task: promote:all
+
   # ==========================================================================
   # Versions & Status
   # ==========================================================================
