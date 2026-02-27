@@ -196,6 +196,7 @@ enum InteractionMode {
 
 /// LOD proxy: a bounding-box wireframe that represents a Warm-tier object on the GPU.
 /// Created when an object is evicted (Hot→Warm), removed when promoted (Warm→Hot).
+#[allow(dead_code)]
 struct LodProxy {
     id: String,               // same objectId as the evicted object
     wireframe: WireFrameInstance,
