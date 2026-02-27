@@ -46,11 +46,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Main push: deploy docs Worker (simple deploy, not versioned)
+      # Main push: upload docs Worker version (versioned, does NOT promote)
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-            task vitepress:build && task vitepress:worker:deploy
+            task vitepress:build && task cf:docs:upload
           else
             echo "Skipping docs deploy — CLOUDFLARE_API_TOKEN not set"
           fi
