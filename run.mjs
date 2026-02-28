@@ -3,18 +3,18 @@
 // Reads workers.mjs, starts/builds/deploys all workers.
 //
 // Usage:
-//   node run.mjs dev      Start all workers + watchers
+//   node run.mjs dev      Start all workers + watchers (auto-reloads on file changes)
 //   node run.mjs deploy   Build + deploy all workers
 
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { workers, watchers } from './workers.mjs';
+import { workers, devServers } from './workers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const children = [];
 
-// Color codes for worker output prefixes
+// Color codes for process output prefixes
 const colors = ['\x1b[36m', '\x1b[33m', '\x1b[35m', '\x1b[32m', '\x1b[34m', '\x1b[31m'];
 const reset = '\x1b[0m';
 
@@ -64,7 +64,7 @@ async function dev() {
     exec('bun install --silent', w.dir);
   }
 
-  // 2. Build workers that need it
+  // 2. Build workers that need it (initial build before starting)
   for (const w of workers) {
     if (w.build) {
       console.log(`\nBuilding ${w.name}...`);
@@ -79,15 +79,27 @@ async function dev() {
 
   console.log('\nStarting workers...\n');
 
-  // 3. Start all workers
-  workers.forEach((w, i) => {
-    start(w.name, 'bun x wrangler dev', w.dir, i);
+  // 3. Start all wrangler dev processes (auto-reload TypeScript on save)
+  let idx = 0;
+  workers.forEach((w) => {
+    start(w.name, 'bun x wrangler dev', w.dir, idx++);
   });
 
-  // 4. Start watchers
-  watchers.forEach((w, i) => {
-    start(w.name, w.command, '.', workers.length + i);
-  });
+  // 4. Start file watchers (rebuild on source changes)
+  for (const w of workers) {
+    if (w.watch) {
+      const paths = w.watch.paths.map(p => `-w ${p}`).join(' ');
+      const exts = w.watch.extensions.map(e => `-e ${e}`).join(' ');
+      const debounce = w.watch.debounce ? `--debounce ${w.watch.debounce}ms` : '';
+      const cmd = `watchexec ${paths} ${exts} ${debounce} -- ${w.watch.command}`;
+      start(w.watch.name, cmd, '.', idx++);
+    }
+  }
+
+  // 5. Start dev servers (VitePress, etc.)
+  for (const s of devServers) {
+    start(s.name, s.command, '.', idx++);
+  }
 
   console.log('\nAll workers started. Press Ctrl+C to stop.\n');
 }

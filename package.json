@@ -7,6 +7,7 @@
     "test": "bun run test:crate && bun run test:api",
     "test:crate": "cd systems/truck/crate && cargo test",
     "test:api": "cd systems/truck/worker && bun x vitest run",
+    "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
     "test:e2e": "cd systems/truck/tests && bun x playwright test",
     "deploy": "node run.mjs deploy",
     "deploy:nuke": "bun scripts/cf-deploy.ts nuke",

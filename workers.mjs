@@ -2,6 +2,10 @@
 //
 // Used by: run.mjs (bun run dev)
 //
+// Each worker gets:
+//   - wrangler dev process (auto-reloads on .ts changes)
+//   - optional build + watch for non-TS assets (e.g. Rust → WASM)
+//
 // To add a new worker:
 //   1. Create systems/{name}/worker/ with wrangler.toml + src/index.ts
 //   2. Add an entry here (unique port + inspectorPort)
@@ -9,8 +13,13 @@
 //   4. Add routing in src/router.ts
 //   5. Add an entry in cf-deploy.json (before "router")
 //
-// To remove a worker:
-//   Reverse the steps above.
+// To remove a worker: reverse the steps above.
+
+// Dev build command for truck WASM. Uses --dev (no wasm-opt) for:
+//   - Fast rebuilds (~2s vs ~6s)
+//   - No race condition with wrangler asset watcher
+// Deploy uses bun run build:truck (--release with wasm-opt).
+const TRUCK_DEV_BUILD = 'cd systems/truck/crate && wasm-pack build --target web --dev --out-dir ../web/pkg-browser-renderer && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json';
 
 export const workers = [
   {
@@ -24,7 +33,14 @@ export const workers = [
     dir: 'systems/truck/worker',
     port: 8789,
     inspectorPort: 9230,
-    build: 'bun run build:truck',
+    build: TRUCK_DEV_BUILD,
+    watch: {
+      name: 'watch-wasm',
+      paths: ['systems/truck/crate/src'],
+      extensions: ['rs'],
+      command: TRUCK_DEV_BUILD,
+      debounce: 3000,
+    },
   },
   {
     name: 'test-worker',
@@ -34,14 +50,10 @@ export const workers = [
   },
 ];
 
-// File watchers for hot-reload during dev
-export const watchers = [
+// Dev servers — run alongside workers but aren't workers themselves.
+export const devServers = [
   {
-    name: 'watch-gui',
-    command: 'watchexec -w systems/truck/crate/src -e rs -- bun run build:truck',
-  },
-  {
-    name: 'watch-docs',
-    command: 'cd systems/docs/website && bun run dev',
+    name: 'docs-dev',
+    command: 'cd systems/docs/website && bun x vitepress dev --port 5176',
   },
 ];
