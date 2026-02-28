@@ -12,12 +12,11 @@ routes = [
   { pattern = "cad.ubuntusoftware.net", custom_domain = true },
 ]
 
-# Serve systems/truck/web/ as static assets.
-# Uses explicit ASSETS binding so worker code runs first (needed for /docs/ and /test/ routing).
-# Worker handles SPA fallback for /model/* paths.
+# Serve systems/truck/web/ as static assets at the edge (no worker overhead).
+# not_found_handling = "none" passes unmatched paths to the worker, which handles:
+#   /api/*, /mcp, /docs/*, /test/*, /model/* (redirect to /?model=:id)
 [assets]
 directory = "../web"
-binding = "ASSETS"
 not_found_handling = "none"
 
 [[r2_buckets]]

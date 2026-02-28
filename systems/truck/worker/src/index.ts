@@ -8,7 +8,6 @@ import { initHeadlessWasm } from './truck-wasm';
 type Bindings = {
   MY_VAR: string;
   CAD_DOCS_BUCKET: R2Bucket;
-  ASSETS: Fetcher;
   DOCS: Fetcher;
   TEST: Fetcher;
 };
@@ -822,18 +821,6 @@ app.all('/test/*', async (c) => {
   const url = new URL(c.req.url);
   url.pathname = url.pathname.replace(/^\/test/, '') || '/';
   return c.env.TEST.fetch(new Request(url.toString(), c.req.raw));
-});
-
-// Static assets catch-all with SPA fallback.
-// ASSETS binding gives worker code control over routing order:
-//   API/MCP/docs/test routes match first, then assets, then SPA fallback.
-app.all('*', async (c) => {
-  const res = await c.env.ASSETS.fetch(c.req.raw);
-  if (res.status !== 404) return res;
-  // SPA fallback: serve index.html for navigation requests (e.g. /model/:id)
-  const url = new URL(c.req.url);
-  url.pathname = '/index.html';
-  return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
 });
 
 export default app;
