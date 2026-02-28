@@ -41,9 +41,8 @@ bun run test:e2e        # Playwright E2E tests
 
 ```bash
 bun run deploy                          # Build + deploy all workers
-bun scripts/cf-deploy.ts nuke           # Delete all workers (clean slate)
-bun scripts/cf-deploy.ts deploy-all     # Upload + deploy triggers (correct order)
-bun scripts/cf-deploy.ts upload --target truck   # Upload single worker
+bun run deploy:nuke                     # Delete all workers (clean slate)
+bun run deploy:upload -- --target truck # Upload single worker
 ```
 
 ## URLs

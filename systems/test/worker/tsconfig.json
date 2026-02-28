@@ -1,13 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "Bundler",
     "strict": true,
+    "skipLibCheck": true,
     "types": ["@cloudflare/workers-types"],
-    "lib": ["ES2022", "WebWorker"],
-    "noEmit": true,
-    "skipLibCheck": true
+    "lib": ["ESNext"]
   },
-  "include": ["src/**/*"]
+  "include": ["src"]
 }

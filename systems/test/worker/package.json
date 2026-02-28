@@ -1,13 +1,11 @@
 {
   "name": "test-worker",
   "private": true,
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+  "dependencies": {
+    "hono": "^4.11.9"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251128.0",
-    "typescript": "5.8.3",
+    "@cloudflare/workers-types": "^4.20260212.0",
     "wrangler": "^4.69.0"
   }
 }

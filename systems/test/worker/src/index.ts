@@ -1,15 +1,12 @@
 // Test Worker — minimal health-check worker for validating cf-deploy topology.
+// Uses Hono for consistency with all other workers.
 
-export default {
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+import { Hono } from 'hono';
 
-    if (url.pathname === "/api/health") {
-      return Response.json({ status: "ok", worker: "test-worker" });
-    }
+const app = new Hono();
 
-    return new Response("test-worker is running", {
-      headers: { "content-type": "text/plain" },
-    });
-  },
-};
+app.get('/api/health', (c) => c.json({ status: 'ok', worker: 'test-worker' }));
+
+app.all('*', (c) => c.text('test-worker is running'));
+
+export default app;
