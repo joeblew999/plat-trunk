@@ -100,8 +100,8 @@ async function deploy() {
       exec(w.build, '.');
     }
   }
-  // Deploy via cf-deploy.ts
-  exec('bun scripts/cf-deploy.ts foreach upload');
+  // Deploy via cf-deploy.ts (handles correct order: sub-workers first, then router)
+  exec('bun scripts/cf-deploy.ts deploy-all');
 }
 
 // ─── Entry ─────────────────────────────────────────────

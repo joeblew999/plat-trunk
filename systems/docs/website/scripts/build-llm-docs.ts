@@ -23,7 +23,7 @@ function capitalizeDelimiter(str: string) {
 }
 
 async function generateLLMDocs() {
-  const siteUrl = cfDeploy.workers.docs.production
+  const siteUrl = cfDeploy.endpoints.docsProduction
 
   // --- llms.txt (index) ---
   const outputListFile = path.resolve('public/llms.txt')

@@ -1,5 +1,16 @@
-// workers.mjs — Single source of truth for all workers.
-// Used by: run.mjs (dev/deploy)
+// workers.mjs — Single source of truth for all workers in dev.
+//
+// Used by: run.mjs (npm run dev)
+//
+// To add a new worker:
+//   1. Create systems/{name}/worker/ with wrangler.toml + src/index.ts
+//   2. Add an entry here (unique port + inspectorPort)
+//   3. Add a [[services]] binding in root wrangler.toml
+//   4. Add routing in src/router.ts
+//   5. Add an entry in cf-deploy.json (before "router")
+//
+// To remove a worker:
+//   Reverse the steps above.
 
 export const workers = [
   {

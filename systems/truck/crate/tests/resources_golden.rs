@@ -9,7 +9,7 @@ use truck_modeling::*;
 /// Path to truck resource shapes relative to the workspace root.
 fn resources_dir() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("../../.src/truck/resources/shape")
+    manifest.join("../../../.src/truck/resources/shape")
 }
 
 /// Load a Solid from a JSON file.

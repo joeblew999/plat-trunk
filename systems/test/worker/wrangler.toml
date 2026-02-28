@@ -1,4 +1,13 @@
-# Test Worker — minimal worker for validating cf-deploy N-worker topology
+# ───────────────────────────────────────────────────────
+# test-worker — Validates N-worker topology pattern
+# ───────────────────────────────────────────────────────
+#
+# Minimal worker proving the platform supports N independent systems.
+# Accessed via TEST service binding from plat-router at /test/*.
+#
+# Direct: http://localhost:5175 (dev) or https://test-worker.gedw99.workers.dev
+# ───────────────────────────────────────────────────────
+
 name = "test-worker"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"

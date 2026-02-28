@@ -1,16 +1,34 @@
-# Truck CAD sub-worker — API, MCP, SSE, WASM.
-# Accessed via service binding from the root router.
+# ───────────────────────────────────────────────────────
+# truck-cad — CAD kernel sub-worker
+# ───────────────────────────────────────────────────────
+#
+# Rust/WASM B-Rep CAD engine exposed as:
+#   - REST API (/api/*)
+#   - MCP endpoint (/mcp)
+#   - Web UI (static assets from ../web)
+#
+# Accessed via TRUCK service binding from plat-router.
+# Direct: http://localhost:8789 (dev) or https://truck-cad.gedw99.workers.dev
+#
+# Build: npm run build:truck  (wasm-pack + schema generation)
+# Test:  npm run test:api     (vitest)
+# ───────────────────────────────────────────────────────
+
 name = "truck-cad"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-# Serve web UI as static assets at the edge
+# Web UI — static assets served at the edge
+# Source: systems/truck/web/ (HTML, JS, CSS, WASM, vendor libs)
 [assets]
 directory = "../web"
+binding = "ASSETS"
 not_found_handling = "none"
 
+# R2 bucket for CAD document storage
 [[r2_buckets]]
 binding = "CAD_DOCS_BUCKET"
 bucket_name = "cad-documents"

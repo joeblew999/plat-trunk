@@ -1,11 +1,5 @@
 {
   "workers": {
-    "router": {
-      "name": "plat-router",
-      "domain": "gedw99.workers.dev",
-      "dir": ".",
-      "production": "https://cad.ubuntusoftware.net"
-    },
     "truck": {
       "name": "truck-cad",
       "domain": "gedw99.workers.dev",
@@ -17,6 +11,12 @@
       "domain": "gedw99.workers.dev",
       "dir": "systems/test/worker",
       "production": "https://test-worker.gedw99.workers.dev"
+    },
+    "router": {
+      "name": "plat-router",
+      "domain": "gedw99.workers.dev",
+      "dir": ".",
+      "production": "https://cad.ubuntusoftware.net"
     }
   },
   "account": "7384af54e33b8a54ff240371ea368440",

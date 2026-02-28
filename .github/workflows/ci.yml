@@ -44,26 +44,22 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Build + test
+      # Build + test (build includes truck WASM + docs)
       - run: npm run build && npm run test
 
-      # Main push: upload truck worker
+      # Main push: deploy all workers (sub-workers first, then router)
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: bun scripts/cf-deploy.ts upload --target truck
+        run: bun scripts/cf-deploy.ts deploy-all
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Main push: build docs + upload router
-      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: npm run build:docs && bun scripts/cf-deploy.ts upload --target router
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      # PR: upload preview versions
+      # PR: upload preview versions (sub-workers first, then router)
       - if: github.event_name == 'pull_request'
         run: |
-          bun scripts/cf-deploy.ts upload --target truck --tag pr-${{ github.event.pull_request.number }} --preview-alias pr-${{ github.event.pull_request.number }}
-          npm run build:docs && bun scripts/cf-deploy.ts upload --target router --tag pr-${{ github.event.pull_request.number }} --preview-alias pr-${{ github.event.pull_request.number }}
+          PR=${{ github.event.pull_request.number }}
+          bun scripts/cf-deploy.ts upload --target truck --tag pr-$PR --preview-alias pr-$PR
+          bun scripts/cf-deploy.ts upload --target test --tag pr-$PR --preview-alias pr-$PR
+          bun scripts/cf-deploy.ts upload --target router --tag pr-$PR --preview-alias pr-$PR
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 

@@ -1,6 +1,17 @@
-# Root router — entry point for all traffic
-# Routes to sub-workers via service bindings
-# Serves docs static assets via DOCS_ASSETS binding
+# ───────────────────────────────────────────────────────
+# plat-router — Root router worker
+# ───────────────────────────────────────────────────────
+#
+# Entry point for ALL traffic. Routes requests to sub-workers:
+#
+#   /docs/*  → DOCS_ASSETS  (VitePress static files, served directly)
+#   /test/*  → TEST         (test-worker, port 5175 in dev)
+#   /*       → TRUCK        (truck-cad, port 8789 in dev)
+#
+# Dev:  npm run dev  → http://localhost:8788
+# Prod: https://cad.ubuntusoftware.net
+# ───────────────────────────────────────────────────────
+
 name = "plat-router"
 main = "src/router.ts"
 compatibility_date = "2025-10-08"
@@ -12,14 +23,14 @@ routes = [
   { pattern = "cad.ubuntusoftware.net", custom_domain = true },
 ]
 
-# VitePress docs — explicit binding, NOT auto-served
-# Worker code strips /docs/ prefix before fetching
+# VitePress docs — explicit binding mode (worker code fetches, NOT auto-served)
+# Build: npm run build:docs → systems/docs/website/.vitepress/dist
 [assets]
 directory = "systems/docs/website/.vitepress/dist"
 binding = "DOCS_ASSETS"
 not_found_handling = "none"
 
-# Sub-worker bindings
+# Sub-worker service bindings (auto-discover in dev)
 [[services]]
 binding = "TRUCK"
 service = "truck-cad"

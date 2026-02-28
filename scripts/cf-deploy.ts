@@ -191,6 +191,48 @@ function config() {
   typeof val === "object" ? console.log(JSON.stringify(val, null, 2)) : process.stdout.write(String(val));
 }
 
+function nuke() {
+  console.log("Deleting all workers from Cloudflare...");
+  for (const [name, w] of Object.entries(cfg.workers)) {
+    try {
+      wr(w.dir, `delete --name ${w.name} --force`, true);
+      console.log(`  ${name}: deleted`);
+    } catch { console.log(`  ${name}: not found (already deleted)`); }
+  }
+  console.log("Done. All workers deleted. Deploy fresh with: npm run deploy");
+}
+
+function deployAll() {
+  // Upload sub-workers first (router depends on them via service bindings)
+  const entries = Object.entries(cfg.workers);
+  const routerEntry = entries.find(([, w]) => w.name === "plat-router");
+  const subWorkers = entries.filter(([, w]) => w.name !== "plat-router");
+
+  for (const [name] of subWorkers) {
+    console.log(`\n=== Uploading ${name} ===`);
+    try { execSync(`bun scripts/cf-deploy.ts upload --target ${name}`, { cwd: rootDir, stdio: "inherit" }); }
+    catch { console.error(`FAIL: ${name}`); process.exit(1); }
+  }
+
+  if (routerEntry) {
+    const [name] = routerEntry;
+    console.log(`\n=== Uploading ${name} (last — depends on sub-workers) ===`);
+    try { execSync(`bun scripts/cf-deploy.ts upload --target ${name}`, { cwd: rootDir, stdio: "inherit" }); }
+    catch { console.error(`FAIL: ${name}`); process.exit(1); }
+  }
+
+  // Deploy triggers for all workers
+  console.log("\n=== Deploying triggers ===");
+  for (const [name, w] of entries) {
+    try {
+      wr(w.dir, `triggers deploy --name ${w.name}`, true);
+      console.log(`  ${name}: triggers deployed`);
+    } catch { console.log(`  ${name}: triggers skipped`); }
+  }
+
+  console.log("\nAll workers deployed.");
+}
+
 // --- Main ---
 
 const cmd = process.argv[2];
@@ -203,6 +245,8 @@ switch (cmd) {
   case "versions": versions(); break;
   case "foreach": foreach(); break;
   case "config": config(); break;
+  case "nuke": nuke(); break;
+  case "deploy-all": deployAll(); break;
   case "list-targets": console.log(Object.keys(cfg.workers).join("\n")); break;
-  default: console.log("Commands: upload promote release rollback smoke versions foreach config list-targets"); break;
+  default: console.log("Commands: upload promote release rollback smoke versions foreach config nuke deploy-all list-targets"); break;
 }
