@@ -91,18 +91,37 @@ class CadDocumentManager {
 
         await this.handle.doc();
 
-        // Record the default cube (created by Rust SceneController::new) into the op log
-        // so it's replayable in other tabs. We don't execute — WASM already has it.
-        const ctrl = this._ctrl();
-        if (ctrl) {
-            const ids = ctrl.object_ids();
-            if (ids.length > 0) {
-                await this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
+        // First visit with default model — load demo scene for a "wow moment"
+        const modelId = window.__modelId || 'default';
+        let demoLoaded = false;
+        if (modelId === 'default') {
+            try {
+                const res = await fetch('examples/default-cube.json');
+                if (res.ok) {
+                    const json = await res.text();
+                    cadCommand('clear', {}, { record: false, broadcast: false, reconcile: false });
+                    cadCommand('import_scene', { json }, { record: false, broadcast: false, reconcile: false });
+                    await this.record('import_scene', { json });
+                    reconcile({});
+                    demoLoaded = true;
+                }
+            } catch (e) {
+                console.warn('[Demo] Failed to load demo scene:', e);
+            }
+        }
+
+        // Fallback: record the Rust default cube if demo didn't load
+        if (!demoLoaded) {
+            const ctrl = this._ctrl();
+            if (ctrl) {
+                const ids = ctrl.object_ids();
+                if (ids.length > 0) {
+                    await this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
+                }
             }
         }
 
         this._localOpCount = this._getDocOpCount();
-        const modelId = window.__modelId || 'default';
         localStorage.setItem('cad-last-doc-url', this.handle.url);
         localStorage.setItem(`cad-doc-url-${modelId}`, this.handle.url);
         this._listenForChanges();

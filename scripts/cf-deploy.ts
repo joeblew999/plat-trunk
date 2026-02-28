@@ -132,7 +132,9 @@ function versions() {
         } else if (tag && /^v\d/.test(tag)) {
           const v = tag.replace("v", ""), slug = v.replaceAll(".", "-");
           const entry = versionMap.get(v) || { version: v, tag, date, platforms: {} as Record<string, PlatformInfo> };
-          entry.platforms[name] = { id: item.id, url: makeUrl(`v${slug}`), immutableUrl: makeUrl(item.id.split("-")[0]) };
+          // Wrangler lists newest first — keep newest upload per platform
+          if (!entry.platforms[name]) entry.platforms[name] = { id: item.id, url: makeUrl(`v${slug}`), immutableUrl: makeUrl(item.id.split("-")[0]) };
+          if (!entry.tag) entry.tag = tag;
           if (!entry.date || date > entry.date) entry.date = date;
           versionMap.set(v, entry);
         } else {

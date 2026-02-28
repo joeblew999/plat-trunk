@@ -13,9 +13,18 @@
 version: "0.5"
 
 processes:
-  # All workers: truck-cad + docs-worker + test-worker (via service bindings)
+  # Main worker: truck-cad (port 8788, proxies /docs/ via service binding)
   workers:
     command: task truck:gui:serve
+    depends_on:
+      docs-worker:
+        condition: process_started
+    availability:
+      restart: on_failure
+
+  # Docs worker: must be running for service binding to work locally
+  docs-worker:
+    command: cd systems/docs/worker && bun install --silent && bun x wrangler dev
     availability:
       restart: on_failure
 
