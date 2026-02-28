@@ -1,159 +1,113 @@
 # plat-trunk
 
-Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truck) B-Rep kernel → WASM → WebGPU rendering. Hono API for REST, SSE, and MCP. Humans and AI agents share the same command pipeline.
+Browser + Cloudflare Workers CAD platform. [truck](https://github.com/ricosjp/truck) B-Rep kernel (Rust/WASM) for 3D modeling, WebGPU rendering, Automerge CRDT for collaboration.
 
 **Stack**: Rust/WASM · Hono + Zod · MCP · Automerge CRDT · Datastar · Cloudflare Workers
-
-## URLs
-
-<!-- cf-urls:start -->
-| | URL |
-|--|-----|
-| **Production** | |
-| CAD App | https://cad.ubuntusoftware.net |
-| Workers (alias) | https://truck-cad.gedw99.workers.dev |
-| Docs | https://cad.ubuntusoftware.net/docs |
-| Docs (Workers) | https://docs-worker.gedw99.workers.dev |
-| LLM Docs | https://cad.ubuntusoftware.net/docs/llms.txt |
-| **Local Dev** | |
-| CAD App | http://localhost:8788 |
-| API Docs | http://localhost:8788/api-docs |
-| MCP | http://localhost:8788/mcp |
-| Docs Dev | http://localhost:5174 |
-| **Project** | |
-| GitHub | https://github.com/joeblew999/plat-trunk |
-| CF Deployments | [Dashboard](https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/view/truck-cad/production/deployments) |
-<!-- cf-urls:end -->
 
 ## Quick Start
 
 ```bash
-curl -fsSL https://github.com/joeblew999/ubuntu-website/releases/latest/download/install.sh | bash
-task deps:install
-task truck:gui:build
-task truck:gui:serve      # → localhost:8788
+npm install
+npm run dev          # starts all workers → http://localhost:8788
 ```
 
-## MCP (AI Agent Access)
+## Architecture
 
 ```
-AI Agent → Bridge (stdio) → Worker /mcp (JSON-RPC) → SSE relay → browser WASM → result back
+Client → plat-router (port 8788)
+  /docs/*  → VitePress static docs (DOCS_ASSETS binding)
+  /test/*  → test-worker (port 5175)
+  /*       → truck-cad (port 8789) — API, MCP, Web UI
 ```
 
-The browser must be open — it runs the WASM kernel. The Worker relays commands via SSE.
-
-33 tools: 27 CAD commands + `cad_health` + `cad_schema` + 4 docs tools (`cad_docs_*`).
-
-### Architecture
-
-**Worker `/mcp`** — single MCP implementation (stateless JSON-RPC, no SDK at runtime).
-
-**Bridge** (`scripts/mcp-bridge.ts`) — pure stdio ↔ HTTP proxy to `/mcp`. Adds retry (survives server restarts) and schema version polling (hot-reload tools without restarting AI client). Works for dev AND production — just set `CAD_URL`.
-
-### Setup
-
-**With bridge** (recommended — hot-reload + retry):
-```json
-{ "mcpServers": { "truck-cad": { "command": "bun", "args": ["scripts/mcp-bridge.ts"], "env": { "CAD_URL": "http://localhost:8788" } } } }
-```
-For production: set `CAD_URL` to `https://cad.ubuntusoftware.net`.
-
-**Direct HTTP** (simpler, no hot-reload):
-```json
-{ "mcpServers": { "truck-cad": { "type": "http", "url": "https://cad.ubuntusoftware.net/mcp" } } }
-```
-
-**Local dev**:
-```bash
-task truck:gui:serve          # 1. start server
-open http://localhost:8788    # 2. open browser
-claude                        # 3. start Claude Code (bridge auto-connects)
-```
-
-### Troubleshooting
-
-| Problem | Fix |
-|---------|-----|
-| No tools in Claude | Server wasn't running at startup — restart Claude |
-| "No browser connected" | Open http://localhost:8788 |
-| "Browser did not respond within 10s" | Foreground the browser tab, refresh if needed |
-
-## REST API
-
-All routes are model-scoped (`{modelId}` defaults to `default`).
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/mcp` | MCP StreamableHTTP (JSON-RPC) |
-| `POST` | `/api/cad/{modelId}/sync/{cmd}` | Execute command (sync, 10s timeout) |
-| `POST` | `/api/cad/{modelId}/async/{cmd}` | Queue command (async) |
-| `POST` | `/api/cad/{modelId}/exec` | Polymorphic queue (legacy) |
-| `GET` | `/api/cad/{modelId}/result/{id}` | Poll result |
-| `GET` | `/api/cad/{modelId}/state` | Scene state |
-| `POST` | `/api/cad/{modelId}/state` | Push state (`broadcast: true` for SSE) |
-| `GET` | `/api/cad/{modelId}/events` | SSE stream |
-| `GET` | `/api/cad/schema` | Command schema (auto-generated from Rust) |
-
-## Tests & Docs
-
-Tests and docs are the same pipeline. E2E tests produce the screenshots, videos, and example scenes that the VitePress docs site references.
-
-```
-cad.spec.ts + sketch.spec.ts  ──SCREENSHOTS=1──→  website/public/screenshots/*.png
-                               ──EXAMPLES=1────→  web/gui/examples/*.json
-                               ──DOCS=1────────→  website/public/videos/*.webm
-                                                          ↓
-                                                    VitePress → docs Worker
-```
-
-Docs site built with VitePress (same as hono.dev). LLM docs auto-generated at build time (`llms.txt`, `llms-full.txt`, `llms-small.txt`).
-
-```bash
-# Setup (one-time)
-task truck:test:install       # Playwright + Chrome
-
-# Rust (no server needed)
-task truck:test               # truck library tests
-task truck:test:crate         # truck-webgpu-gui crate tests
-task truck:test:api           # Hono API tests (vitest)
-
-# E2E (requires gui:serve running)
-task truck:test:e2e           # Fast
-task truck:test:e2e:slow      # + pauses + video (SLOW=1)
-task truck:test:sketch        # Sketch tests only
-task truck:test:sync          # Cross-tab Automerge sync (runs alone)
-task truck:test:all           # All tests + screenshots + examples
-
-# Docs
-task vitepress:serve               # VitePress dev server (localhost:5173)
-task vitepress:build               # Build static site
-task vitepress:worker:deploy        # Deploy docs to Cloudflare Workers
-task vitepress:screenshots         # Generate screenshots + videos from E2E tests
-task truck:ci                 # Full CI: cargo check + test + WASM build
-```
-
-Env flags: `SLOW=1` `SCREENSHOTS=1` `EXAMPLES=1` `BASE_URL=https://...`
+Each system = Rust crate → WASM → schema → worker with MCP endpoint. The router at repo root ties them together via service bindings.
 
 ## Commands
 
 ```bash
-task truck:gui:build          # WASM → web/gui/pkg-browser-renderer/
-task truck:gui:serve          # Local dev (localhost:8788)
-task truck:gui:deploy         # Deploy to Cloudflare Workers
-task truck:deploy:full        # gui:deploy + vitepress:build + vitepress:worker:deploy
+npm run dev             # Start all workers (router + truck + test + watchers)
+npm run build           # Build WASM + docs
+npm run test            # Run all tests (cargo + vitest)
+npm run deploy          # Build + deploy all workers to Cloudflare
+
+npm run build:truck     # WASM compile + schema generation
+npm run build:docs      # Build VitePress docs
+npm run test:crate      # Rust unit tests
+npm run test:api        # Worker API tests (vitest)
+npm run test:e2e        # Playwright E2E tests
 ```
+
+## Deploy
+
+```bash
+npm run deploy                          # Build + deploy all workers
+bun scripts/cf-deploy.ts nuke           # Delete all workers (clean slate)
+bun scripts/cf-deploy.ts deploy-all     # Upload + deploy triggers (correct order)
+bun scripts/cf-deploy.ts upload --target truck   # Upload single worker
+```
+
+## URLs
+
+| | URL |
+|--|-----|
+| **Production** | |
+| CAD App | https://cad.ubuntusoftware.net |
+| Docs | https://cad.ubuntusoftware.net/docs/ |
+| LLM Docs | https://cad.ubuntusoftware.net/docs/llms.txt |
+| **Local Dev** | |
+| Router | http://localhost:8788 |
+| Truck (direct) | http://localhost:8789 |
+| Test (direct) | http://localhost:5175 |
+| API Docs | http://localhost:8788/api-docs |
+| MCP | http://localhost:8788/mcp |
+| **Project** | |
+| GitHub | https://github.com/joeblew999/plat-trunk |
+
+## MCP (AI Agent Access)
+
+Worker `/mcp` — stateless MCP endpoint (JSON-RPC). 29 tools.
+
+**Bridge** (`scripts/mcp-bridge.ts`) — stdio ↔ HTTP proxy with retry + schema hot-reload.
+
+```json
+{ "mcpServers": { "truck-cad": { "command": "bun", "args": ["scripts/mcp-bridge.ts"] } } }
+```
+
+For production: set `CAD_URL=https://cad.ubuntusoftware.net`.
+
+## Adding a Worker
+
+1. Create `systems/{name}/worker/` with `wrangler.toml` + `src/index.ts`
+2. Add entry to `workers.mjs` (unique port + inspectorPort)
+3. Add `[[services]]` binding in root `wrangler.toml`
+4. Add routing in `src/router.ts`
+5. Add entry in `cf-deploy.json` (before "router")
+
+## REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/mcp` | MCP StreamableHTTP (JSON-RPC) |
+| `POST` | `/api/cad/{modelId}/sync/{cmd}` | Execute command (sync) |
+| `POST` | `/api/cad/{modelId}/async/{cmd}` | Queue command (async) |
+| `GET` | `/api/cad/{modelId}/state` | Scene state |
+| `GET` | `/api/cad/schema` | Command schema |
+| `GET` | `/api/health` | Health check |
 
 ## Requirements
 
-- [task](https://taskfile.dev)
-- [process-compose](https://github.com/F_S_M/process-compose)
-- Rust
-- Go 1.23+
+- Rust + wasm-pack
+- Bun
+- Node.js
 
 ## Configuration
 
 | File | Description |
 |------|-------------|
-| `.env` | Default config (tracked), `PC_PORT_NUM=8000` |
+| `wrangler.toml` | Root router config (port 8788, service bindings) |
+| `workers.mjs` | Worker registry (ports, build commands) |
+| `run.mjs` | Dev/deploy orchestrator |
+| `cf-deploy.json` | Cloudflare deploy metadata |
+| `.env` | Default config (tracked) |
 | `.env.local` | Secrets (not tracked) |
-| `.mcp.json` | MCP server config (bridge for dev, HTTP for production) |
+| `.mcp.json` | MCP server config (bridge → Worker /mcp) |
