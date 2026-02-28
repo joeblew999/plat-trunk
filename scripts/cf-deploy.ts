@@ -251,6 +251,8 @@ function nuke() {
     console.log("  Note: Custom domains re-register automatically on next deploy.");
   }
 
+  // Regenerate versions manifest to reflect the nuked state.
+  try { versions(); } catch { /* workers may not exist yet */ }
   console.log("\nDone. Redeploy with: bun run deploy");
 }
 
@@ -280,7 +282,8 @@ function deployAll() {
     } catch { console.error(`FAIL: ${name}`); process.exit(1); }
   }
 
-  console.log("\nAll workers deployed.");
+  console.log("\nAll workers deployed. Updating versions manifest...");
+  versions();
 }
 
 // --- Main ---
