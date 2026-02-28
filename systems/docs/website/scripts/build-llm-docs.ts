@@ -1,121 +1,61 @@
+// build-llm-docs — Generates llms.txt, llms-full.txt, llms-small.txt
+// Prebuild hook: runs before vitepress build.
+
 import fs from 'node:fs'
 import path from 'node:path'
 import { glob } from 'node:fs/promises'
-
-const cfDeploy = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../cf-deploy.json'), 'utf8'))
-const frontmatterRegex = /^\n*---(\n.+)*?\n---\n/
+import cfDeploy from '../../../../cf-deploy.json'
 
 const docsDir = path.resolve('docs')
+const frontmatterRegex = /^\n*---(\n.+)*?\n---\n/
+const siteUrl = cfDeploy.workers.router.production + cfDeploy.endpoints.docs
 
-const sliceExt = (file: string) => {
-  return file.split('.').slice(0, -1).join('.')
+function title(file: string) {
+  return file.replace(/\.(?:md|txt)$/, '').split('/').pop()!
+    .split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')
 }
 
-const extractLabel = (file: string) => {
-  return sliceExt(file.split('/').pop() || '')
-}
-
-function capitalizeDelimiter(str: string) {
-  return str
-    .split('-')
-    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-    .join(' ')
-}
-
-async function generateLLMDocs() {
-  const siteUrl = (cfDeploy as any).workers?.router?.production + (cfDeploy.endpoints.docs || '/docs/')
-
-  // --- llms.txt (index) ---
-  const outputListFile = path.resolve('public/llms.txt')
-  const optionalFiles = await glob('**/*.md', { cwd: docsDir })
-  const optionals: string[] = []
-
-  for await (const file of optionalFiles) {
-    optionals.push(
-      `- [${capitalizeDelimiter(extractLabel(file))}](${siteUrl}/${sliceExt(file)})`
-    )
+async function concat(pattern: string, header: string): Promise<string> {
+  let out = header + '# Start of CAD documentation\n'
+  for await (const file of await glob(pattern, { cwd: docsDir })) {
+    console.log(`> ${file}`)
+    out += fs.readFileSync(path.resolve(docsDir, file), 'utf-8').replace(frontmatterRegex, '') + '\n\n'
   }
+  return out
+}
 
-  // Check for third-party LLM refs in public/llms/
+async function main() {
+  // llms.txt — index of all doc pages
+  const links: string[] = []
+  for await (const file of await glob('**/*.md', { cwd: docsDir })) {
+    links.push(`- [${title(file)}](${siteUrl}${file.replace(/\.md$/, '')})`)
+  }
+  const thirdParty: string[] = []
   const llmsDir = path.resolve('public/llms')
-  const thirdPartyRefs: string[] = []
   if (fs.existsSync(llmsDir)) {
-    const llmsFiles = fs.readdirSync(llmsDir).filter((f) => f.endsWith('.txt'))
-    for (const file of llmsFiles) {
-      const label = capitalizeDelimiter(
-        file.replace('.txt', '').replace(/-llms(-full|-small)?/, '')
-      )
-      thirdPartyRefs.push(`- [${label}](${siteUrl}/llms/${file})`)
-    }
+    for (const f of fs.readdirSync(llmsDir).filter(f => f.endsWith('.txt')))
+      thirdParty.push(`- [${title(f)}](${siteUrl}llms/${f})`)
   }
+  fs.writeFileSync('public/llms.txt', [
+    '# CAD Documentation', '',
+    '> Browser-based 3D CAD built with Truck, WebGPU, Hono, and Automerge.', '',
+    '## Docs', '',
+    `- [Full Docs](${siteUrl}llms-full.txt): Complete documentation.`,
+    `- [Compact Docs](${siteUrl}llms-small.txt): User guide only.`, '',
+    '## Pages', '', ...links,
+    ...(thirdParty.length ? ['', '## Third-Party References', '', ...thirdParty] : []),
+  ].join('\n'), 'utf-8')
+  console.log('< public/llms.txt')
 
-  fs.writeFileSync(
-    outputListFile,
-    [
-      '# CAD Documentation',
-      '',
-      '> Browser-based 3D CAD built with Truck, WebGPU, Hono, and Automerge.',
-      '',
-      '## Docs',
-      '',
-      `- [Full Docs](${siteUrl}/llms-full.txt): Full documentation of CAD.`,
-      `- [Compact Docs](${siteUrl}/llms-small.txt): User guide only.`,
-      '',
-      '## Pages',
-      '',
-      ...optionals,
-      ...(thirdPartyRefs.length > 0
-        ? ['', '## Third-Party References', '', ...thirdPartyRefs]
-        : []),
-    ].join('\n'),
-    'utf-8'
-  )
-  console.log(`< Output '${outputListFile}' `)
+  // llms-full.txt — all docs concatenated
+  fs.writeFileSync('public/llms-full.txt',
+    await concat('**/*.md', '<SYSTEM>Full developer documentation for CAD.</SYSTEM>\n\n'), 'utf-8')
+  console.log('< public/llms-full.txt')
 
-  // --- llms-full.txt (all user + technical docs) ---
-  const outputFullFile = path.resolve('public/llms-full.txt')
-  const fullFiles = await glob('**/*.md', { cwd: docsDir })
-
-  const fullContent = await generateContent(
-    fullFiles,
-    docsDir,
-    '<SYSTEM>This is the full developer documentation for CAD.</SYSTEM>\n\n'
-  )
-
-  fs.writeFileSync(outputFullFile, fullContent, 'utf-8')
-  console.log(`< Output '${outputFullFile}' `)
-
-  // --- llms-small.txt (user docs only) ---
-  const outputSmallFile = path.resolve('public/llms-small.txt')
-  const smallFiles = await glob('user/**/*.md', { cwd: docsDir })
-
-  const smallContent = await generateContent(
-    smallFiles,
-    docsDir,
-    '<SYSTEM>This is the user guide documentation for CAD.</SYSTEM>\n\n'
-  )
-
-  fs.writeFileSync(outputSmallFile, smallContent, 'utf-8')
-  console.log(`< Output '${outputSmallFile}' `)
+  // llms-small.txt — user guide only
+  fs.writeFileSync('public/llms-small.txt',
+    await concat('user/**/*.md', '<SYSTEM>User guide for CAD.</SYSTEM>\n\n'), 'utf-8')
+  console.log('< public/llms-small.txt')
 }
 
-async function generateContent(
-  files: NodeJS.AsyncIterator<string>,
-  docsDir: string,
-  header: string
-): Promise<string> {
-  let content = header + '# Start of CAD documentation\n'
-
-  for await (const file of files) {
-    console.log(`> Writing '${file}' `)
-    const fileContent = fs.readFileSync(
-      path.resolve(docsDir, file),
-      'utf-8'
-    )
-    content += fileContent.replace(frontmatterRegex, '') + '\n\n'
-  }
-
-  return content
-}
-
-generateLLMDocs().catch(console.error)
+main().catch(console.error)
