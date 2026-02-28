@@ -9,4 +9,5 @@ preview_urls = true
 [dev]
 ip = "0.0.0.0"
 port = 5175
+inspector_port = 9231
 local_protocol = "http"

@@ -20,4 +20,5 @@ not_found_handling = "404-page"
 [dev]
 ip = "0.0.0.0"
 port = 5174
+inspector_port = 9230
 local_protocol = "http"

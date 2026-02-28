@@ -4,26 +4,36 @@
 # Stop:   task down
 # Attach: task attach        (reconnect to running TUI)
 #
-# Workers:
-#   http://localhost:8788       — CAD app, API, MCP (truck-cad + test-worker via -c flag)
-#   http://localhost:8788/docs/ — Docs (service binding auto-discovers docs-worker on :5174)
+# Each worker runs as its own wrangler dev process.
+# Service bindings auto-discover across processes — no extra config needed.
 #
-# Note: docs-worker runs separately because miniflare multi-config shares the
-# primary worker's ASSETS binding, breaking static asset isolation.
+# Adding a new worker:
+#   1. Add entry to cf-deploy.json
+#   2. Add a process below
+#   3. Add [[services]] binding in the truck worker's wrangler.toml
 
 version: "0.5"
 
 processes:
-  workers:
+  # Primary truck-cad worker (builds WASM + schema first)
+  worker:
     command: task truck:gui:serve
     availability:
       restart: on_failure
 
+  # Docs worker — serves VitePress static site
   docs-worker:
     command: cd systems/docs/worker && bun install --silent && bun x wrangler dev
     availability:
       restart: on_failure
 
+  # Test worker — minimal health-check worker
+  test-worker:
+    command: cd systems/test/worker && bun install --silent && bun x wrangler dev
+    availability:
+      restart: on_failure
+
+  # File watchers
   watch-gui:
     command: task truck:watch:gui
     availability:

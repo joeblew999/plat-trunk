@@ -93,7 +93,7 @@ tasks:
       - sh: test -f {{.SYSTEM_DIR}}/web/vendor/lit.js
         msg: "vendor/lit.js missing — run: git checkout HEAD -- systems/truck/web/vendor/lit.js"
     cmds:
-      - cd {{.SYSTEM_DIR}}/worker && bun install --silent && cd {{.ROOT_DIR}}/systems/test/worker && bun install --silent && cd {{.SYSTEM_DIR}}/worker && bun x wrangler dev -c wrangler.toml -c ../../test/worker/wrangler.toml
+      - cd {{.SYSTEM_DIR}}/worker && bun install --silent && exec bun x wrangler dev
 
   # --- Watch (used by process-compose) ---
 
