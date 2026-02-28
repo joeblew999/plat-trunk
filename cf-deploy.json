@@ -1,16 +1,16 @@
 {
   "workers": {
-    "worker": {
+    "router": {
+      "name": "plat-router",
+      "domain": "gedw99.workers.dev",
+      "dir": ".",
+      "production": "https://cad.ubuntusoftware.net"
+    },
+    "truck": {
       "name": "truck-cad",
       "domain": "gedw99.workers.dev",
       "dir": "systems/truck/worker",
-      "production": "https://cad.ubuntusoftware.net"
-    },
-    "docs": {
-      "name": "docs-worker",
-      "domain": "gedw99.workers.dev",
-      "dir": "systems/docs/worker",
-      "production": "https://cad.ubuntusoftware.net/docs"
+      "production": "https://truck-cad.gedw99.workers.dev"
     },
     "test": {
       "name": "test-worker",
@@ -30,13 +30,11 @@
     "mcp": "/mcp",
     "schema": "/api/cad/schema",
     "gui": "/",
-    "docs": "/docs/"
+    "docs": "/docs/",
+    "docsProduction": "https://cad.ubuntusoftware.net/docs"
   },
   "r2": {
     "documents": "cad-documents"
   },
-  "smoke": {
-    "extra": "task truck:smoke:extra"
-  },
-  "configVersion": 2
+  "configVersion": 3
 }

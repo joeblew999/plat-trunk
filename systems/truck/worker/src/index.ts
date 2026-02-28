@@ -8,8 +8,6 @@ import { initHeadlessWasm } from './truck-wasm';
 type Bindings = {
   MY_VAR: string;
   CAD_DOCS_BUCKET: R2Bucket;
-  DOCS: Fetcher;
-  TEST: Fetcher;
 };
 
 const app = new OpenAPIHono<{ Bindings: Bindings }>();
@@ -343,7 +341,7 @@ app.doc('/api/openapi.json', {
 
 api.openapi(createRoute({
   method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
-}), (c) => c.json({ status: 'ok', service: cfDeploy.workers.worker.name, version: (cadSchema as ModuleSchema).version }));
+}), (c) => c.json({ status: 'ok', service: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version }));
 
 // =========================================================================
 // Phase 0.5: Headless truck-webgpu-gui WASM test (ADR-0018)
@@ -465,7 +463,7 @@ app.post('/mcp', async (c) => {
           result: {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: cfDeploy.workers.worker.name, version: (cadSchema as ModuleSchema).version || '1.0.0' }
+            serverInfo: { name: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version || '1.0.0' }
           }
         });
         break;
@@ -487,7 +485,7 @@ app.post('/mcp', async (c) => {
           responses.push({
             jsonrpc: '2.0', id: msg.id,
             result: { content: [{ type: 'text', text: JSON.stringify({
-              status: 'ok', service: cfDeploy.workers.worker.name,
+              status: 'ok', service: cfDeploy.workers.truck.name,
               version: (cadSchema as ModuleSchema).version,
               activeModel: mid, sseClients: m?.sseClientCount ?? 0,
               browserConnected: (m?.sseClientCount ?? 0) > 0
@@ -521,7 +519,7 @@ app.post('/mcp', async (c) => {
         }
 
         // Documentation tools (ADR-0027 Phase 6)
-        const DOCS_URL = cfDeploy.workers.docs.production;
+        const DOCS_URL = (cfDeploy as any).endpoints?.docsProduction || 'https://cad.ubuntusoftware.net/docs';
         if (name === 'cad_docs_index') {
           try {
             const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());
@@ -717,7 +715,7 @@ app.get('/.well-known/security.txt', (c) => {
 `Contact: https://github.com/${cfDeploy.github}/security/advisories
 Expires: 2027-01-01T00:00:00.000Z
 Preferred-Languages: en
-Canonical: ${cfDeploy.workers.worker.production}/.well-known/security.txt
+Canonical: ${cfDeploy.workers.truck.production}/.well-known/security.txt
 `, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
 });
 
@@ -778,7 +776,7 @@ app.get('/.well-known/mcp/server-card.json', (c) => {
   return c.json({
     version: '1.0',
     protocolVersion: '2025-03-26',
-    serverInfo: { name: cfDeploy.workers.worker.name, title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
+    serverInfo: { name: cfDeploy.workers.truck.name, title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
     description: 'Professional 3D CAD system. B-Rep kernel (truck), WebGPU rendering, Automerge collaboration. 29 MCP tools for modeling, transforms, booleans, sketch, import/export, and control plane.',
     iconUrl: `${baseUrl}/favicon.svg`,
     documentationUrl: `${baseUrl}/llms.txt`,
@@ -786,7 +784,7 @@ app.get('/.well-known/mcp/server-card.json', (c) => {
     capabilities: { tools: true },
     authentication: { schemes: [] },
     tools: tools.map(t => t.name),
-    instructions: `Connect with: claude mcp add --transport http ${cfDeploy.workers.worker.name} ${baseUrl}/mcp`
+    instructions: `Connect with: claude mcp add --transport http ${cfDeploy.workers.truck.name} ${baseUrl}/mcp`
   }, 200, { 'cache-control': 'public, max-age=3600' });
 });
 
@@ -804,23 +802,6 @@ app.get('/model/*', async (c) => {
     return c.redirect(`/?model=${modelId}${url.search ? '&' + url.search.slice(1) : ''}`);
   }
   return c.redirect('/');
-});
-
-// Docs: forward /docs/* to docs-worker via service binding (ADR-0031)
-// Strips /docs prefix so docs-worker sees root-relative paths.
-app.all('/docs', (c) => c.redirect('/docs/', 301));
-app.all('/docs/*', async (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = url.pathname.replace(/^\/docs/, '') || '/';
-  return c.env.DOCS.fetch(new Request(url.toString(), c.req.raw));
-});
-
-// Test: forward /test/* to test-worker via service binding
-app.all('/test', (c) => c.redirect('/test/', 301));
-app.all('/test/*', async (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = url.pathname.replace(/^\/test/, '') || '/';
-  return c.env.TEST.fetch(new Request(url.toString(), c.req.raw));
 });
 
 export default app;

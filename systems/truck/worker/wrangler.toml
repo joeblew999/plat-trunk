@@ -1,20 +1,12 @@
-# Keep name, routes, port in sync with cf-deploy.json
-# (wrangler.toml can't import JSON)
+# Truck CAD sub-worker — API, MCP, SSE, WASM.
+# Accessed via service binding from the root router.
 name = "truck-cad"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 workers_dev = true
 preview_urls = true
 
-# Custom domain: cad.ubuntusoftware.net
-# Also keeps truck-cad.gedw99.workers.dev active
-routes = [
-  { pattern = "cad.ubuntusoftware.net", custom_domain = true },
-]
-
-# Serve systems/truck/web/ as static assets at the edge (no worker overhead).
-# not_found_handling = "none" passes unmatched paths to the worker, which handles:
-#   /api/*, /mcp, /docs/*, /test/*, /model/* (redirect to /?model=:id)
+# Serve web UI as static assets at the edge
 [assets]
 directory = "../web"
 not_found_handling = "none"
@@ -23,23 +15,11 @@ not_found_handling = "none"
 binding = "CAD_DOCS_BUCKET"
 bucket_name = "cad-documents"
 
-[[services]]
-binding = "DOCS"
-service = "docs-worker"
-
-[[services]]
-binding = "TEST"
-service = "test-worker"
-
 [vars]
 MY_VAR = "hello world"
 
 [dev]
 ip = "0.0.0.0"
-port = 8788
-inspector_port = 9229
+port = 8789
+inspector_port = 9230
 local_protocol = "http"
-
-# PR previews use --preview-alias on the main Worker (not a separate env).
-# Example: pr-42-truck-cad.gedw99.workers.dev
-# See: task truck:deploy:preview PR_NUMBER=42
