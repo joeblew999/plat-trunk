@@ -199,7 +199,7 @@ function nuke() {
       console.log(`  ${name}: deleted`);
     } catch { console.log(`  ${name}: not found (already deleted)`); }
   }
-  console.log("Done. All workers deleted. Deploy fresh with: npm run deploy");
+  console.log("Done. All workers deleted. Deploy fresh with: bun run deploy");
 }
 
 function deployAll() {

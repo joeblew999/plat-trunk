@@ -7,8 +7,8 @@ Browser + Cloudflare Workers CAD platform. [truck](https://github.com/ricosjp/tr
 ## Quick Start
 
 ```bash
-npm install
-npm run dev          # starts all workers → http://localhost:8788
+bun install
+bun run dev          # starts all workers → http://localhost:8788
 ```
 
 ## Architecture
@@ -25,22 +25,22 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. The r
 ## Commands
 
 ```bash
-npm run dev             # Start all workers (router + truck + test + watchers)
-npm run build           # Build WASM + docs
-npm run test            # Run all tests (cargo + vitest)
-npm run deploy          # Build + deploy all workers to Cloudflare
+bun run dev             # Start all workers (router + truck + test + watchers)
+bun run build           # Build WASM + docs
+bun run test            # Run all tests (cargo + vitest)
+bun run deploy          # Build + deploy all workers to Cloudflare
 
-npm run build:truck     # WASM compile + schema generation
-npm run build:docs      # Build VitePress docs
-npm run test:crate      # Rust unit tests
-npm run test:api        # Worker API tests (vitest)
-npm run test:e2e        # Playwright E2E tests
+bun run build:truck     # WASM compile + schema generation
+bun run build:docs      # Build VitePress docs
+bun run test:crate      # Rust unit tests
+bun run test:api        # Worker API tests (vitest)
+bun run test:e2e        # Playwright E2E tests
 ```
 
 ## Deploy
 
 ```bash
-npm run deploy                          # Build + deploy all workers
+bun run deploy                          # Build + deploy all workers
 bun scripts/cf-deploy.ts nuke           # Delete all workers (clean slate)
 bun scripts/cf-deploy.ts deploy-all     # Upload + deploy triggers (correct order)
 bun scripts/cf-deploy.ts upload --target truck   # Upload single worker

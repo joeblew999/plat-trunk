@@ -2,10 +2,10 @@
   "scripts": {
     "dev": "node run.mjs dev",
     "deploy": "node run.mjs deploy",
-    "build": "npm run build:truck && npm run build:docs",
+    "build": "bun run build:truck && bun run build:docs",
     "build:truck": "cd systems/truck/crate && wasm-pack build --target web --release --out-dir ../web/pkg-browser-renderer && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json",
     "build:docs": "cd systems/docs/website && bun install --silent && bun run build",
-    "test": "npm run test:crate && npm run test:api",
+    "test": "bun run test:crate && bun run test:api",
     "test:crate": "cd systems/truck/crate && cargo test",
     "test:api": "cd systems/truck/worker && bun x vitest run",
     "test:e2e": "cd systems/truck/tests && bun x playwright test"

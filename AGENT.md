@@ -4,22 +4,22 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 
 ## Quick Start
 ```sh
-npm install             # Install dependencies
-npm run dev             # Start all workers (localhost:8788)
+bun install             # Install dependencies
+bun run dev             # Start all workers (localhost:8788)
 # Ctrl+C to stop
 ```
 
 ## Key Commands
 ```sh
-npm run dev             # Start router + truck + test workers (run.mjs)
-npm run build           # Build WASM + docs
-npm run test            # Run all tests (cargo test + vitest)
-npm run deploy          # Build + upload all workers
-npm run build:truck     # WASM compile + schema generation only
-npm run build:docs      # Build VitePress docs only
-npm run test:crate      # Rust unit tests only
-npm run test:api        # Worker API tests only (vitest)
-npm run test:e2e        # Playwright E2E tests
+bun run dev             # Start router + truck + test workers (run.mjs)
+bun run build           # Build WASM + docs
+bun run test            # Run all tests (cargo test + vitest)
+bun run deploy          # Build + upload all workers
+bun run build:truck     # WASM compile + schema generation only
+bun run build:docs      # Build VitePress docs only
+bun run test:crate      # Rust unit tests only
+bun run test:api        # Worker API tests only (vitest)
+bun run test:e2e        # Playwright E2E tests
 ```
 
 ## Architecture
@@ -41,7 +41,7 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 - **Frontend**: Lit (Web Components) + Three.js (camera/orbit) + Datastar v1.0.0-RC.7 (reactive signals) + DaisyUI/Tailwind + WebGPU
 - **Sync**: Automerge CRDT for local-first op log + undo/redo
 - **Camera**: Three.js OrbitControls owns camera → pushes 4x4 matrix to WASM each frame (Passive WASM, ADR-0013)
-- **Orchestration**: `npm run` scripts + `run.mjs` (spawns wrangler dev per worker)
+- **Orchestration**: `bun run` scripts + `run.mjs` (spawns wrangler dev per worker)
 - **BIM**: Building on `ifc-lite` source in `.src/ifc-lite` for semantic building data.
 
 ## Folder Layout
@@ -52,7 +52,7 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 ├── src/router.ts          Routing logic (~70 lines)
 ├── workers.mjs            Worker registry (name, dir, port, build command)
 ├── run.mjs                Dev/deploy orchestrator (spawns child processes)
-├── package.json           All commands (npm run dev/build/test/deploy)
+├── package.json           All commands (bun run dev/build/test/deploy)
 ├── cf-deploy.json         Deploy metadata (workers, endpoints, account)
 ├── scripts/
 │   ├── cf-deploy.ts       Cloudflare deploy lifecycle (upload, promote, smoke)
@@ -129,7 +129,7 @@ Rust structs (#[derive(Deserialize, JsonSchema)])
   → controlPlane section: JS-layer commands (undo, redo, set_mode, clear_data, etc.)
 ```
 
-**The contract chain**: Add a command in Rust → `npm run build:truck` → schema regenerates → Worker/MCP/OpenAPI/tests all update automatically. Nothing hand-written drifts.
+**The contract chain**: Add a command in Rust → `bun run build:truck` → schema regenerates → Worker/MCP/OpenAPI/tests all update automatically. Nothing hand-written drifts.
 
 ## Single Dispatch Path
 
@@ -154,7 +154,7 @@ bun scripts/cf-deploy.ts upload --target truck
 bun scripts/cf-deploy.ts upload --target router
 
 # Upload all workers
-npm run deploy
+bun run deploy
 
 # PR preview (CI does this automatically)
 bun scripts/cf-deploy.ts upload --target truck --tag pr-42 --preview-alias pr-42
@@ -167,7 +167,7 @@ bun scripts/cf-deploy.ts list --target truck
 ```
 
 **CI pipeline** (`.github/workflows/ci.yml`):
-- All branches: `npm run build && npm run test`
+- All branches: `bun run build && bun run test`
 - Push to main: upload truck + build docs + upload router
 - PR opened: upload preview versions with `pr-{N}` aliases + sticky PR comment
 
@@ -202,11 +202,11 @@ URL resolution (no `CAD_URL` set):
 **Interactive verification pattern**:
 ```
 1. Make code change
-2. npm run build:truck (if Rust changed)
+2. bun run build:truck (if Rust changed)
 3. cad_add_cube({size: 1})            → drive via CAD MCP
 4. browser_snapshot                    → verify via Playwright MCP
 5. Write equivalent Playwright test
-6. npm run test:e2e                   → automate
+6. bun run test:e2e                   → automate
 ```
 
 ## Workflow: Real-Time BIM & Design Review
@@ -254,11 +254,11 @@ See `docs/adr/README.md` for the full index. Key decisions:
 
 ## AI Agent Rules
 
-1. **Use npm scripts**: All commands go through `package.json` scripts. `npm run dev` starts everything, `npm run test` tests everything.
+1. **Use npm scripts**: All commands go through `package.json` scripts. `bun run dev` starts everything, `bun run test` tests everything.
    - NEVER manually edit MCP configs (`~/.claude/mcp.json`, `~/.claude/settings.json`, etc.)
    - NEVER use curl to call MCP endpoints — use native MCP tools (`cad_add_cube`, etc.)
-2. **Schema first**: Never add/change API without updating `commands.rs` first, then `npm run build:truck`
-3. **Test driven**: Use `npm run test` to verify changes across the entire stack
+2. **Schema first**: Never add/change API without updating `commands.rs` first, then `bun run build:truck`
+3. **Test driven**: Use `bun run test` to verify changes across the entire stack
 4. **Single dispatch**: ALL mutations go through `cadCommand()` — never call WASM directly (except gizmo drag)
 5. **Don't hand-write**: Zod enums, MCP tool registrations, OpenAPI paths — all auto-generated from schema
 6. **reconcile() only**: Never write to Datastar signals directly — `reconcile()` is the single sync point
@@ -279,4 +279,4 @@ See `docs/adr/README.md` for the full index. Key decisions:
 | `https://truck-cad.gedw99.workers.dev` | Truck worker (workers.dev) |
 | `https://cad.ubuntusoftware.net/docs/` | Docs (VitePress via router DOCS_ASSETS) |
 | `https://cad.ubuntusoftware.net/docs/llms.txt` | LLM docs (auto-generated) |
-| `http://localhost:8788` | Local dev (router → all workers via `npm run dev`) |
+| `http://localhost:8788` | Local dev (router → all workers via `bun run dev`) |

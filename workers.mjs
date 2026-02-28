@@ -1,6 +1,6 @@
 // workers.mjs — Single source of truth for all workers in dev.
 //
-// Used by: run.mjs (npm run dev)
+// Used by: run.mjs (bun run dev)
 //
 // To add a new worker:
 //   1. Create systems/{name}/worker/ with wrangler.toml + src/index.ts
@@ -24,7 +24,7 @@ export const workers = [
     dir: 'systems/truck/worker',
     port: 8789,
     inspectorPort: 9230,
-    build: 'npm run build:truck',
+    build: 'bun run build:truck',
   },
   {
     name: 'test-worker',
@@ -38,7 +38,7 @@ export const workers = [
 export const watchers = [
   {
     name: 'watch-gui',
-    command: 'watchexec -w systems/truck/crate/src -e rs -- npm run build:truck',
+    command: 'watchexec -w systems/truck/crate/src -e rs -- bun run build:truck',
   },
   {
     name: 'watch-docs',

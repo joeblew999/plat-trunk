@@ -8,7 +8,7 @@
 #   /test/*  → TEST         (test-worker, port 5175 in dev)
 #   /*       → TRUCK        (truck-cad, port 8789 in dev)
 #
-# Dev:  npm run dev  → http://localhost:8788
+# Dev:  bun run dev  → http://localhost:8788
 # Prod: https://cad.ubuntusoftware.net
 # ───────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ routes = [
 ]
 
 # VitePress docs — explicit binding mode (worker code fetches, NOT auto-served)
-# Build: npm run build:docs → systems/docs/website/.vitepress/dist
+# Build: bun run build:docs → systems/docs/website/.vitepress/dist
 [assets]
 directory = "systems/docs/website/.vitepress/dist"
 binding = "DOCS_ASSETS"

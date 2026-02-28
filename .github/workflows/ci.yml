@@ -45,7 +45,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       # Build + test (build includes truck WASM + docs)
-      - run: npm run build && npm run test
+      - run: bun run build && bun run test
 
       # Main push: deploy all workers (sub-workers first, then router)
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'

@@ -10,8 +10,8 @@
 # Accessed via TRUCK service binding from plat-router.
 # Direct: http://localhost:8789 (dev) or https://truck-cad.gedw99.workers.dev
 #
-# Build: npm run build:truck  (wasm-pack + schema generation)
-# Test:  npm run test:api     (vitest)
+# Build: bun run build:truck  (wasm-pack + schema generation)
+# Test:  bun run test:api     (vitest)
 # ───────────────────────────────────────────────────────
 
 name = "truck-cad"
