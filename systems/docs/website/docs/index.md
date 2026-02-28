@@ -9,7 +9,7 @@ hero:
   actions:
     - theme: brand
       text: Open the App
-      link: https://cad.ubuntusoftware.net
+      link: /
     - theme: alt
       text: Get Started
       link: /user/getting-started

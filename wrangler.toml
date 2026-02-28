@@ -4,7 +4,7 @@
 #
 # Entry point for ALL traffic. Routes requests to sub-workers:
 #
-#   /docs/*  → DOCS_ASSETS  (VitePress static files, served directly)
+#   /docs/*  → DOCS_ASSETS  (VitePress static files via binding)
 #   /test/*  → TEST         (test-worker, port 5175 in dev)
 #   /*       → TRUCK        (truck-cad, port 8789 in dev)
 #
@@ -23,12 +23,14 @@ routes = [
   { pattern = "cad.ubuntusoftware.net", custom_domain = true },
 ]
 
-# VitePress docs — explicit binding mode (worker code fetches, NOT auto-served)
+# VitePress docs — run_worker_first = true ensures router code handles ALL requests.
+# Without it, assets auto-serve at / which conflicts with truck-cad.
 # Build: bun run build:docs → systems/docs/website/.vitepress/dist
 [assets]
 directory = "systems/docs/website/.vitepress/dist"
 binding = "DOCS_ASSETS"
 not_found_handling = "none"
+run_worker_first = true
 
 # Sub-worker service bindings (auto-discover in dev)
 [[services]]
