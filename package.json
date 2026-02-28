@@ -13,7 +13,6 @@
   "dependencies": {},
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260212.0",
-    "cf-deploy": "github:joeblew999/cf-deploy",
     "wrangler": "^4.69.0"
   }
 }
