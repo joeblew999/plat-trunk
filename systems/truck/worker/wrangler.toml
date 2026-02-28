@@ -12,11 +12,13 @@ routes = [
   { pattern = "cad.ubuntusoftware.net", custom_domain = true },
 ]
 
-# Serve systems/truck/web/ as static assets — HTML, JS, WASM all served from the edge
-# SPA routing: /model/:id paths serve index.html (JS reads pathname for modelId)
+# Serve systems/truck/web/ as static assets.
+# Uses explicit ASSETS binding so worker code runs first (needed for /docs/ and /test/ routing).
+# Worker handles SPA fallback for /model/* paths.
 [assets]
 directory = "../web"
-not_found_handling = "single-page-application"
+binding = "ASSETS"
+not_found_handling = "none"
 
 [[r2_buckets]]
 binding = "CAD_DOCS_BUCKET"

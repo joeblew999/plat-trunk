@@ -4,31 +4,26 @@
 # Stop:   task down
 # Attach: task attach        (reconnect to running TUI)
 #
-# All workers run on one port via service bindings:
-#   http://localhost:8788       — CAD app, API, MCP
-#   http://localhost:8788/docs/ — Docs (service binding → docs-worker)
-#   env.TEST binding            — Test worker (service binding → test-worker)
-#   http://localhost:8000       — TUI
+# Workers:
+#   http://localhost:8788       — CAD app, API, MCP (truck-cad + test-worker via -c flag)
+#   http://localhost:8788/docs/ — Docs (service binding auto-discovers docs-worker on :5174)
+#
+# Note: docs-worker runs separately because miniflare multi-config shares the
+# primary worker's ASSETS binding, breaking static asset isolation.
 
 version: "0.5"
 
 processes:
-  # Main worker: truck-cad (port 8788, proxies /docs/ via service binding)
   workers:
     command: task truck:gui:serve
-    depends_on:
-      docs-worker:
-        condition: process_started
     availability:
       restart: on_failure
 
-  # Docs worker: must be running for service binding to work locally
   docs-worker:
     command: cd systems/docs/worker && bun install --silent && bun x wrangler dev
     availability:
       restart: on_failure
 
-  # Rust WASM rebuilds on source change
   watch-gui:
     command: task truck:watch:gui
     availability:
@@ -41,13 +36,5 @@ processes:
 
   watch-docs:
     command: task vitepress:watch
-    availability:
-      restart: on_failure
-
-  # Optional (start from TUI when needed)
-  shape-viewer:
-    command: task truck:run:shape-viewer
-    disabled: true
-    description: "Geometry viewer for debugging WASM shape ops"
     availability:
       restart: on_failure
