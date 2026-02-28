@@ -1,6 +1,9 @@
 // Root router — routes all traffic to sub-workers, serves docs assets.
 // Uses Hono for consistency with truck-cad worker.
 // Keep this thin. No business logic here.
+//
+// Dev:  /docs/* → proxy to VitePress dev server (port 5176, live HMR)
+// Prod: /docs/* → DOCS_ASSETS binding (static build)
 
 import { Hono } from 'hono';
 
@@ -17,6 +20,22 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.get('/docs', (c) => c.redirect('/docs/', 301));
 
 app.all('/docs/*', async (c) => {
+  // Dev mode: proxy to VitePress dev server for live HMR.
+  // VitePress dev serves at /docs/ (matching base config).
+  const host = new URL(c.req.url).hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    const devUrl = new URL(c.req.url);
+    devUrl.protocol = 'http:';
+    devUrl.hostname = 'localhost';
+    devUrl.port = '5176';
+    try {
+      return await fetch(new Request(devUrl.toString(), c.req.raw));
+    } catch {
+      // VitePress dev not running — fall through to static assets
+    }
+  }
+
+  // Prod mode: serve from DOCS_ASSETS binding.
   const assetPath = c.req.path.replace(/^\/docs/, '') || '/';
   const assetUrl = new URL(c.req.url);
   assetUrl.pathname = assetPath;

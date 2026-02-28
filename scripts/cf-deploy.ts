@@ -13,6 +13,7 @@ interface Config {
   version: { source: string }; output: string;
   endpoints: Record<string, string>;
   smoke?: { extra?: string };
+  r2?: Record<string, string>;
 }
 interface PlatformInfo { id: string; url: string; immutableUrl: string }
 interface VersionEntry { version: string; tag: string; date: string; platforms: Record<string, PlatformInfo>; git?: any; commandCount?: number }
@@ -192,42 +193,91 @@ function config() {
 }
 
 function nuke() {
-  console.log("Deleting all workers from Cloudflare...");
-  for (const [name, w] of Object.entries(cfg.workers)) {
-    try {
-      wr(w.dir, `delete --name ${w.name} --force`, true);
-      console.log(`  ${name}: deleted`);
-    } catch { console.log(`  ${name}: not found (already deleted)`); }
+  const sub = process.argv[3];
+  if (!sub) {
+    console.log("Nuke commands (granular teardown):");
+    console.log("  nuke code   — Delete all worker code (domains auto-reconnect on redeploy)");
+    console.log("  nuke data   — Wipe R2 buckets (worker code stays running)");
+    console.log("  nuke dns    — Remove custom domain routes");
+    console.log("  nuke all    — Everything: code + data + dns");
+    process.exit(0);
   }
-  console.log("Done. All workers deleted. Deploy fresh with: bun run deploy");
+
+  if (sub === "code" || sub === "all") {
+    console.log("Deleting all workers...");
+    for (const [name, w] of Object.entries(cfg.workers)) {
+      try {
+        wr(w.dir, `delete --name ${w.name} --force`, true);
+        console.log(`  ${name}: deleted`);
+      } catch { console.log(`  ${name}: not found`); }
+    }
+  }
+
+  if (sub === "data" || sub === "all") {
+    console.log("Wiping R2 buckets...");
+    if (cfg.r2) {
+      for (const [label, bucket] of Object.entries(cfg.r2 as Record<string, string>)) {
+        try {
+          const objects = JSON.parse(execSync(
+            `bunx wrangler r2 object list ${bucket} --json 2>/dev/null || echo "[]"`,
+            { cwd: rootDir, encoding: "utf8" }
+          ));
+          if (Array.isArray(objects) && objects.length > 0) {
+            for (const obj of objects) {
+              execSync(`bunx wrangler r2 object delete ${bucket}/${obj.key}`, { cwd: rootDir, stdio: "inherit" });
+            }
+            console.log(`  ${label} (${bucket}): ${objects.length} objects deleted`);
+          } else {
+            console.log(`  ${label} (${bucket}): empty`);
+          }
+        } catch { console.log(`  ${label} (${bucket}): skipped (not found or empty)`); }
+      }
+    } else {
+      console.log("  No R2 buckets configured.");
+    }
+  }
+
+  if (sub === "dns" || sub === "all") {
+    console.log("Removing custom domain routes...");
+    for (const [name, w] of Object.entries(cfg.workers)) {
+      try {
+        execSync(
+          `bunx wrangler deployments list --name ${w.name} --json 2>/dev/null`,
+          { cwd: rootDir, encoding: "utf8" }
+        );
+        console.log(`  ${name}: routes will re-register on next deploy`);
+      } catch { console.log(`  ${name}: no routes`); }
+    }
+    console.log("  Note: Custom domains re-register automatically on next deploy.");
+  }
+
+  console.log("\nDone. Redeploy with: bun run deploy");
 }
 
 function deployAll() {
-  // Upload sub-workers first (router depends on them via service bindings)
+  // Deploy sub-workers first (router depends on them via service bindings).
+  // Uses `wrangler deploy` which uploads + activates + sets up routes in one step.
   const entries = Object.entries(cfg.workers);
   const routerEntry = entries.find(([, w]) => w.name === "plat-router");
   const subWorkers = entries.filter(([, w]) => w.name !== "plat-router");
 
-  for (const [name] of subWorkers) {
-    console.log(`\n=== Uploading ${name} ===`);
-    try { execSync(`bun scripts/cf-deploy.ts upload --target ${name}`, { cwd: rootDir, stdio: "inherit" }); }
-    catch { console.error(`FAIL: ${name}`); process.exit(1); }
+  for (const [name, w] of subWorkers) {
+    console.log(`\n=== Deploying ${name} ===`);
+    try {
+      execSync("bun install", { cwd: resolve(rootDir, w.dir), encoding: "utf8" });
+      wr(w.dir, "deploy", true);
+      console.log(`  ${name}: deployed`);
+    } catch { console.error(`FAIL: ${name}`); process.exit(1); }
   }
 
   if (routerEntry) {
-    const [name] = routerEntry;
-    console.log(`\n=== Uploading ${name} (last — depends on sub-workers) ===`);
-    try { execSync(`bun scripts/cf-deploy.ts upload --target ${name}`, { cwd: rootDir, stdio: "inherit" }); }
-    catch { console.error(`FAIL: ${name}`); process.exit(1); }
-  }
-
-  // Deploy triggers for all workers
-  console.log("\n=== Deploying triggers ===");
-  for (const [name, w] of entries) {
+    const [name, w] = routerEntry;
+    console.log(`\n=== Deploying ${name} (last — depends on sub-workers) ===`);
     try {
-      wr(w.dir, `triggers deploy --name ${w.name}`, true);
-      console.log(`  ${name}: triggers deployed`);
-    } catch { console.log(`  ${name}: triggers skipped`); }
+      execSync("bun install", { cwd: resolve(rootDir, w.dir), encoding: "utf8" });
+      wr(w.dir, "deploy", true);
+      console.log(`  ${name}: deployed`);
+    } catch { console.error(`FAIL: ${name}`); process.exit(1); }
   }
 
   console.log("\nAll workers deployed.");
@@ -248,5 +298,5 @@ switch (cmd) {
   case "nuke": nuke(); break;
   case "deploy-all": deployAll(); break;
   case "list-targets": console.log(Object.keys(cfg.workers).join("\n")); break;
-  default: console.log("Commands: upload promote release rollback smoke versions foreach config nuke deploy-all list-targets"); break;
+  default: console.log("Commands: upload promote release rollback smoke versions foreach config nuke deploy-all list-targets\n  nuke sub-commands: code data dns all"); break;
 }

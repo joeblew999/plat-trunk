@@ -105,13 +105,8 @@ async function dev() {
 }
 
 async function deploy() {
-  // Build all
-  for (const w of workers) {
-    if (w.build) {
-      console.log(`Building ${w.name}...`);
-      exec(w.build, '.');
-    }
-  }
+  // Release build (not dev build) — uses package.json scripts
+  exec('bun run build');
   // Deploy via cf-deploy.ts (handles correct order: sub-workers first, then router)
   exec('bun scripts/cf-deploy.ts deploy-all');
 }

@@ -9,7 +9,8 @@ hero:
   actions:
     - theme: brand
       text: Open the App
-      link: /
+      link: ../
+      target: _self
     - theme: alt
       text: Get Started
       link: /user/getting-started

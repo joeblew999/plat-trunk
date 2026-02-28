@@ -10,8 +10,11 @@
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
     "test:e2e": "cd systems/truck/tests && bun x playwright test",
     "deploy": "node run.mjs deploy",
-    "deploy:nuke": "bun scripts/cf-deploy.ts nuke",
-    "deploy:upload": "bun scripts/cf-deploy.ts upload"
+    "deploy:upload": "bun scripts/cf-deploy.ts upload",
+    "deploy:nuke:code": "bun scripts/cf-deploy.ts nuke code",
+    "deploy:nuke:data": "bun scripts/cf-deploy.ts nuke data",
+    "deploy:nuke:dns": "bun scripts/cf-deploy.ts nuke dns",
+    "deploy:nuke:all": "bun scripts/cf-deploy.ts nuke all"
   },
   "dependencies": {
     "hono": "^4.11.9"
