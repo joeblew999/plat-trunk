@@ -519,7 +519,7 @@ app.post('/mcp', async (c) => {
         }
 
         // Documentation tools (ADR-0027 Phase 6)
-        const DOCS_URL = (cfDeploy as any).endpoints?.docsProduction || 'https://cad.ubuntusoftware.net/docs';
+        const DOCS_URL = ((cfDeploy as any).workers?.router?.production || 'https://cad.ubuntusoftware.net') + ((cfDeploy as any).endpoints?.docs || '/docs/');
         if (name === 'cad_docs_index') {
           try {
             const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());

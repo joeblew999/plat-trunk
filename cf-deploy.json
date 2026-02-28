@@ -30,8 +30,7 @@
     "mcp": "/mcp",
     "schema": "/api/cad/schema",
     "gui": "/",
-    "docs": "/docs/",
-    "docsProduction": "https://cad.ubuntusoftware.net/docs"
+    "docs": "/docs/"
   },
   "r2": {
     "documents": "cad-documents"
