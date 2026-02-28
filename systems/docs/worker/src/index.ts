@@ -1,5 +1,6 @@
 // Docs Worker — serves VitePress static site via Workers Static Assets.
 // Accessed via service binding from truck-cad Worker at /docs/*.
+// Handles clean URL resolution and redirect rewriting for the /docs/ mount.
 
 interface Env {
   ASSETS: Fetcher;

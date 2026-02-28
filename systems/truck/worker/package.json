@@ -5,7 +5,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "hono": "^4.11.9",
     "kkrpc": "^0.6.7",
-    "wrangler": "^4.65.0",
+    "wrangler": "^4.69.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

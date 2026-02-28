@@ -1,5 +1,9 @@
 # Docs Worker — serves VitePress static site via Workers Static Assets (ADR-0031)
 # Accessed via service binding from truck-cad Worker at /docs/*
+#
+# Runs as separate wrangler dev process locally (miniflare multi-config
+# shares the primary worker's asset directory — Cloudflare docs recommend
+# separate processes for workers with independent static assets).
 name = "docs-worker"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"
