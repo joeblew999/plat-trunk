@@ -5,7 +5,6 @@
   "private": true,
   "scripts": {
     "dev": "vitepress dev",
-    "prebuild": "bun ./scripts/build-llm-docs.ts",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

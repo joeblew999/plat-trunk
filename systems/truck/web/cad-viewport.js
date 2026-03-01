@@ -113,7 +113,7 @@ export class CadViewport extends LitElement {
         }
         console.log('[cad-viewport] WASM SceneController ready');
         // Start tier manager (ADR-0025 Phase 2)
-        startTierManager('default');
+        startTierManager(window.__modelId || 'default');
         if (window.reconcile) window.reconcile({});
       } catch (err) {
         console.error('[cad-viewport] WASM init failed:', err);
@@ -188,10 +188,10 @@ export class CadViewport extends LitElement {
       }
 
       // Standard pick + select (cadQuery is sync — cadCommand returns a Promise)
-      const result = window.cadQuery('pick_at', { ndcX, ndcY }, { record: false, broadcast: false });
+      const result = window.cadQuery('pick_at', { ndcX, ndcY });
       const pickedId = (result && result.pickedId) || '';
       if (pickedId) touchObject(pickedId);
-      window.cadQuery('select', { id: pickedId }, { record: false, broadcast: false });
+      window.cadQuery('select', { id: pickedId });
     });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -233,7 +233,7 @@ export class CadViewport extends LitElement {
           canvas.style.cursor = '';
           window.sceneController.cancel_gizmo_drag();
         } else if (window.sceneController) {
-          window.cadQuery('deselect', {}, { record: false, broadcast: false });
+          window.cadQuery('deselect', {});
         }
         e.preventDefault();
       }
@@ -248,7 +248,7 @@ export class CadViewport extends LitElement {
       setTimeout(() => this._syncFromWasm(), 100);
       return;
     }
-    const state = window.cadQuery('get_state', {}, { record: false, broadcast: false });
+    const state = window.cadQuery('get_state', {});
     if (state && state.camera) {
       const c = state.camera;
       this.camera.matrixWorld.fromArray(c.matrixWorld);
@@ -289,7 +289,7 @@ export class CadViewport extends LitElement {
       fovDeg: this.camera.fov,
       near: this.camera.near,
       far: this.camera.far,
-    }, { record: false, broadcast: false });
+    });
   }
 
   // ── Render Loop ──────────────────────────────────────────────────
@@ -328,7 +328,7 @@ export class CadViewport extends LitElement {
    */
   zoomTo(objectId = null) {
     if (!window.cadQuery) return;
-    const res = window.cadQuery('get_state', {}, { record: false, broadcast: false });
+    const res = window.cadQuery('get_state', {});
     if (!res) return;
 
     // For now, zoom to scene center with a reasonable distance

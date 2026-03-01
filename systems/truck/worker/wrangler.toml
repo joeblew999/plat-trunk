@@ -28,13 +28,10 @@ directory = "../web"
 binding = "ASSETS"
 not_found_handling = "none"
 
-# R2 bucket for CAD document storage
+# R2 bucket for persistent model storage
 [[r2_buckets]]
-binding = "CAD_DOCS_BUCKET"
+binding = "MODELS"
 bucket_name = "cad-documents"
-
-[vars]
-MY_VAR = "hello world"
 
 [dev]
 ip = "0.0.0.0"

@@ -124,8 +124,7 @@ class CfControlPlane extends HTMLElement {
     ).join('');
 
     // --- Endpoints section ---
-    const firstProdUrl = production[platformNames[0]] || '';
-    const base = this._workerUrl || firstProdUrl;
+    const base = this._isLocal ? '' : (this._workerUrl || production.router || production[platformNames[0]] || '');
     const endpointItems = Object.entries(m.endpoints || {}).map(([name, path]) => {
       const url = String(path).startsWith('http') ? path : `${base}${path}`;
       return `<li><a href="${url}" target="_blank">${name}</a></li>`;

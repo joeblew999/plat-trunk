@@ -9,7 +9,7 @@
  *   - Instant stdio init (no blocking on HTTP before listening)
  *   - Retry with exponential backoff (survives dev server restarts)
  *   - Schema version polling (hot-reload tools without AI client restart)
- *   - Graceful degradation: returns cad_bridge_status when Worker is down
+ *   - Tool list caching: always returns full tools, even when Worker is down
  *   - Startup log file for post-mortem debugging
  *   - Auto-detect: local dev server first, PR preview URL as fallback
  *
@@ -28,7 +28,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { mkdirSync, appendFileSync, readFileSync, existsSync } from 'fs';
+import { mkdirSync, appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -54,6 +54,7 @@ const startedAt = Date.now();
 // --- Logging ---
 const LOG_DIR = join(homedir(), '.cache', WORKER_NAME);
 const LOG_FILE = join(LOG_DIR, 'mcp-bridge.log');
+const TOOLS_CACHE_FILE = join(LOG_DIR, 'tools-cache.json');
 
 function log(msg: string) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -63,6 +64,38 @@ function log(msg: string) {
     appendFileSync(LOG_FILE, line + '\n');
   } catch {
     // Can't write log — not fatal
+  }
+}
+
+// --- Tool List Cache ---
+// Saves the last known tool list to disk so the bridge can return all tools
+// immediately, even when the Worker is down. This ensures AI clients always
+// see the full tool set at session start.
+
+let cachedTools: any[] | null = null;
+
+function loadToolsCache(): any[] | null {
+  try {
+    if (existsSync(TOOLS_CACHE_FILE)) {
+      const data = JSON.parse(readFileSync(TOOLS_CACHE_FILE, 'utf8'));
+      if (Array.isArray(data) && data.length > 1) {
+        log(`Loaded ${data.length} tools from cache`);
+        return data;
+      }
+    }
+  } catch {
+    // Cache corrupt — ignore
+  }
+  return null;
+}
+
+function saveToolsCache(tools: any[]) {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    writeFileSync(TOOLS_CACHE_FILE, JSON.stringify(tools));
+    log(`Cached ${tools.length} tools to disk`);
+  } catch {
+    // Can't write cache — not fatal
   }
 }
 
@@ -150,7 +183,7 @@ async function proxy(body: any): Promise<any> {
     try {
       const res = await fetch(`${BASE_URL}/mcp`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
       });
@@ -187,7 +220,7 @@ async function getBridgeStatus(): Promise<any> {
     if (res.ok) {
       workerReachable = true;
       const health = await res.json() as any;
-      toolsCount = 29; // known from schema
+      toolsCount = cachedTools?.length || 0;
       lastVersion = health.version || lastVersion;
     }
   } catch (err: any) {
@@ -203,8 +236,9 @@ async function getBridgeStatus(): Promise<any> {
         worker_reachable: workerReachable,
         schema_version: lastVersion || 'unknown',
         tools_count: toolsCount,
+        tools_source: workerReachable ? 'live' : (cachedTools ? 'cache' : 'none'),
         uptime_ms: Date.now() - startedAt,
-        ...(lastError ? { last_error: lastError, hint: 'Run: task up' } : {}),
+        ...(lastError ? { last_error: lastError, hint: 'Run: bun run dev' } : {}),
       }, null, 2),
     }],
   };
@@ -220,14 +254,27 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   try {
     const response = await proxy({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
-    // Prepend bridge status tool to the Worker's tools
-    const tools = [BRIDGE_STATUS_TOOL, ...(response.result?.tools || [])];
-    return { tools };
+    const workerTools = response.result?.tools || [];
+    if (workerTools.length > 0) {
+      // Got live tools — cache them for next time
+      const tools = [BRIDGE_STATUS_TOOL, ...workerTools];
+      cachedTools = tools;
+      saveToolsCache(tools);
+      return { tools };
+    }
   } catch (err: any) {
-    // Worker down — return bridge-only tool so session doesn't fail
-    log(`tools/list failed (${err.message}), returning bridge-only tool`);
-    return { tools: [BRIDGE_STATUS_TOOL] };
+    log(`tools/list failed (${err.message}), using cache`);
   }
+
+  // Worker down — return cached tools so AI client sees all tools at session start
+  if (cachedTools && cachedTools.length > 1) {
+    log(`Returning ${cachedTools.length} cached tools (worker offline)`);
+    return { tools: cachedTools };
+  }
+
+  // No cache at all — last resort, return bridge-only tool
+  log('No cached tools available, returning bridge-only tool');
+  return { tools: [BRIDGE_STATUS_TOOL] };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -263,21 +310,42 @@ async function pollVersion() {
   }
 }
 
+// --- Pre-warm tool cache on startup ---
+
+async function prewarmToolsCache() {
+  if (cachedTools && cachedTools.length > 1) return; // already have cache
+  try {
+    const response = await proxy({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+    const workerTools = response.result?.tools || [];
+    if (workerTools.length > 0) {
+      cachedTools = [BRIDGE_STATUS_TOOL, ...workerTools];
+      saveToolsCache(cachedTools);
+      log(`Pre-warmed cache with ${cachedTools.length} tools`);
+    }
+  } catch {
+    // Worker not up yet — fine, cache will populate on first tools/list call
+  }
+}
+
 // --- Lifecycle: stdio FIRST, URL lazy ---
 
 const transport = new StdioServerTransport();
 
 async function start() {
-  log(`Bridge starting (bun ${Bun.version})`);
+  // Load cached tools BEFORE connecting stdio — instant tool availability
+  cachedTools = loadToolsCache();
+
+  log(`Bridge starting (bun ${Bun.version})${cachedTools ? `, ${cachedTools.length} cached tools` : ', no cache'}`);
 
   // Connect stdio IMMEDIATELY — no blocking on HTTP
   await server.connect(transport);
   log('stdio transport connected');
 
-  // URL resolution + version poll happen in background (non-blocking)
+  // URL resolution + version poll + tool cache pre-warm happen in background
   ensureUrl()
     .then(() => log(`Proxy → ${BASE_URL}/mcp`))
     .then(() => pollVersion())
+    .then(() => prewarmToolsCache())
     .then(() => log(`Ready (${lastVersion || 'no schema yet'})`))
     .catch(() => log('Background URL resolution failed (will retry on request)'));
 

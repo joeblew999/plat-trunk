@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <base href="/">
     <title>CAD</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,10 90,30 90,70 50,90 10,70 10,30' fill='%23444' stroke='%23fff' stroke-width='3'/><line x1='50' y1='10' x2='50' y2='90' stroke='%23fff' stroke-width='2'/><line x1='10' y1='30' x2='90' y2='30' stroke='%23fff' stroke-width='2'/><line x1='10' y1='70' x2='50' y2='50' stroke='%23fff' stroke-width='1.5' opacity='.5'/></svg>">
     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
@@ -155,7 +156,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 data-on:click="window.cadCommand('clear')">Clear</button>
     </nav>
 
-    <!-- ═══════════════════ LEFT PANEL: OUTLINER ═══════════════════ -->
+    <!-- ═══════════════════ LEFT PANEL: CONTROL PLANE ═══════════════════ -->
     <aside class="app-outliner" data-testid="outliner">
         <h3 data-section="scene">Scene</h3>
         <cad-outliner data-testid="object-list" class="text-xs block"
@@ -168,35 +169,121 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         <div class="text-xs" data-text="$boolLabel"
              data-class="{'opacity-40': !$boolReady, 'text-success font-semibold': $boolReady}"></div>
 
-        <!-- Transform section -->
-        <h3 data-section="transform">Transform</h3>
+        <!-- File section -->
+        <h3 data-section="file">File</h3>
         <div class="flex flex-col gap-1 text-xs">
-            <div class="flex gap-1 items-center">
-                <span class="w-8 opacity-50">Move</span>
-                <input type="number" data-bind="txVal" step="0.1" class="input input-xs flex-1" placeholder="dx"/>
-                <input type="number" data-bind="tyVal" step="0.1" class="input input-xs flex-1" placeholder="dy"/>
-                <input type="number" data-bind="tzVal" step="0.1" class="input input-xs flex-1" placeholder="dz"/>
+            <div class="flex gap-1">
+                <button id="newDocBtn" data-testid="new-doc" class="btn btn-xs btn-outline flex-1">New</button>
+                <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline flex-1">Share</button>
             </div>
-            <button data-testid="translate" class="btn btn-xs btn-outline w-full"
-                    data-on:click="window.cadCommand('translate', {objectId: $selectedId, dx: $txVal, dy: $tyVal, dz: $tzVal})">Move Selected</button>
-            <div class="flex gap-1 items-center mt-1">
-                <span class="w-8 opacity-50">Rot</span>
-                <select data-bind="rotAxis" class="select select-xs flex-1">
-                    <option value="x">X</option><option value="y" selected>Y</option><option value="z">Z</option>
-                </select>
-                <input type="number" data-bind="rotAngle" step="15" class="input input-xs w-14" placeholder="deg"/>
+            <div class="flex gap-1">
+                <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1" title="Save scene as JSON">Save</button>
+                <button id="saveCloudBtn" data-testid="save-cloud" class="btn btn-xs btn-primary flex-1" title="Save to cloud storage">Cloud</button>
+                <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1" title="Load scene from JSON">Load</button>
             </div>
-            <button data-testid="rotate" class="btn btn-xs btn-outline w-full"
-                    data-on:click="window.cadCommand('rotate', {objectId: $selectedId, axisX: $rotAxis==='x'?1:0, axisY: $rotAxis==='y'?1:0, axisZ: $rotAxis==='z'?1:0, angleDeg: $rotAngle})">Rotate Selected</button>
-            <div class="flex gap-1 items-center mt-1">
-                <span class="w-8 opacity-50">Scale</span>
-                <input type="number" data-bind="scaleVal" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="factor"/>
+            <div class="flex gap-1">
+                <button id="exportStepBtn" data-testid="export-step" class="btn btn-xs btn-outline flex-1" title="Export scene as STEP">STEP</button>
+                <button id="exportObjBtn" data-testid="export-obj" class="btn btn-xs btn-outline flex-1" title="Export scene as OBJ">OBJ</button>
+                <button id="exportStlBtn" data-testid="export-stl" class="btn btn-xs btn-outline flex-1" title="Export scene as STL">STL</button>
             </div>
-            <button data-testid="scale" class="btn btn-xs btn-outline w-full"
-                    data-on:click="window.cadCommand('scale', {objectId: $selectedId, sx: $scaleVal, sy: $scaleVal, sz: $scaleVal})">Scale Selected</button>
+            <div class="flex gap-1">
+                <button id="importStepBtn" data-testid="import-step" class="btn btn-xs btn-outline flex-1" title="Import B-Rep from STEP">Import STEP</button>
+                <button id="importIfcBtn" data-testid="import-ifc" class="btn btn-xs btn-outline flex-1" title="Import BIM from IFC">Import IFC</button>
+            </div>
+            <input type="file" id="fileInput" accept=".json,.step,.stp,.ifc" class="hidden" />
+            <select id="exampleSelect" class="select select-xs w-full">
+                <option value="">Load example...</option>
+            </select>
         </div>
 
-        <!-- Sketch section -->
+        <!-- Gallery — saved cloud models -->
+        <h3 data-section="gallery">Gallery</h3>
+        <cad-gallery data-testid="gallery" class="block"></cad-gallery>
+
+        <!-- AI / MCP -->
+        <h3>AI / MCP</h3>
+        <div class="space-y-1" data-testid="mcp-section">
+            <div class="text-xs opacity-60 mb-1">Connect your AI agent to this CAD system</div>
+            <div class="flex gap-1 items-center">
+                <code class="text-[10px] bg-base-300 px-1 py-0.5 rounded flex-1 truncate cursor-pointer"
+                      data-testid="mcp-url"
+                      title="Click to copy MCP endpoint URL"
+                      onclick="navigator.clipboard.writeText(location.origin + '/mcp').then(() => this.textContent = 'Copied!').then(() => setTimeout(() => this.textContent = location.origin + '/mcp', 1500))">
+                </code>
+            </div>
+            <details class="collapse collapse-arrow bg-base-200 rounded-box" data-testid="mcp-setup">
+                <summary class="collapse-title text-xs font-medium min-h-0 py-1 px-2">Setup snippets</summary>
+                <div class="collapse-content text-[10px] space-y-2 px-2 pb-2">
+                    <div>
+                        <div class="font-bold opacity-70">Claude Code</div>
+                        <code class="block bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-claude">claude mcp add --transport http truck-cad <span class="mcp-origin"></span>/mcp</code>
+                    </div>
+                    <div>
+                        <div class="font-bold opacity-70">Cursor / VS Code</div>
+                        <pre class="bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-cursor">{ "mcpServers": { "truck-cad": { "type": "http", "url": "<span class="mcp-origin"></span>/mcp" } } }</pre>
+                    </div>
+                    <div>
+                        <div class="font-bold opacity-70">Any MCP client</div>
+                        <code class="block bg-base-300 p-1 rounded break-all" data-testid="mcp-generic">POST <span class="mcp-origin"></span>/mcp</code>
+                    </div>
+                    <div class="flex gap-1 mt-1">
+                        <a href="/llms.txt" target="_blank" class="link link-xs link-primary">llms.txt</a>
+                        <a href="/.well-known/mcp/server-card.json" target="_blank" class="link link-xs link-primary">server-card</a>
+                        <a href="/api/cad/schema" target="_blank" class="link link-xs link-primary">schema</a>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </aside>
+
+    <!-- ═══════════════════ VIEWPORT ═══════════════════ -->
+    <main class="app-canvas">
+        <cad-viewport data-testid="cad-viewport"
+                      data-attr:selected-id="$selectedId"
+                      data-attr:object-count="$objectCount"
+                      data-attr:scene-empty="$sceneEmpty"></cad-viewport>
+        <!-- Feedback toast -->
+        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-lg bg-base-300/90 backdrop-blur-sm pointer-events-none transition-opacity"
+             data-show="$feedback"
+             data-text="$feedback"
+             data-class="{'text-error': $feedbackError, 'text-success': !$feedbackError}"></div>
+    </main>
+
+    <!-- ═══════════════════ RIGHT PANEL: DATA PLANE ═══════════════════ -->
+    <aside class="app-props" data-testid="props-panel">
+
+        <!-- Transform (requires selection) -->
+        <div data-show="$selectedId">
+            <h3 data-section="transform">Transform</h3>
+            <div data-text="$selectedId ? $selectedId.slice(0,8) + '...' : ''" class="text-xs opacity-50 mb-2"></div>
+            <div class="flex flex-col gap-1 text-xs">
+                <div class="flex gap-1 items-center">
+                    <span class="w-8 opacity-50">Move</span>
+                    <input type="number" data-bind="txVal" step="0.1" class="input input-xs flex-1" placeholder="dx"/>
+                    <input type="number" data-bind="tyVal" step="0.1" class="input input-xs flex-1" placeholder="dy"/>
+                    <input type="number" data-bind="tzVal" step="0.1" class="input input-xs flex-1" placeholder="dz"/>
+                </div>
+                <button data-testid="translate" class="btn btn-xs btn-outline w-full"
+                        data-on:click="window.cadCommand('translate', {objectId: $selectedId, dx: $txVal, dy: $tyVal, dz: $tzVal})">Move Selected</button>
+                <div class="flex gap-1 items-center mt-1">
+                    <span class="w-8 opacity-50">Rot</span>
+                    <select data-bind="rotAxis" class="select select-xs flex-1">
+                        <option value="x">X</option><option value="y" selected>Y</option><option value="z">Z</option>
+                    </select>
+                    <input type="number" data-bind="rotAngle" step="15" class="input input-xs w-14" placeholder="deg"/>
+                </div>
+                <button data-testid="rotate" class="btn btn-xs btn-outline w-full"
+                        data-on:click="window.cadCommand('rotate', {objectId: $selectedId, axisX: $rotAxis==='x'?1:0, axisY: $rotAxis==='y'?1:0, axisZ: $rotAxis==='z'?1:0, angleDeg: $rotAngle})">Rotate Selected</button>
+                <div class="flex gap-1 items-center mt-1">
+                    <span class="w-8 opacity-50">Scale</span>
+                    <input type="number" data-bind="scaleVal" step="0.1" min="0.1" class="input input-xs flex-1" placeholder="factor"/>
+                </div>
+                <button data-testid="scale" class="btn btn-xs btn-outline w-full"
+                        data-on:click="window.cadCommand('scale', {objectId: $selectedId, sx: $scaleVal, sy: $scaleVal, sz: $scaleVal})">Scale Selected</button>
+            </div>
+        </div>
+
+        <!-- Sketch (always visible — creates new geometry) -->
         <h3 data-section="sketch">Sketch</h3>
         <div class="sketch-section text-xs">
             <div data-show="!$sketchActive">
@@ -280,112 +367,40 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             </div>
         </div>
 
-        <!-- File section -->
-        <h3 data-section="file">File</h3>
-        <div class="flex flex-col gap-1 text-xs">
-            <div class="flex gap-1">
-                <button id="newDocBtn" data-testid="new-doc" class="btn btn-xs btn-outline flex-1">New</button>
-                <button id="shareBtn" data-testid="share" class="btn btn-xs btn-outline flex-1">Share</button>
-            </div>
-            <div class="flex gap-1">
-                <button id="saveBtn" data-testid="save" class="btn btn-xs btn-outline flex-1" title="Save scene as JSON">Save</button>
-                <button id="exportStepBtn" data-testid="export-step" class="btn btn-xs btn-outline flex-1" title="Export scene as STEP">STEP</button>
-                <button id="exportObjBtn" data-testid="export-obj" class="btn btn-xs btn-outline flex-1" title="Export scene as OBJ">OBJ</button>
-                <button id="exportStlBtn" data-testid="export-stl" class="btn btn-xs btn-outline flex-1" title="Export scene as STL">STL</button>
-                <button id="loadBtn" data-testid="load" class="btn btn-xs btn-outline flex-1" title="Load scene from JSON">Load</button>
-            </div>
-            <div class="flex gap-1">
-                <button id="importStepBtn" data-testid="import-step" class="btn btn-xs btn-outline flex-1" title="Import B-Rep from STEP">Import STEP</button>
-                <button id="importIfcBtn" data-testid="import-ifc" class="btn btn-xs btn-outline flex-1" title="Import BIM from IFC">Import IFC</button>
-            </div>
-            <input type="file" id="fileInput" accept=".json,.step,.stp,.ifc" class="hidden" />
-            <select id="exampleSelect" class="select select-xs w-full">
-                <option value="">Load example...</option>
-            </select>
+        <!-- Style (requires selection) -->
+        <div data-show="$selectedId" class="mt-4 pt-4 border-t border-base-content/10">
+            <h3>Style</h3>
+            <fieldset class="fieldset">
+                <label class="label text-xs">Color</label>
+                <input type="color" data-bind="propColor"
+                       data-on:input="window.__applyStyle(false)"
+                       data-on:change="window.__applyStyle(true)"
+                       class="w-full h-8 cursor-pointer rounded" />
+            </fieldset>
+            <fieldset class="fieldset mt-2">
+                <label class="label text-xs">Opacity <span class="opacity-50" data-text="$propOpacity.toFixed(2)"></span></label>
+                <input type="range" data-bind="propOpacity" min="0" max="1" step="0.05"
+                       data-on:input="window.__applyStyle(false)"
+                       data-on:change="window.__applyStyle(true)"
+                       class="range range-xs" />
+            </fieldset>
+            <fieldset class="fieldset mt-2">
+                <label class="label text-xs">Roughness <span class="opacity-50" data-text="$propRoughness.toFixed(2)"></span></label>
+                <input type="range" data-bind="propRoughness" min="0" max="1" step="0.05"
+                       data-on:input="window.__applyStyle(false)"
+                       data-on:change="window.__applyStyle(true)"
+                       class="range range-xs" />
+            </fieldset>
+            <fieldset class="fieldset mt-2">
+                <label class="label text-xs">Reflectance <span class="opacity-50" data-text="$propReflectance.toFixed(2)"></span></label>
+                <input type="range" data-bind="propReflectance" min="0" max="1" step="0.05"
+                       data-on:input="window.__applyStyle(false)"
+                       data-on:change="window.__applyStyle(true)"
+                       class="range range-xs" />
+            </fieldset>
         </div>
 
-        <!-- AI / MCP -->
-        <h3>AI / MCP</h3>
-        <div class="space-y-1" data-testid="mcp-section">
-            <div class="text-xs opacity-60 mb-1">Connect your AI agent to this CAD system</div>
-            <div class="flex gap-1 items-center">
-                <code class="text-[10px] bg-base-300 px-1 py-0.5 rounded flex-1 truncate cursor-pointer"
-                      data-testid="mcp-url"
-                      title="Click to copy MCP endpoint URL"
-                      onclick="navigator.clipboard.writeText(location.origin + '/mcp').then(() => this.textContent = 'Copied!').then(() => setTimeout(() => this.textContent = location.origin + '/mcp', 1500))">
-                </code>
-            </div>
-            <details class="collapse collapse-arrow bg-base-200 rounded-box" data-testid="mcp-setup">
-                <summary class="collapse-title text-xs font-medium min-h-0 py-1 px-2">Setup snippets</summary>
-                <div class="collapse-content text-[10px] space-y-2 px-2 pb-2">
-                    <div>
-                        <div class="font-bold opacity-70">Claude Code</div>
-                        <code class="block bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-claude">claude mcp add --transport http truck-cad <span class="mcp-origin"></span>/mcp</code>
-                    </div>
-                    <div>
-                        <div class="font-bold opacity-70">Cursor / VS Code</div>
-                        <pre class="bg-base-300 p-1 rounded whitespace-pre-wrap break-all" data-testid="mcp-cursor">{ "mcpServers": { "truck-cad": { "type": "http", "url": "<span class="mcp-origin"></span>/mcp" } } }</pre>
-                    </div>
-                    <div>
-                        <div class="font-bold opacity-70">Any MCP client</div>
-                        <code class="block bg-base-300 p-1 rounded break-all" data-testid="mcp-generic">POST <span class="mcp-origin"></span>/mcp</code>
-                    </div>
-                    <div class="flex gap-1 mt-1">
-                        <a href="/llms.txt" target="_blank" class="link link-xs link-primary">llms.txt</a>
-                        <a href="/.well-known/mcp/server-card.json" target="_blank" class="link link-xs link-primary">server-card</a>
-                        <a href="/api/cad/schema" target="_blank" class="link link-xs link-primary">schema</a>
-                    </div>
-                </div>
-            </details>
-        </div>
-    </aside>
-
-    <!-- ═══════════════════ VIEWPORT ═══════════════════ -->
-    <main class="app-canvas">
-        <cad-viewport data-testid="cad-viewport"
-                      data-attr:selected-id="$selectedId"
-                      data-attr:object-count="$objectCount"
-                      data-attr:scene-empty="$sceneEmpty"></cad-viewport>
-        <!-- Feedback toast -->
-        <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-lg bg-base-300/90 backdrop-blur-sm pointer-events-none transition-opacity"
-             data-show="$feedback"
-             data-text="$feedback"
-             data-class="{'text-error': $feedbackError, 'text-success': !$feedbackError}"></div>
-    </main>
-
-    <!-- ═══════════════════ RIGHT PANEL: PROPERTIES ═══════════════════ -->
-    <aside class="app-props" data-testid="props-panel" data-show="$selectedId">
-        <h3>Properties</h3>
-        <div data-text="$selectedId ? $selectedId.slice(0,8) + '...' : ''" class="text-xs opacity-50 mb-2"></div>
-        <fieldset class="fieldset">
-            <label class="label text-xs">Color</label>
-            <input type="color" data-bind="propColor"
-                   data-on:input="window.__applyStyle(false)"
-                   data-on:change="window.__applyStyle(true)"
-                   class="w-full h-8 cursor-pointer rounded" />
-        </fieldset>
-        <fieldset class="fieldset mt-2">
-            <label class="label text-xs">Opacity <span class="opacity-50" data-text="$propOpacity.toFixed(2)"></span></label>
-            <input type="range" data-bind="propOpacity" min="0" max="1" step="0.05"
-                   data-on:input="window.__applyStyle(false)"
-                   data-on:change="window.__applyStyle(true)"
-                   class="range range-xs" />
-        </fieldset>
-        <fieldset class="fieldset mt-2">
-            <label class="label text-xs">Roughness <span class="opacity-50" data-text="$propRoughness.toFixed(2)"></span></label>
-            <input type="range" data-bind="propRoughness" min="0" max="1" step="0.05"
-                   data-on:input="window.__applyStyle(false)"
-                   data-on:change="window.__applyStyle(true)"
-                   class="range range-xs" />
-        </fieldset>
-        <fieldset class="fieldset mt-2">
-            <label class="label text-xs">Reflectance <span class="opacity-50" data-text="$propReflectance.toFixed(2)"></span></label>
-            <input type="range" data-bind="propReflectance" min="0" max="1" step="0.05"
-                   data-on:input="window.__applyStyle(false)"
-                   data-on:change="window.__applyStyle(true)"
-                   class="range range-xs" />
-        </fieldset>
-
+        <!-- BIM (requires BIM data) -->
         <div data-show="$bimId" class="mt-4 pt-4 border-t border-base-content/10">
             <h3 class="mb-2">BIM</h3>
             <div class="flex flex-col gap-1 text-xs">
@@ -465,6 +480,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         // 2. Register custom elements
         await import('./cad-viewport.js');
         await import('./cad-outliner.js');
+        await import('./cad-gallery.js');
 
         // 3. Load state, history, UI, keyboard, sketch modules
         await import('./state.js');

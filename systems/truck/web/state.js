@@ -1,8 +1,72 @@
 // state.js — ALL CAD state: dispatch commands to Rust, reconcile signals, selection, style.
 // cadCommand() is the ONLY way to change state. reconcile() is the ONLY way to sync it.
+//
+// Data plane vs Control plane (schema-driven):
+//   The cad-schema.json declares each command's readonly/ephemeral flags.
+//   cadCommand() reads these to auto-determine whether to record to Automerge:
+//     Data plane:    !readonly && !ephemeral → record + broadcast (user edits)
+//     Control plane: readonly || ephemeral   → no record, no broadcast (queries, UI state)
+//   Call sites can still override with explicit { record: true/false }.
 
 import { moduleRouter } from './core/module-router.js';
 import { storeBlob } from './blob-store.js';
+import { api } from './api-client.js';
+
+// ─── Schema-driven command classification ────────────────────────
+// The cad-schema.json (served at /api/cad/schema) declares every command:
+//
+//   schema.commands      → WASM commands with { readonly, ephemeral, domain }
+//   schema.controlPlane  → JS commands with { layer: "js" }
+//
+// Three classifications drive ALL dispatch and recording decisions:
+//   1. JS control plane:   undo, redo, set_mode, etc. (from schema.controlPlane)
+//   2. WASM control plane: select, get_state, set_camera (readonly || ephemeral)
+//   3. WASM data plane:    add_cube, boolean_union, translate (!readonly && !ephemeral)
+//
+// Only data plane commands record to Automerge and broadcast to the Worker API.
+// Call sites never need to specify { record: false } — the schema decides.
+
+let _schema = null;             // { commands: {...}, controlPlane: {...} }
+let _jsControlPlane = new Set(); // keys from schema.controlPlane
+const _schemaReady = fetch('/api/cad/schema')
+  .then(r => r.json())
+  .then(s => {
+    _schema = s;
+    _jsControlPlane = new Set(Object.keys(s.controlPlane || {}));
+  })
+  .catch(() => { _schema = { commands: {}, controlPlane: {} }; });
+
+/** JS control plane: undo, redo, set_mode, etc. — dispatched to handleJsCommand() */
+function isJsControlPlane(type) {
+  return _jsControlPlane.has(type);
+}
+
+/** WASM data plane: mutations that record to Automerge + broadcast */
+function isDataPlane(type) {
+  const cmd = _schema?.commands?.[type];
+  if (!cmd) return false;
+  return !cmd.readonly && !cmd.ephemeral;
+}
+
+/** Shared access to the loaded schema (for history.js timeline, etc.) */
+const schemaReady = _schemaReady;
+function getSchema() { return _schema; }
+
+/**
+ * Derive blob param key from schema — no hardcoded BLOB_KEYS map needed.
+ * Import commands (scene domain, data plane) have one required string param
+ * that contains the large payload (json, data, etc.). Returns the key or null.
+ */
+function getBlobParam(type, params) {
+  const cmd = _schema?.commands?.[type];
+  if (!cmd || cmd.domain !== 'scene' || cmd.readonly) return null;
+  const required = cmd.params?.required || [];
+  const props = cmd.params?.properties || {};
+  for (const key of required) {
+    if (props[key]?.type === 'string' && params[key]) return key;
+  }
+  return null;
+}
 
 // If WASM was already initialized before state.js loaded, register now
 if (window.sceneController && !moduleRouter.ready) {
@@ -166,15 +230,9 @@ function applyStyle(commit) {
   }
 }
 
-// ─── Object list (outliner) ─────────────────────────────────────
-
-// renderObjectList removed — replaced by <cad-outliner> Lit component (Phase 8)
-
 // ─── Control Plane (JS Layer) ───────────────────────────────────
-
-const JS_COMMANDS = new Set([
-  'undo', 'redo', 'get_status', 'set_mode', 'create_model', 'set_automerge', 'clear_data'
-]);
+// Commands listed in schema.controlPlane are dispatched here.
+// isJsControlPlane(type) checks membership — no hardcoded list needed.
 
 async function handleJsCommand(type, params) {
   const mgr = window.cadDocManager;
@@ -245,13 +303,15 @@ async function handleJsCommand(type, params) {
   }
 }
 
-// ─── Sync query: WASM dispatch + reconcile, no recording ─────────
-// Use this for commands that don't need Automerge recording (record: false).
-// Returns the result synchronously — no Promise wrapping.
-// Fixes: cadCommand() is async (Phase 0 blob store) which silently broke
-// all callers that don't await it (pick_at, addShape, tier manager, etc.).
+// ─── Control Plane Sync Path ─────────────────────────────────────
+// Synchronous WASM dispatch for control plane commands (readonly/ephemeral).
+// Use for 60fps loops (camera, pick) or any call that needs a sync return.
+// Never records to Automerge, never broadcasts — the schema says so.
 
 function cadQuery(type, params = {}, options = {}) {
+  if (_schema && isDataPlane(type) && !options._internal) {
+    console.warn(`[cadQuery] "${type}" is data plane — use cadCommand() for Automerge recording`);
+  }
   const doReconcile = options.reconcile ?? true;
   if (!moduleRouter.ready) return { error: 'ModuleRouter not ready' };
   let result;
@@ -261,107 +321,89 @@ function cadQuery(type, params = {}, options = {}) {
     return { error: String(err) };
   }
   const state = doReconcile ? reconcile(result) : {};
+  // Control plane commands can still need user feedback (e.g. clash_detect)
+  showCommandFeedback(type, result);
   return { ...result, ...state };
 }
 
-// ─── Single entry point for all CAD operations ───────────────────
+// ─── Unified command dispatch ────────────────────────────────────
 //
-// Options contract (ADR-0019 Phase 2):
-//   record:    boolean  — Record to Automerge? (default: true)
-//   broadcast: boolean  — POST state to Worker API? (default: true)
-//   reconcile: boolean  — Run reconcile pipeline? (default: true)
-//   source:    string   — Who initiated? 'local' | 'api' | 'replay' (default: 'local')
-//   groupId:   string   — Group ID for Automerge undo grouping (optional)
+// cadCommand() dispatches ALL commands through the schema-driven pipeline:
 //
-// IMPORTANT: This function is async (blob storage, Automerge recording).
-// For non-recording queries/mutations, use cadQuery() instead — it's sync.
+//   1. JS control plane  → handleJsCommand()           (never records)
+//   2. WASM control plane → cadQuery() sync fast-path   (never records)
+//   3. WASM data plane   → WASM execute + Automerge    (records + broadcasts)
+//
+// The only override: { record: false } for data plane commands used in
+// control plane context (e.g. import_scene during model load / replay).
 
 let _busy = false;
 async function cadCommand(type, params = {}, options = {}) {
-  // Resolve options with defaults
-  const record    = options.record    ?? true;
-  const broadcast = options.broadcast ?? true;
-  const doReconcile = options.reconcile ?? true;
-  const source    = options.source    ?? 'local';
+  // Ensure schema is loaded before first command (no-op after first await)
+  if (!_schema) await _schemaReady;
 
-  if (!moduleRouter.ready && !JS_COMMANDS.has(type)) return { error: 'ModuleRouter not ready' };
-
-  // Non-recording WASM commands: use sync path (no blob storage, no Automerge)
-  if (!record && !JS_COMMANDS.has(type)) {
-    return cadQuery(type, params, options);
+  // ── 1. JS Control Plane (undo, redo, set_mode, etc.) ──────────
+  if (isJsControlPlane(type)) {
+    try {
+      const result = await handleJsCommand(type, params);
+      const state = (options.reconcile ?? true) ? reconcile(result) : {};
+      return { ...result, ...state };
+    } catch (err) {
+      return { error: String(err) };
+    }
   }
 
-  // Guard against re-entrancy for WASM commands that record
-  if (_busy && record && !JS_COMMANDS.has(type)) return { error: 'Busy' };
+  if (!moduleRouter.ready) return { error: 'ModuleRouter not ready' };
 
-  if (!JS_COMMANDS.has(type)) _busy = true;
+  // Schema-driven defaults (overridable for replay/navigation)
+  const dataPlane   = isDataPlane(type);
+  const record      = options.record    ?? dataPlane;
+  const broadcast   = options.broadcast ?? dataPlane;
+  const doReconcile = options.reconcile ?? true;
+  const source      = options.source    ?? 'local';
+
+  // ── 2. WASM Control Plane (select, get_state, set_camera, etc.)
+  if (!record) {
+    return cadQuery(type, params, { ...options, _internal: true });
+  }
+
+  // ── 3. WASM Data Plane (add_cube, boolean_union, translate, etc.)
+  if (_busy) return { error: 'Busy' };
+  _busy = true;
 
   try {
-    let result;
+    const result = moduleRouter.execute(type, params);
 
-    if (JS_COMMANDS.has(type)) {
-      // 1. JS Control Plane Dispatch
-      try {
-        result = await handleJsCommand(type, params);
-      } catch (err) {
-        return { error: String(err) };
+    // Record to Automerge
+    const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
+    if (mgr) {
+      // Strip large blob data from import commands (ADR-0025 Phase 0).
+      // Blob param derived from schema: first required string param on import commands.
+      let recordParams = params;
+      const blobKey = getBlobParam(type, params);
+      if (blobKey) {
+        const blobRef = await storeBlob(params[blobKey]);
+        recordParams = { ...params, blobRef };
+        delete recordParams[blobKey];
       }
-    } else {
-      // 2. WASM Kernel Dispatch via Module Router (ADR-0019)
-      try {
-        result = moduleRouter.execute(type, params);
-      } catch (err) {
-        return { error: String(err) };
-      }
-    }
-
-    // Record to Automerge (only for recording WASM commands)
-    if (!JS_COMMANDS.has(type)) {
-      const mgr = window.cadDocManager?.handle ? window.cadDocManager : null;
-      if (mgr) {
-        // Strip large blob data from import commands (ADR-0025 Phase 0).
-        // Store in content-addressed blob store; only blobRef goes into Automerge.
-        let recordParams = params;
-        const BLOB_KEYS = { import_scene: 'json', import_ifc: 'data', import_step: 'data' };
-        const dataKey = BLOB_KEYS[type];
-        if (dataKey && params[dataKey]) {
-          const blobRef = await storeBlob(params[dataKey]);
-          recordParams = { ...params, blobRef };
-          delete recordParams[dataKey];
-        }
-        await mgr.record(type, recordParams, {
-          objectId: result.objectId,
-          groupId: options.groupId,
-          hierarchy: result.hierarchy
-        });
-      }
+      await mgr.record(type, recordParams, {
+        objectId: result.objectId,
+        groupId: options.groupId,
+        hierarchy: result.hierarchy
+      });
     }
 
     // Reconcile: WASM state → Datastar signals → UI
     const state = doReconcile ? reconcile(result) : {};
 
-    // Contextual feedback
-    if (type.startsWith('boolean_') && result.objectId) {
-      showFeedback('Operation success');
-    } else if (type === 'clash_detect') {
-      showFeedback(result.clash ? '💥 CLASH DETECTED!' : '✅ No clash', result.clash);
-    } else if (type === 'import_mvt' || type === 'import_step' || type === 'import_ifc') {
-      showFeedback(`Imported ${result.objectCount || ''} objects`);
-      setTimeout(() => {
-        const vp = document.getElementById('viewport');
-        if (vp && vp.zoomToExtents) vp.zoomToExtents();
-      }, 500);
-    } else if (result.error) {
-      showFeedback(result.error, true);
-    }
+    showCommandFeedback(type, result);
 
     // Broadcast state to Worker API
     if (broadcast && !window.__cadLocalMode && source !== 'api') {
       const mid = window.__modelId || 'default';
-      fetch(`/api/cad/${mid}/state`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...state, broadcast: true }),
+      api.cad[':modelId'].state.$post({
+        param: { modelId: mid },
+        json: { ...state, broadcast: true },
       }).catch(() => {});
     }
 
@@ -370,7 +412,10 @@ async function cadCommand(type, params = {}, options = {}) {
     _busy = false;
   }
 }
-  function showFeedback(msg, isError = false) {
+
+// ─── Feedback ────────────────────────────────────────────────────
+
+function showFeedback(msg, isError = false) {
   const ds = window._ds;
   if (!ds?.root) return;
   try {
@@ -385,6 +430,28 @@ async function cadCommand(type, params = {}, options = {}) {
   } catch {}
 }
 
+/** Schema-driven contextual feedback — works for any command via domain classification. */
+function showCommandFeedback(type, result) {
+  if (result.error) {
+    showFeedback(result.error, true);
+    return;
+  }
+  const cmd = _schema?.commands?.[type];
+  if (!cmd) return;
+  const domain = cmd.domain;
+
+  if (domain === 'booleans' && cmd.readonly) {
+    // clash_detect — readonly boolean, user expects a result
+    showFeedback(result.clash ? 'CLASH DETECTED!' : 'No clash', result.clash);
+  } else if (domain === 'booleans' && result.objectId) {
+    // boolean_union/subtract/intersect
+    showFeedback('Operation success');
+  } else if (domain === 'scene' && !cmd.readonly && result.objectCount !== undefined) {
+    // import_scene/step/ifc — data plane scene mutations with objectCount
+    showFeedback(`Imported ${result.objectCount} objects`);
+  }
+}
+
 // Add a primitive with auto-offset so new objects don't stack on top of each other
 async function addShape(type, params) {
   const result = await cadCommand(type, params);
@@ -392,13 +459,14 @@ async function addShape(type, params) {
     const idx = result.objectIds.indexOf(result.objectId);
     if (idx > 0) {
       const size = params.size || params.radius || params.majorRadius || 1;
-      cadQuery('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { record: false });
+      // Auto-offset is part of the addShape compound — parent cadCommand records the add
+      cadQuery('translate', { objectId: result.objectId, dx: idx * size * 0.7, dy: 0, dz: 0 }, { _internal: true });
     }
   }
   return result;
 }
 
-export { cadCommand, cadQuery, moduleRouter, reconcile, loadStyle, applyStyle, showFeedback, addShape };
+export { cadCommand, cadQuery, moduleRouter, reconcile, loadStyle, applyStyle, showFeedback, addShape, schemaReady, getSchema };
 
 // Window globals: only what's needed for inline HTML handlers and E2E tests
 window.cadCommand = cadCommand;

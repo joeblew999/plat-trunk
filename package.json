@@ -1,14 +1,17 @@
 {
   "scripts": {
     "dev": "node run.mjs dev",
-    "build": "bun run build:truck && bun run build:docs",
+    "build": "bun run build:truck && bun run build:api-client && bun run build:docs",
+    "build:api-client": "bun x esbuild systems/truck/web/src/api-client.ts --bundle --format=esm --outfile=systems/truck/web/api-client.js --platform=browser --target=es2022",
     "build:truck": "cd systems/truck/crate && wasm-pack build --target web --release --out-dir ../web/pkg-browser-renderer && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json",
-    "build:docs": "cd systems/docs/website && bun install --silent && bun run build",
+    "build:docs": "bun scripts/build-llm-docs.ts && cd systems/docs/website && bun install --silent && bun run build",
+    "typecheck": "cd systems/truck/worker && bunx tsc --noEmit",
     "test": "bun run test:crate && bun run test:api",
     "test:crate": "cd systems/truck/crate && cargo test",
     "test:api": "cd systems/truck/worker && bun x vitest run",
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
     "test:e2e": "cd systems/truck/tests && bun x playwright test",
+    "seed:gallery": "bun scripts/seed-gallery.ts --clean",
     "deploy": "node run.mjs deploy",
     "deploy:upload": "bun scripts/cf-deploy.ts upload",
     "deploy:nuke:code": "bun scripts/cf-deploy.ts nuke code",
@@ -17,10 +20,11 @@
     "deploy:nuke:all": "bun scripts/cf-deploy.ts nuke all"
   },
   "dependencies": {
-    "hono": "^4.11.9"
+    "hono": "4.11.9"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260212.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "wrangler": "^4.69.0"
   }
 }

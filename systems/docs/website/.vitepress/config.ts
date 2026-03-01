@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitepress'
 import type { DefaultTheme } from 'vitepress'
-import cfDeploy from '../../../../cf-deploy.json'
 import {
   groupIconMdPlugin,
   groupIconVitePlugin,
@@ -86,10 +85,10 @@ export default defineConfig({
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: `https://github.com/${cfDeploy.github}` },
+      { icon: 'github', link: 'https://github.com/joeblew999/plat-trunk' },
     ],
     editLink: {
-      pattern: `https://github.com/${cfDeploy.github}/edit/main/systems/docs/website/docs/:path`,
+      pattern: 'https://github.com/joeblew999/plat-trunk/edit/main/systems/docs/website/docs/:path',
       text: 'Edit this page on GitHub',
     },
     footer: {

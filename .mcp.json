@@ -7,6 +7,15 @@
         "/Users/apple/workspace/go/src/github.com/joeblew999/plat-trunk/scripts/mcp-bridge.ts"
       ],
       "env": {}
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--config",
+        "/Users/apple/workspace/go/src/github.com/joeblew999/plat-trunk/scripts/playwright-mcp-claude.config.json"
+      ]
     }
   }
 }

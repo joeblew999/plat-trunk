@@ -1,20 +1,19 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPTransport } from '@hono/mcp';
 import cadSchema from '../../cad-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm';
+import { ModelStore } from './model-store';
 
 type Bindings = {
-  MY_VAR: string;
-  CAD_DOCS_BUCKET: R2Bucket;
+  ASSETS: Fetcher;
+  MODELS: R2Bucket;
 };
 
-const app = new OpenAPIHono<{ Bindings: Bindings }>();
-const api = new OpenAPIHono<{ Bindings: Bindings }>();
-
-api.use('*', cors());
-api.use('*', async (_c, next) => { gcModels(); return next(); });
+// app and api are created later via chained .openapi() calls for type export
 
 // =========================================================================
 // Schemas & Types
@@ -54,6 +53,48 @@ const CommandResult = z.object({
 const ModelIdParam = z.object({
   modelId: z.string().openapi({ param: { name: 'modelId', in: 'path' }, example: 'default' })
 });
+
+// ── State/result route schemas ──────────────────────────
+const SceneStateBody = z.object({
+  broadcast: z.boolean().optional(),
+}).passthrough().openapi('SceneStateBody');
+
+const CommandResultBody = z.object({
+  result: z.any().optional(),
+  error: z.string().optional(),
+}).openapi('CommandResultBody');
+
+const CommandResultIdParam = z.object({
+  modelId: z.string().openapi({ param: { name: 'modelId', in: 'path' } }),
+  id: z.string().openapi({ param: { name: 'id', in: 'path' } }),
+});
+
+const StatusOk = z.object({ status: z.literal('ok') }).openapi('StatusOk');
+
+// ── Model persistence schemas ───────────────────────────
+const ModelIdPathParam = z.object({
+  id: z.string().openapi({ param: { name: 'id', in: 'path' }, example: 'default-cube' }),
+});
+
+const ModelManifestSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  objectCount: z.number(),
+  version: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  hasThumbnail: z.boolean(),
+}).openapi('ModelManifest');
+
+const ModelSaveBody = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  scene: z.string(),
+}).openapi('ModelSaveBody');
+
+const ModelDeleteResponse = z.object({ status: z.literal('deleted') }).openapi('ModelDeleteResponse');
+const ErrorResponse = z.object({ error: z.string() }).openapi('ErrorResponse');
 
 // =========================================================================
 // Schema-driven helpers
@@ -178,7 +219,7 @@ async function waitForCommand(modelId: string, type: string, params: any) {
 // mountModule()
 // =========================================================================
 
-function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema) {
+function mountModule(hono: OpenAPIHono<{ Bindings: Bindings }>, prefix: string, schema: ModuleSchema) {
   // --- CORE ROUTES ---
   
   hono.openapi(createRoute({
@@ -209,32 +250,43 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema) {
 
   hono.openapi(createRoute({
     method: 'get', path: `/${prefix}/{modelId}/state`, tags: [prefix], summary: 'Get scene state',
-    request: { params: ModelIdParam }, responses: { 200: { description: 'State', content: { 'application/json': { schema: z.any() } } } }
+    request: { params: ModelIdParam }, responses: { 200: { description: 'State', content: { 'application/json': { schema: z.any() } } }, 503: { description: 'No browser connected', content: { 'application/json': { schema: ErrorResponse } } } }
   }), (c) => {
     const m = getModel(c.req.param('modelId'));
-    return m.sceneStateAt ? c.json({ state: m.sceneState, updatedAt: m.sceneStateAt, sseClients: m.sseClientCount }) : c.json({ error: 'No browser' }, 503);
+    return m.sceneStateAt ? c.json({ state: m.sceneState, updatedAt: m.sceneStateAt, sseClients: m.sseClientCount }, 200) : c.json({ error: 'No browser' }, 503);
   });
 
-  hono.post(`/${prefix}/:modelId/state`, async (c) => {
-    const mid = c.req.param('modelId');
+  hono.openapi(createRoute({
+    method: 'post', path: `/${prefix}/{modelId}/state`, tags: [prefix], summary: 'Update scene state',
+    request: { params: ModelIdParam, body: { content: { 'application/json': { schema: SceneStateBody } } } },
+    responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } }
+  }), async (c) => {
+    const mid = c.req.valid('param').modelId;
     const m = getModel(mid);
-    const body = await c.req.json() as any;
+    const body = c.req.valid('json') as Record<string, unknown>;
     const broadcastFlag = !!body.broadcast;
     delete body.broadcast;
     m.sceneState = body; m.sceneStateAt = Date.now();
     if (broadcastFlag) broadcast(mid, { type: 'datastar-patch-signals', data: body });
-    return c.json({ status: 'ok' });
+    return c.json({ status: 'ok' as const });
   });
 
-  hono.post(`/${prefix}/:modelId/result/:id`, async (c) => {
-    const mid = c.req.param('modelId');
+  hono.openapi(createRoute({
+    method: 'post', path: `/${prefix}/{modelId}/result/{id}`, tags: [prefix], summary: 'Report command result',
+    request: { params: CommandResultIdParam, body: { content: { 'application/json': { schema: CommandResultBody } } } },
+    responses: {
+      200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } },
+      404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } },
+    }
+  }), async (c) => {
+    const { modelId: mid, id } = c.req.valid('param');
     const m = getModel(mid);
-    const cmd = m.commandQueue.get(c.req.param('id'));
-    if (!cmd) return c.json({ error: 'Not found' }, 404);
-    const body = await c.req.json() as any;
-    cmd.status = body.error ? 'error' : 'done'; 
-    cmd.result = body.result; 
-    cmd.error = body.error; 
+    const cmd = m.commandQueue.get(id);
+    if (!cmd) return c.json({ error: 'Not found' } as const, 404);
+    const body = c.req.valid('json');
+    cmd.status = body.error ? 'error' : 'done';
+    cmd.result = body.result;
+    cmd.error = body.error;
     cmd.completedAt = Date.now();
 
     // Sync state from result if available (ensures Worker cache is fresh)
@@ -242,11 +294,10 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema) {
       const { ready, objectCount, objectIds, selectedId, boolSelA, boolSelB, canUndo, canRedo } = body.result;
       m.sceneState = { ready, objectCount, objectIds, selectedId, boolSelA, boolSelB, canUndo, canRedo };
       m.sceneStateAt = Date.now();
-      // Broadcast update to other tabs (but not back to the one that sent it)
       broadcast(mid, { type: 'datastar-patch-signals', data: m.sceneState });
     }
 
-    return c.json({ status: 'ok' });
+    return c.json({ status: 'ok' as const }, 200);
   });
 
   hono.openapi(createRoute({
@@ -295,56 +346,10 @@ function mountModule(hono: typeof api, prefix: string, schema: ModuleSchema) {
 
   }
 
-  // --- POLYMORPHIC QUEUE (LEGACY COMPAT) ---
-
-  const CadCommandType = z.enum(Object.keys(schema.commands) as [string, ...string[]]);
-  const ExecReqSchema = z.object({ type: CadCommandType, params: z.record(z.string(), z.any()).optional() }).openapi('CadCommand');
-
-  hono.openapi(createRoute({
-    method: 'post', path: `/${prefix}/{modelId}/exec`, tags: [prefix], summary: 'Polymorphic queue (legacy)',
-    request: { params: ModelIdParam, body: { content: { 'application/json': { schema: ExecReqSchema } } } },
-    responses: { 200: { description: 'Queued', content: { 'application/json': { schema: CommandQueued } } } }
-  }), (c) => {
-    const { type, params } = c.req.valid('json');
-    return c.json(enqueueCommand(c.req.param('modelId'), type, params));
-  });
-
-  hono.openapi(createRoute({
-    method: 'post', path: `/${prefix}/{modelId}/exec-wait`, tags: [prefix], summary: 'Polymorphic wait (legacy)',
-    request: { params: ModelIdParam, body: { content: { 'application/json': { schema: ExecReqSchema } } } },
-    responses: { 200: { description: 'Result', content: { 'application/json': { schema: CommandResult } } }, 504: { description: 'Timeout' } }
-  }), async (c) => {
-    const { type, params } = c.req.valid('json');
-    const res = await waitForCommand(c.req.param('modelId'), type, params);
-    return c.json(res, res.status === 'timeout' ? 504 : 200);
-  });
-
-  hono.openapi(createRoute({
-    method: 'get', path: `/${prefix}/{modelId}/result/{id}`, tags: [prefix], summary: 'Get result',
-    request: { params: z.object({ modelId: z.string(), id: z.string() }) },
-    responses: { 200: { description: 'Result' } }
-  }), (c) => {
-    const m = getModel(c.req.param('modelId'));
-    const cmd = m.commandQueue.get(c.req.param('id'));
-    if (!cmd) return c.json({ error: 'Not found' }, 404);
-    return c.json({ id: cmd.id, status: cmd.status, result: cmd.result, error: cmd.error });
-  });
 }
 
-mountModule(api, 'cad', cadSchema as ModuleSchema);
-
-app.doc('/api/openapi.json', {
-  openapi: '3.1.0',
-  info: { title: 'Truck CAD API', version: cadSchema.version || '1.0.0', description: 'Professional 3D CAD control via SSE + WASM.' },
-  tags: [{ name: 'cad-commands', description: 'Modeling operations' }, { name: 'cad', description: 'Core service' }]
-});
-
-api.openapi(createRoute({
-  method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } }
-}), (c) => c.json({ status: 'ok', service: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version }));
-
 // =========================================================================
-// Phase 0.5: Headless truck-webgpu-gui WASM test (ADR-0018)
+// Headless truck-webgpu-gui WASM test (ADR-0018)
 // =========================================================================
 
 async function runWasmHealthCheck() {
@@ -370,264 +375,350 @@ async function runWasmHealthCheck() {
   };
 }
 
-api.openapi(createRoute({
-  method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM geometry in Worker',
-  responses: { 200: { description: 'WASM test result' } }
-}), async (c) => {
-  try {
-    return c.json(await runWasmHealthCheck());
-  } catch (err: any) {
-    return c.json({ ok: false, error: err.message, stack: err.stack }, 500);
-  }
-});
+// =========================================================================
+// Model Persistence — REST API backed by R2 (chained for type export)
+// =========================================================================
 
+const listModelsRoute = createRoute({ method: 'get', path: '/models', tags: ['models'], summary: 'List all saved models', responses: { 200: { description: 'Model list', content: { 'application/json': { schema: z.array(ModelManifestSchema) } } } } });
+const getModelRoute = createRoute({ method: 'get', path: '/models/{id}', tags: ['models'], summary: 'Get model manifest', request: { params: ModelIdPathParam }, responses: { 200: { description: 'Manifest', content: { 'application/json': { schema: ModelManifestSchema } } }, 404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } } } });
+const getModelSceneRoute = createRoute({ method: 'get', path: '/models/{id}/scene', tags: ['models'], summary: 'Get model scene JSON', request: { params: ModelIdPathParam }, responses: { 200: { description: 'Scene JSON' }, 404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } } } });
+const saveModelRoute = createRoute({ method: 'put', path: '/models/{id}', tags: ['models'], summary: 'Save model', request: { params: ModelIdPathParam, body: { content: { 'application/json': { schema: ModelSaveBody } } } }, responses: { 200: { description: 'Saved', content: { 'application/json': { schema: ModelManifestSchema } } }, 400: { description: 'Invalid', content: { 'application/json': { schema: ErrorResponse } } } } });
+const deleteModelRoute = createRoute({ method: 'delete', path: '/models/{id}', tags: ['models'], summary: 'Delete model', request: { params: ModelIdPathParam }, responses: { 200: { description: 'Deleted', content: { 'application/json': { schema: ModelDeleteResponse } } }, 404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } } } });
+const putThumbnailRoute = createRoute({ method: 'put', path: '/models/{id}/thumbnail', tags: ['models'], summary: 'Upload thumbnail', request: { params: ModelIdPathParam }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } }, 404: { description: 'Model not found', content: { 'application/json': { schema: ErrorResponse } } } } });
+const getThumbnailRoute = createRoute({ method: 'get', path: '/models/{id}/thumbnail', tags: ['models'], summary: 'Get thumbnail', request: { params: ModelIdPathParam }, responses: { 200: { description: 'PNG image' }, 404: { description: 'No thumbnail', content: { 'application/json': { schema: ErrorResponse } } } } });
+
+const modelRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(listModelsRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    return c.json(await store.list());
+  })
+  .openapi(getModelRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const manifest = await store.getManifest(c.req.valid('param').id);
+    return manifest ? c.json(manifest, 200) : c.json({ error: 'Not found' }, 404);
+  })
+  .openapi(getModelSceneRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const data = await store.load(c.req.valid('param').id);
+    if (!data) return c.json({ error: 'Not found' }, 404);
+    return new Response(data.scene, { headers: { 'content-type': 'application/json' } }) as any;
+  })
+  .openapi(saveModelRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const id = c.req.valid('param').id;
+    const body = c.req.valid('json');
+
+    // Count objects from scene data (scene is a JSON array of objects)
+    let objectCount = 0;
+    try {
+      const parsed = JSON.parse(body.scene);
+      objectCount = Array.isArray(parsed) ? parsed.length : (parsed.objects?.length ?? 0);
+    } catch {}
+
+    const existing = await store.getManifest(id);
+    const now = new Date().toISOString();
+    const manifest = {
+      id,
+      name: body.name,
+      description: body.description,
+      objectCount,
+      version: (cadSchema as ModuleSchema).version || '1.0.0',
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      hasThumbnail: existing?.hasThumbnail || false,
+    };
+    await store.save(id, manifest, body.scene);
+    return c.json(manifest, 200);
+  })
+  .openapi(deleteModelRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const id = c.req.valid('param').id;
+    const existing = await store.getManifest(id);
+    if (!existing) return c.json({ error: 'Not found' }, 404);
+    await store.delete(id);
+    return c.json({ status: 'deleted' as const }, 200);
+  })
+  .openapi(putThumbnailRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const id = c.req.valid('param').id;
+    const existing = await store.getManifest(id);
+    if (!existing) return c.json({ error: 'Model not found' }, 404);
+    const png = await c.req.arrayBuffer();
+    await store.saveThumbnail(id, png);
+    return c.json({ status: 'ok' as const }, 200);
+  })
+  .openapi(getThumbnailRoute, async (c) => {
+    const store = new ModelStore(c.env.MODELS);
+    const png = await store.getThumbnail(c.req.valid('param').id);
+    if (!png) return c.json({ error: 'No thumbnail' }, 404);
+    return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=3600' } }) as any;
+  });
+
+// Health + WASM test (chained for type export)
+const healthRoute = createRoute({ method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } } });
+const testWasmRoute = createRoute({ method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM', responses: { 200: { description: 'Result' } } });
+
+const platformRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(healthRoute, (c) => c.json({ status: 'ok', service: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version }))
+  .openapi(testWasmRoute, async (c) => {
+    try { return c.json(await runWasmHealthCheck()); }
+    catch (err: any) { return c.json({ ok: false, error: err.message, stack: err.stack }, 500); }
+  });
+
+// Dynamic schema-driven routes (type-opaque — consumed via cadCommand/MCP, not hc)
+const cadRoutes = new OpenAPIHono<{ Bindings: Bindings }>();
+mountModule(cadRoutes, 'cad', cadSchema as ModuleSchema);
+
+// Assemble API — typed sub-routers (no .use() here to preserve hc type inference)
+const api = new OpenAPIHono<{ Bindings: Bindings }>()
+  .route('/', platformRoutes)
+  .route('/', modelRoutes)
+  .route('/', cadRoutes);
+
+// Middleware applied at app level so .use() doesn't break the hc<AppType> chain
+const app = new OpenAPIHono<{ Bindings: Bindings }>()
+  .use('/api/*', cors())
+  .use('/api/*', async (_c, next) => { gcModels(); return next(); })
+  .route('/api', api);
+
+// OpenAPI spec + Scalar docs UI (cast needed: .use() returns Hono, not OpenAPIHono)
+(app as unknown as OpenAPIHono<{ Bindings: Bindings }>).doc('/api/openapi.json', {
+  openapi: '3.1.0',
+  info: { title: 'Truck CAD API', version: cadSchema.version || '1.0.0', description: 'Professional 3D CAD control via SSE + WASM.' },
+  tags: [{ name: 'cad-commands', description: 'Modeling operations' }, { name: 'cad', description: 'Core service' }, { name: 'models', description: 'Model persistence' }]
+});
 app.get('/api-docs', (c) => c.html(`<!DOCTYPE html><html><head><title>Truck CAD API</title></head><body><script id="api-reference" data-url="/api/openapi.json"></script><script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script></body></html>`));
 
-// Legacy docs routes
-api.post('/docs', async (c) => { try { const b = await c.req.json() as any; const id = b.docId || crypto.randomUUID(); await c.env.CAD_DOCS_BUCKET.put(`docs/${id}`, b.data ? Uint8Array.from(atob(b.data), ch => ch.charCodeAt(0)) : new Uint8Array(0), { customMetadata: { name: b.name || 'Untitled', createdAt: new Date().toISOString(), version: '1' } }); return c.json({ status: 'ok', docId: id }); } catch { return c.json({ error: 'Failed' }, 500); } });
-api.get('/docs/:docId', async (c) => { const o = await c.env.CAD_DOCS_BUCKET.get(`docs/${c.req.param('docId')}`); if (!o) return c.json({ error: 'Not found' }, 404); return c.json({ docId: c.req.param('docId'), data: btoa(String.fromCharCode(...new Uint8Array(await o.arrayBuffer()))), metadata: o.customMetadata }); });
-api.post('/docs/:docId/sync', async (c) => { try { const b = await c.req.json() as any; if (!b.data) return c.json({ error: 'Missing data' }, 400); const e = await c.env.CAD_DOCS_BUCKET.get(`docs/${c.req.param('docId')}`); let eb = new Uint8Array(0), m: Record<string,string> = {}; if (e) { eb = new Uint8Array(await e.arrayBuffer()); m = e.customMetadata || {}; } const ib = Uint8Array.from(atob(b.data), ch => ch.charCodeAt(0)); const v = parseInt(m.version||'0')+1; if (ib.length >= eb.length) await c.env.CAD_DOCS_BUCKET.put(`docs/${c.req.param('docId')}`, ib, { customMetadata: { ...m, version: String(v), lastSync: new Date().toISOString() } }); return c.json({ status: 'ok', data: btoa(String.fromCharCode(...(ib.length >= eb.length ? ib : eb))), version: v }); } catch { return c.json({ error: 'Failed' }, 500); } });
-api.get('/docs/:docId/events', async (c) => { const o = await c.env.CAD_DOCS_BUCKET.head(`docs/${c.req.param('docId')}`); return new Response(new TextEncoder().encode(`data: ${JSON.stringify({ docId: c.req.param('docId'), version: o?.customMetadata?.version||'0' })}\n\n`), { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } }); });
-api.get('/docs', async (c) => { const l = await c.env.CAD_DOCS_BUCKET.list({ prefix: 'docs/' }); return c.json({ docs: l.objects.map(o => ({ docId: o.key.replace('docs/',''), size: o.size, uploaded: o.uploaded.toISOString(), metadata: o.customMetadata })) }); });
-api.delete('/docs/:docId', async (c) => { await c.env.CAD_DOCS_BUCKET.delete(`docs/${c.req.param('docId')}`); return c.json({ status: 'ok' }); });
-
-app.route('/api', api);
+// Export type for hc<AppType> typed client
+export type AppType = typeof app;
 
 // =========================================================================
-// MCP StreamableHTTP endpoint (stateless JSON-RPC, no SDK needed at runtime)
+// MCP — Schema tools (Rust-generated) + Platform tools (health, docs, WASM)
 // =========================================================================
 
-function buildMcpTools(schema: ModuleSchema) {
-  const tools = [];
+const DOCS_URL = cfDeploy.workers.router.production + cfDeploy.endpoints.docs;
+
+/** Register CAD tools from Rust-generated cad-schema.json (commands + control plane) */
+function registerSchemaTools(server: McpServer, schema: ModuleSchema) {
   for (const [name, def] of Object.entries(schema.commands)) {
     if (def.ephemeral || def.readonly) continue;
-    tools.push({
-      name: `cad_${name}`,
-      description: def.description,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          ...(def.params?.properties || {}),
-          modelId: { type: 'string', description: "Target model ID (defaults to 'default')" }
-        },
-        required: def.params?.required || []
-      }
+    const shape: Record<string, z.ZodTypeAny> = zodFromJsonSchema(def.params?.properties || {}, def.params?.required || []);
+    shape.modelId = z.string().optional().describe("Target model ID (defaults to 'default')");
+    server.registerTool(`cad_${name}`, { description: def.description, inputSchema: shape }, async (args: Record<string, any>) => {
+      const { modelId, ...params } = args;
+      const result = await waitForCommand(modelId || lastActiveModelId || 'default', name, params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     });
   }
-  // Control plane commands (JS-layer, dispatched to browser via SSE)
+
   if (schema.controlPlane) {
     for (const [name, def] of Object.entries(schema.controlPlane)) {
-      tools.push({
-        name: `cad_${name}`,
-        description: `[Control Plane] ${def.description}`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            ...(def.params?.properties || {}),
-            modelId: { type: 'string', description: "Target model ID (defaults to 'default')" }
-          },
-          required: def.params?.required || []
-        }
+      const shape: Record<string, z.ZodTypeAny> = zodFromJsonSchema(def.params?.properties || {}, def.params?.required || []);
+      shape.modelId = z.string().optional().describe("Target model ID (defaults to 'default')");
+      server.registerTool(`cad_${name}`, { description: `[Control Plane] ${def.description}`, inputSchema: shape }, async (args: Record<string, any>) => {
+        const { modelId, ...params } = args;
+        const result = await waitForCommand(modelId || lastActiveModelId || 'default', name, params);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       });
     }
   }
-  // Meta-tools
+}
+
+/** Register platform tools — health, schema, WASM diagnostics, docs */
+function registerPlatformTools(server: McpServer) {
+  server.registerTool('cad_health', { description: 'Check CAD server and browser connectivity' }, async () => {
+    const mid = lastActiveModelId || 'default';
+    const m = models.get(mid);
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: 'ok', service: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version,
+      activeModel: mid, sseClients: m?.sseClientCount ?? 0, browserConnected: (m?.sseClientCount ?? 0) > 0,
+    }) }] };
+  });
+
+  server.registerTool('cad_schema', { description: 'Get full CAD command schema (version, commands, params)' }, async () => {
+    return { content: [{ type: 'text', text: JSON.stringify(cadSchema, null, 2) }] };
+  });
+
+  server.registerTool('cad_wasm_health', { description: 'Test headless WASM geometry kernel (ADR-0018)' }, async () => {
+    try {
+      return { content: [{ type: 'text', text: JSON.stringify(await runWasmHealthCheck()) }] };
+    } catch (err: any) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }], isError: true };
+    }
+  });
+
+  server.registerTool('cad_docs_index', { description: 'List available documentation sections and pages' }, async () => {
+    try {
+      const txt = await fetch(`${DOCS_URL}llms.txt`).then(r => r.text());
+      return { content: [{ type: 'text', text: txt }] };
+    } catch (err: any) {
+      return { content: [{ type: 'text', text: `Failed: ${err.message}` }], isError: true };
+    }
+  });
+
+  server.registerTool('cad_docs_search', {
+    description: 'Search documentation by keyword',
+    inputSchema: { query: z.string().describe('Search keyword or phrase') },
+  }, async ({ query }: { query: string }) => {
+    try {
+      const full = await fetch(`${DOCS_URL}llms-full.txt`).then(r => r.text());
+      const sections = full.split(/(?=^#{1,2}\s)/m);
+      const matches = sections.filter(s => s.toLowerCase().includes(query.toLowerCase())).slice(0, 5);
+      return { content: [{ type: 'text', text: matches.length ? matches.join('\n---\n') : `No docs matching "${query}".` }] };
+    } catch (err: any) {
+      return { content: [{ type: 'text', text: `Failed: ${err.message}` }], isError: true };
+    }
+  });
+
+  server.registerTool('cad_docs_read', {
+    description: 'Read a documentation page by section path',
+    inputSchema: { section: z.string().describe('Section path (e.g. "user/getting-started")') },
+  }, async ({ section }: { section: string }) => {
+    try {
+      const full = await fetch(`${DOCS_URL}llms-full.txt`).then(r => r.text());
+      const secs = full.split(/(?=^# )/m);
+      const match = secs.find(s => s.split('\n')[0].toLowerCase().includes(section.toLowerCase().split('/').pop() || ''));
+      return { content: [{ type: 'text', text: match || `Section "${section}" not found. Use cad_docs_index.` }] };
+    } catch (err: any) {
+      return { content: [{ type: 'text', text: `Failed: ${err.message}` }], isError: true };
+    }
+  });
+
+  server.registerTool('cad_docs_reference', {
+    description: 'Get third-party library reference docs',
+    inputSchema: { library: z.enum(['automerge', 'kkrpc']).describe('Library name') },
+  }, async ({ library }: { library: string }) => {
+    try {
+      const files: Record<string, string> = { automerge: 'automerge-llms-full.txt', kkrpc: 'kkrpc-llms-full.txt' };
+      const txt = await fetch(`${DOCS_URL}llms/${files[library]}`).then(r => r.text());
+      return { content: [{ type: 'text', text: txt }] };
+    } catch (err: any) {
+      return { content: [{ type: 'text', text: `Failed: ${err.message}` }], isError: true };
+    }
+  });
+}
+
+/** Register model persistence tools — save, load, list, delete (R2-backed) */
+function registerModelTools(server: McpServer, env: Bindings) {
+  const store = new ModelStore(env.MODELS);
+
+  server.registerTool('cad_model_save', {
+    description: 'Save the current model to cloud storage. Exports the scene from the browser and persists it.',
+    inputSchema: {
+      name: z.string().describe('Display name for the model'),
+      description: z.string().optional().describe('Optional description'),
+      modelId: z.string().optional().describe("Source model ID (defaults to active model)"),
+    },
+  }, async (args: Record<string, any>) => {
+    const mid = args.modelId || lastActiveModelId || 'default';
+    const exportResult = await waitForCommand(mid, 'export_scene', {});
+    if (exportResult.status !== 'done' || !exportResult.result) {
+      return { content: [{ type: 'text', text: JSON.stringify({ error: 'Failed to export scene', details: exportResult }) }], isError: true };
+    }
+    const scene = typeof exportResult.result === 'string' ? exportResult.result : JSON.stringify(exportResult.result);
+    let objectCount = 0;
+    try { const parsed = JSON.parse(scene); objectCount = Array.isArray(parsed) ? parsed.length : (parsed.objects?.length ?? 0); } catch {}
+    const id = mid === 'default' ? crypto.randomUUID().slice(0, 8) : mid;
+    const now = new Date().toISOString();
+    const existing = await store.getManifest(id);
+    const manifest = {
+      id, name: args.name, description: args.description,
+      objectCount, version: (cadSchema as ModuleSchema).version || '1.0.0',
+      createdAt: existing?.createdAt || now, updatedAt: now, hasThumbnail: existing?.hasThumbnail || false,
+    };
+    await store.save(id, manifest, scene);
+    return { content: [{ type: 'text', text: JSON.stringify({ ...manifest, url: `/model/${id}` }, null, 2) }] };
+  });
+
+  server.registerTool('cad_model_load', {
+    description: 'Load a saved model from cloud storage into the browser.',
+    inputSchema: {
+      id: z.string().describe('Model ID to load'),
+      modelId: z.string().optional().describe("Target model session (defaults to active model)"),
+    },
+  }, async (args: Record<string, any>) => {
+    const data = await store.load(args.id);
+    if (!data) return { content: [{ type: 'text', text: JSON.stringify({ error: 'Model not found', id: args.id }) }], isError: true };
+    const mid = args.modelId || lastActiveModelId || 'default';
+    const result = await waitForCommand(mid, 'import_scene', { json: data.scene });
+    return { content: [{ type: 'text', text: JSON.stringify({ loaded: data.manifest, importResult: result }, null, 2) }] };
+  });
+
+  server.registerTool('cad_model_list', {
+    description: 'List all saved models in cloud storage.',
+  }, async () => {
+    const models = await store.list();
+    return { content: [{ type: 'text', text: JSON.stringify({ count: models.length, models }, null, 2) }] };
+  });
+
+  server.registerTool('cad_model_delete', {
+    description: 'Delete a saved model from cloud storage.',
+    inputSchema: { id: z.string().describe('Model ID to delete') },
+  }, async (args: Record<string, any>) => {
+    await store.delete(args.id);
+    return { content: [{ type: 'text', text: JSON.stringify({ deleted: args.id }) }] };
+  });
+}
+
+/** Create a fresh McpServer per request (stateless — schema + platform + model tools) */
+function createMcpServer(env: Bindings) {
+  const s = cadSchema as ModuleSchema;
+  const server = new McpServer({ name: cfDeploy.workers.truck.name, version: s.version || '1.0.0' });
+  registerSchemaTools(server, s);
+  registerPlatformTools(server);
+  registerModelTools(server, env);
+  return server;
+}
+
+// JSON Schema tool list for docs endpoints (llms-full.txt, server-card) — mirrors createMcpServer
+function getMcpToolList(schema: ModuleSchema) {
+  const tools: { name: string; description: string; inputSchema: any }[] = [];
+  for (const [name, def] of Object.entries(schema.commands)) {
+    if (def.ephemeral || def.readonly) continue;
+    tools.push({ name: `cad_${name}`, description: def.description, inputSchema: {
+      type: 'object', properties: { ...(def.params?.properties || {}), modelId: { type: 'string', description: "Target model ID" } },
+      required: def.params?.required || [],
+    }});
+  }
+  if (schema.controlPlane) {
+    for (const [name, def] of Object.entries(schema.controlPlane)) {
+      tools.push({ name: `cad_${name}`, description: `[Control Plane] ${def.description}`, inputSchema: {
+        type: 'object', properties: { ...(def.params?.properties || {}), modelId: { type: 'string', description: "Target model ID" } },
+        required: def.params?.required || [],
+      }});
+    }
+  }
   tools.push(
-    { name: 'cad_health', description: 'Check if the CAD server and browser are connected', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_schema', description: 'Get the full CAD command schema (version, commands, params)', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_wasm_health', description: 'Test headless truck-webgpu-gui WASM geometry kernel in Worker (ADR-0018 Phase 0.5)', inputSchema: { type: 'object', properties: {} } }
-  );
-  // Documentation tools (ADR-0027 Phase 6)
-  tools.push(
-    { name: 'cad_docs_index', description: 'List available documentation sections and pages', inputSchema: { type: 'object', properties: {} } },
-    { name: 'cad_docs_search', description: 'Search documentation by keyword — returns matching sections', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword or phrase' } }, required: ['query'] } },
-    { name: 'cad_docs_read', description: 'Read a specific documentation page by section path (e.g. "user/getting-started")', inputSchema: { type: 'object', properties: { section: { type: 'string', description: 'Section path (e.g. "user/getting-started", "technical/architecture")' } }, required: ['section'] } },
-    { name: 'cad_docs_reference', description: 'Get third-party library reference docs (automerge or kkrpc)', inputSchema: { type: 'object', properties: { library: { type: 'string', enum: ['automerge', 'kkrpc'], description: 'Library name' } }, required: ['library'] } }
+    { name: 'cad_health', description: 'Check CAD server and browser connectivity', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_schema', description: 'Get full CAD command schema', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_wasm_health', description: 'Test headless WASM geometry kernel', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_docs_index', description: 'List available documentation sections', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_docs_search', description: 'Search documentation by keyword', inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+    { name: 'cad_docs_read', description: 'Read a documentation page', inputSchema: { type: 'object', properties: { section: { type: 'string' } }, required: ['section'] } },
+    { name: 'cad_docs_reference', description: 'Get third-party library reference docs', inputSchema: { type: 'object', properties: { library: { type: 'string', enum: ['automerge', 'kkrpc'] } }, required: ['library'] } },
+    { name: 'cad_model_save', description: 'Save current model to cloud storage', inputSchema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, modelId: { type: 'string' } }, required: ['name'] } },
+    { name: 'cad_model_load', description: 'Load a saved model from cloud storage', inputSchema: { type: 'object', properties: { id: { type: 'string' }, modelId: { type: 'string' } }, required: ['id'] } },
+    { name: 'cad_model_list', description: 'List all saved models', inputSchema: { type: 'object', properties: {} } },
+    { name: 'cad_model_delete', description: 'Delete a saved model', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   );
   return tools;
 }
 
-app.post('/mcp', async (c) => {
-  const body = await c.req.json();
-  const messages = Array.isArray(body) ? body : [body];
-  const responses: any[] = [];
-
-  for (const msg of messages) {
-    // Notifications (no id) — acknowledge silently
-    if (!('id' in msg)) continue;
-
-    switch (msg.method) {
-      case 'initialize':
-        responses.push({
-          jsonrpc: '2.0', id: msg.id,
-          result: {
-            protocolVersion: '2025-03-26',
-            capabilities: { tools: {} },
-            serverInfo: { name: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version || '1.0.0' }
-          }
-        });
-        break;
-
-      case 'tools/list':
-        responses.push({
-          jsonrpc: '2.0', id: msg.id,
-          result: { tools: buildMcpTools(cadSchema as ModuleSchema) }
-        });
-        break;
-
-      case 'tools/call': {
-        const { name, arguments: toolArgs } = msg.params;
-
-        // Meta-tools
-        if (name === 'cad_health') {
-          const mid = lastActiveModelId || 'default';
-          const m = models.get(mid);
-          responses.push({
-            jsonrpc: '2.0', id: msg.id,
-            result: { content: [{ type: 'text', text: JSON.stringify({
-              status: 'ok', service: cfDeploy.workers.truck.name,
-              version: (cadSchema as ModuleSchema).version,
-              activeModel: mid, sseClients: m?.sseClientCount ?? 0,
-              browserConnected: (m?.sseClientCount ?? 0) > 0
-            }) }] }
-          });
-          break;
-        }
-        if (name === 'cad_wasm_health') {
-          try {
-            const result = await runWasmHealthCheck();
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: JSON.stringify(result) }] }
-            });
-          } catch (err: any) {
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: JSON.stringify({
-                ok: false, headless: false, error: err.message
-              }) }] }
-            });
-          }
-          break;
-        }
-        if (name === 'cad_schema') {
-          responses.push({
-            jsonrpc: '2.0', id: msg.id,
-            result: { content: [{ type: 'text', text: JSON.stringify(cadSchema, null, 2) }] }
-          });
-          break;
-        }
-
-        // Documentation tools (ADR-0027 Phase 6)
-        const DOCS_URL = ((cfDeploy as any).workers?.router?.production || 'https://cad.ubuntusoftware.net') + ((cfDeploy as any).endpoints?.docs || '/docs/');
-        if (name === 'cad_docs_index') {
-          try {
-            const txt = await fetch(`${DOCS_URL}/llms.txt`).then(r => r.text());
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: txt }] }
-            });
-          } catch (err: any) {
-            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to fetch docs index: ${err.message}` } });
-          }
-          break;
-        }
-        if (name === 'cad_docs_search') {
-          try {
-            const full = await fetch(`${DOCS_URL}/llms-full.txt`).then(r => r.text());
-            const query = (toolArgs?.query || '').toLowerCase();
-            // Split by markdown H1/H2 headers, find sections containing the query
-            const sections = full.split(/(?=^#{1,2}\s)/m);
-            const matches = sections.filter(s => s.toLowerCase().includes(query)).slice(0, 5);
-            const result = matches.length > 0
-              ? matches.join('\n---\n')
-              : `No documentation sections found matching "${toolArgs?.query}".`;
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: result }] }
-            });
-          } catch (err: any) {
-            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to search docs: ${err.message}` } });
-          }
-          break;
-        }
-        if (name === 'cad_docs_read') {
-          try {
-            const full = await fetch(`${DOCS_URL}/llms-full.txt`).then(r => r.text());
-            const section = (toolArgs?.section || '').toLowerCase().replace(/\.md$/, '');
-            // Find the section by matching header text against the section path
-            const sections = full.split(/(?=^# )/m);
-            const match = sections.find(s => {
-              const firstLine = s.split('\n')[0].toLowerCase();
-              return firstLine.includes(section.split('/').pop() || '');
-            });
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: match || `Section "${toolArgs?.section}" not found. Use cad_docs_index to see available sections.` }] }
-            });
-          } catch (err: any) {
-            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to read doc: ${err.message}` } });
-          }
-          break;
-        }
-        if (name === 'cad_docs_reference') {
-          try {
-            const lib = toolArgs?.library;
-            const fileMap: Record<string, string> = {
-              automerge: 'automerge-llms-full.txt',
-              kkrpc: 'kkrpc-llms-full.txt'
-            };
-            const file = fileMap[lib];
-            if (!file) {
-              responses.push({
-                jsonrpc: '2.0', id: msg.id,
-                result: { content: [{ type: 'text', text: `Unknown library "${lib}". Available: automerge, kkrpc` }] }
-              });
-              break;
-            }
-            const txt = await fetch(`${DOCS_URL}/llms/${file}`).then(r => r.text());
-            responses.push({
-              jsonrpc: '2.0', id: msg.id,
-              result: { content: [{ type: 'text', text: txt }] }
-            });
-          } catch (err: any) {
-            responses.push({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `Failed to fetch reference docs: ${err.message}` } });
-          }
-          break;
-        }
-
-        // CAD command dispatch
-        const cmdName = name.startsWith('cad_') ? name.slice(4) : name;
-        const { modelId, ...params } = toolArgs || {};
-        const result = await waitForCommand(modelId || lastActiveModelId || 'default', cmdName, params);
-        responses.push({
-          jsonrpc: '2.0', id: msg.id,
-          result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-        });
-        break;
-      }
-
-      default:
-        responses.push({
-          jsonrpc: '2.0', id: msg.id,
-          error: { code: -32601, message: `Method not found: ${msg.method}` }
-        });
-    }
-  }
-
-  if (responses.length === 0) return c.body(null, 202);
-  return c.json(Array.isArray(body) ? responses : responses[0]);
+// Mount MCP endpoint (stateless — fresh server per request, JSON responses)
+app.all('/mcp', async (c) => {
+  const server = createMcpServer(c.env);
+  const transport = new StreamableHTTPTransport({ enableJsonResponse: true });
+  await server.connect(transport);
+  const response = await transport.handleRequest(c);
+  await server.close();
+  return response;
 });
-
-// Stateless server — no SSE or session teardown
-app.get('/mcp', (c) => c.body(null, 405));
-app.delete('/mcp', (c) => c.body(null, 405));
 
 // Serve llms.txt — external-facing project summary for AI discovery (ADR-0012)
 app.get('/llms.txt', async (c) => {
   try {
-    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
-    if (asset?.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
+    const asset = await c.env.ASSETS.fetch(new Request(new URL('/llms.txt', c.req.url)));
+    if (asset.ok) return new Response(asset.body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' } });
   } catch {}
   return c.redirect(`https://raw.githubusercontent.com/${cfDeploy.github}/main/systems/truck/llms.txt`);
 });
@@ -635,13 +726,13 @@ app.get('/llms.txt', async (c) => {
 // llms-full.txt — full context for LLMs: llms.txt + complete tool catalog from schema
 app.get('/llms-full.txt', async (c) => {
   const s = cadSchema as ModuleSchema;
-  const tools = buildMcpTools(s);
+  const tools = getMcpToolList(s);
 
   // Start with llms.txt content
   let content = '';
   try {
-    const asset = await (c.env as any).ASSETS?.fetch(new Request(new URL('/llms.txt', c.req.url)));
-    if (asset?.ok) content = await asset.text();
+    const asset = await c.env.ASSETS.fetch(new Request(new URL('/llms.txt', c.req.url)));
+    if (asset.ok) content = await asset.text();
   } catch {}
   if (!content) content = `# plat-trunk — Browser CAD on Cloudflare Workers\n\n> Browser-based B-Rep CAD on Cloudflare Workers. Rust/WASM kernel (truck), WebGPU rendering, Automerge CRDT collaboration. 29 MCP tools. No auth required.\n`;
 
@@ -771,37 +862,35 @@ app.get('/.well-known/agent.json', (c) => {
 // MCP Server Card — machine-readable discovery (draft spec, .well-known/mcp)
 app.get('/.well-known/mcp/server-card.json', (c) => {
   const s = cadSchema as ModuleSchema;
-  const tools = buildMcpTools(s);
+  const tools = getMcpToolList(s);
   const baseUrl = new URL(c.req.url).origin;
   return c.json({
     version: '1.0',
     protocolVersion: '2025-03-26',
     serverInfo: { name: cfDeploy.workers.truck.name, title: 'Truck CAD — Browser 3D B-Rep Modeling', version: s.version },
-    description: 'Professional 3D CAD system. B-Rep kernel (truck), WebGPU rendering, Automerge collaboration. 29 MCP tools for modeling, transforms, booleans, sketch, import/export, and control plane.',
+    description: `Professional 3D CAD system. B-Rep kernel (truck), WebGPU rendering, Automerge collaboration. ${tools.length} MCP tools for modeling, transforms, booleans, sketch, import/export, and control plane.`,
     iconUrl: `${baseUrl}/favicon.svg`,
     documentationUrl: `${baseUrl}/llms.txt`,
     transport: { type: 'http', endpoint: '/mcp' },
     capabilities: { tools: true },
     authentication: { schemes: [] },
-    tools: tools.map(t => t.name),
+    tools: tools.map((t: { name: string }) => t.name),
     instructions: `Connect with: claude mcp add --transport http ${cfDeploy.workers.truck.name} ${baseUrl}/mcp`
   }, 200, { 'cache-control': 'public, max-age=3600' });
 });
 
-// SPA catch-all: serve index.html for /model/* paths
-// Note: In local dev, we return 404 to let wrangler assets fallback handle it,
-// but for robustness we explicitly handle /model/* here if possible.
+// Docs redirect: when accessed directly on truck worker, redirect to router docs
+const ROUTER_DOCS = cfDeploy.workers.router.production + cfDeploy.endpoints.docs;
+app.get('/docs', (c) => c.redirect(ROUTER_DOCS, 301));
+app.get('/docs/*', (c) => {
+  const sub = c.req.path.replace(/^\/docs\/?/, '');
+  return c.redirect(ROUTER_DOCS + sub, 301);
+});
+
+// SPA: /model/:id serves the app shell — URL stays clean for bookmarking/sharing
 app.get('/model/*', async (c) => {
-  // If we are in a context where ASSETS is available (like a real worker), we use it.
-  // Otherwise, we rely on the [assets] configuration in wrangler.toml.
-  // To be super safe for tests, we'll just redirect to the root with a query param
-  // if we can't serve the asset directly.
-  const url = new URL(c.req.url);
-  const modelId = url.pathname.split('/').pop();
-  if (modelId) {
-    return c.redirect(`/?model=${modelId}${url.search ? '&' + url.search.slice(1) : ''}`);
-  }
-  return c.redirect('/');
+  const html = await c.env.ASSETS.fetch(new Request(new URL('/', c.req.url)));
+  return new Response(html.body, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 });
 
 export default app;

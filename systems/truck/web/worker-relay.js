@@ -1,12 +1,8 @@
 // worker-relay.js — Handles non-signal SSE events (commands) from Worker.
 import { cadCommand, reconcile } from './state.js';
+import { api } from './api-client.js';
 
 const modelId = window.__modelId || 'default';
-const API = {
-  events: `/api/cad/${modelId}/events`,
-  state: `/api/cad/${modelId}/state`,
-  result: (id) => `/api/cad/${modelId}/result/${id}`,
-};
 
 let eventSource = null;
 
@@ -14,10 +10,9 @@ async function handleCommand(id, command) {
   console.log(`[worker-relay] Executing command: ${command.type}`, command.params);
   const result = await cadCommand(command.type, command.params || {}, { source: 'api' });
   try {
-    await fetch(API.result(id), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(result.error ? { error: result.error } : { result }),
+    await api.cad[':modelId'].result[':id'].$post({
+      param: { modelId, id },
+      json: result.error ? { error: result.error } : { result },
     });
   } catch (err) {
     console.warn('[worker-relay] Failed to post result:', err);
@@ -28,12 +23,13 @@ const relay = {
   connect() {
     if (eventSource) return;
     console.log('[worker-relay] Connecting...');
-    eventSource = new EventSource(API.events);
+    // SSE stays as EventSource — not a JSON API call
+    eventSource = new EventSource(`/api/cad/${modelId}/events`);
 
     eventSource.addEventListener('cad-command', (e) => {
       try {
         const data = JSON.parse(e.data);
-        handleCommand(data.id, data.command);
+        handleCommand(data.id, data.command).catch(err => console.warn('[worker-relay] Command failed:', err));
       } catch (err) {
         console.warn('[worker-relay] SSE parse error:', err);
       }
@@ -42,10 +38,9 @@ const relay = {
     eventSource.onopen = () => {
       console.log('[worker-relay] Connected');
       const state = reconcile({});
-      fetch(API.state, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(state),
+      api.cad[':modelId'].state.$post({
+        param: { modelId },
+        json: state,
       }).catch(() => {});
     };
 

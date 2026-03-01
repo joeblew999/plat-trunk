@@ -34,6 +34,7 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0024](0024-multi-wasm-modules.md) | Multi-WASM Module Architecture | **Proposed** |
 | [0025](0025-tiered-object-scaling.md) | Content-Addressed Storage & Tiered Object Scaling | **Proposed** (Phase 0 urgent) |
 | [0026](0026-test-cleanup.md) | Test Cleanup — Review & Hardening of E2E Infrastructure | **Review** |
+| [0032](0032-ai-gui.md) | AI GUI — Integrated AI Assistance | **Proposed** |
 
 ## Future Roadmap
 

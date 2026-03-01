@@ -54,6 +54,9 @@ systems/docs/website/public/videos/*.webm
 # Env files — .env is tracked with defaults, .env.local has secrets
 .env.local
 
+# Local binaries (gh, shape-viewer, etc.)
+.bin/
+
 # Vendor sources (cloned separately)
 .src/
 

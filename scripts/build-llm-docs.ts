@@ -1,12 +1,13 @@
 // build-llm-docs — Generates llms.txt, llms-full.txt, llms-small.txt
-// Prebuild hook: runs before vitepress build.
+// Runs before vitepress build (called from root build:docs script).
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { glob } from 'node:fs/promises'
-import cfDeploy from '../../../../cf-deploy.json'
+import cfDeploy from '../cf-deploy.json'
 
-const docsDir = path.resolve('docs')
+const docsDir = path.resolve('systems/docs/website/docs')
+const publicDir = path.resolve('systems/docs/website/public')
 const frontmatterRegex = /^\n*---(\n.+)*?\n---\n/
 const siteUrl = cfDeploy.workers.router.production + cfDeploy.endpoints.docs
 
@@ -31,12 +32,12 @@ async function main() {
     links.push(`- [${title(file)}](${siteUrl}${file.replace(/\.md$/, '')})`)
   }
   const thirdParty: string[] = []
-  const llmsDir = path.resolve('public/llms')
+  const llmsDir = path.resolve(publicDir, 'llms')
   if (fs.existsSync(llmsDir)) {
     for (const f of fs.readdirSync(llmsDir).filter(f => f.endsWith('.txt')))
       thirdParty.push(`- [${title(f)}](${siteUrl}llms/${f})`)
   }
-  fs.writeFileSync('public/llms.txt', [
+  fs.writeFileSync(path.join(publicDir, 'llms.txt'), [
     '# CAD Documentation', '',
     '> Browser-based 3D CAD built with Truck, WebGPU, Hono, and Automerge.', '',
     '## Docs', '',
@@ -45,17 +46,17 @@ async function main() {
     '## Pages', '', ...links,
     ...(thirdParty.length ? ['', '## Third-Party References', '', ...thirdParty] : []),
   ].join('\n'), 'utf-8')
-  console.log('< public/llms.txt')
+  console.log('< llms.txt')
 
   // llms-full.txt — all docs concatenated
-  fs.writeFileSync('public/llms-full.txt',
+  fs.writeFileSync(path.join(publicDir, 'llms-full.txt'),
     await concat('**/*.md', '<SYSTEM>Full developer documentation for CAD.</SYSTEM>\n\n'), 'utf-8')
-  console.log('< public/llms-full.txt')
+  console.log('< llms-full.txt')
 
   // llms-small.txt — user guide only
-  fs.writeFileSync('public/llms-small.txt',
+  fs.writeFileSync(path.join(publicDir, 'llms-small.txt'),
     await concat('user/**/*.md', '<SYSTEM>User guide for CAD.</SYSTEM>\n\n'), 'utf-8')
-  console.log('< public/llms-small.txt')
+  console.log('< llms-small.txt')
 }
 
 main().catch(console.error)

@@ -9,17 +9,28 @@ bun run dev             # Start all workers (localhost:8788)
 # Ctrl+C to stop
 ```
 
-## Key Commands
+## Commands
 ```sh
+# Dev
 bun run dev             # Start router + truck + test workers (run.mjs)
+
+# Build
 bun run build           # Build WASM + docs
-bun run test            # Run all tests (cargo test + vitest)
-bun run deploy          # Build + upload all workers
-bun run build:truck     # WASM compile + schema generation only
-bun run build:docs      # Build VitePress docs only
-bun run test:crate      # Rust unit tests only
-bun run test:api        # Worker API tests only (vitest)
+bun run build:truck     # wasm-pack build + cargo run --bin generate-schema → cad-schema.json
+bun run build:docs      # Build VitePress docs
+
+# Test
+bun run test            # All tests (cargo test + vitest)
+bun run test:crate      # Rust unit tests
+bun run test:api        # Worker API tests (vitest)
 bun run test:e2e        # Playwright E2E tests
+
+# Deploy
+bun scripts/cf-deploy.ts upload --target truck   # Upload single worker
+bun scripts/cf-deploy.ts upload --target router  # Upload router
+bun run deploy                                   # Build + upload all
+bun scripts/cf-deploy.ts promote --target truck  # Promote to production
+bun scripts/cf-deploy.ts versions                # Regenerate cf-versions.json
 ```
 
 ## Architecture
@@ -36,188 +47,91 @@ Client → Router (port 8788, plat-router)
 Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck is the first. The test worker validates the N-worker topology. 3MB worker size limit means WASM-heavy systems must be separate workers.
 
 ## Core Stack
-- **Kernel**: Rust (`truck` B-Rep). We build directly on the vendor source in `.src/truck` (Topology, Assembly, STEP-IO, etc).
+- **Kernel**: Rust (`truck` B-Rep), vendor source in `.src/truck`
 - **Backend**: Hono + Zod + `@hono/zod-openapi` (Cloudflare Workers)
-- **Frontend**: Lit (Web Components) + Three.js (camera/orbit) + Datastar v1.0.0-RC.7 (reactive signals) + DaisyUI/Tailwind + WebGPU
+- **Frontend**: Lit (Web Components) + Three.js (camera/orbit) + Datastar v1.0.0-RC.7 (signals) + DaisyUI/Tailwind + WebGPU
 - **Sync**: Automerge CRDT for local-first op log + undo/redo
-- **Camera**: Three.js OrbitControls owns camera → pushes 4x4 matrix to WASM each frame (Passive WASM, ADR-0013)
-- **Orchestration**: `bun run` scripts + `run.mjs` (spawns wrangler dev per worker)
-- **BIM**: Building on `ifc-lite` source in `.src/ifc-lite` for semantic building data.
+- **Camera**: Three.js OrbitControls → pushes 4x4 matrix to WASM each frame (Passive WASM, ADR-0013)
+- **BIM**: `ifc-lite` source in `.src/ifc-lite` for semantic building data
 
 ## Folder Layout
 
 ```
 . (repo root = plat-router worker)
-├── wrangler.toml          Root router config (port 8788, DOCS_ASSETS, service bindings)
-├── src/router.ts          Routing logic (~70 lines)
+├── wrangler.toml          Router config (DOCS_ASSETS, TRUCK/TEST service bindings, custom domain)
+├── src/router.ts          Routing logic (~70 lines: /docs/*, /test/*, /* passthrough)
 ├── workers.mjs            Worker registry (name, dir, port, build command)
-├── run.mjs                Dev/deploy orchestrator (spawns child processes)
-├── package.json           All commands (bun run dev/build/test/deploy)
-├── cf-deploy.json         Deploy metadata (workers, endpoints, account)
+├── run.mjs                Dev orchestrator (spawns wrangler dev per worker)
+├── package.json           All commands
+├── cf-deploy.json         Deploy config: workers map, endpoints, account (SINGLE SOURCE OF TRUTH)
+├── .mcp.json              MCP config: truck-cad bridge + Playwright WebGPU
 ├── scripts/
-│   ├── cf-deploy.ts       Cloudflare deploy lifecycle (upload, promote, smoke)
-│   ├── mcp-bridge.ts      stdio ↔ HTTP proxy to Worker /mcp
+│   ├── cf-deploy.ts       Deploy lifecycle (upload, promote, smoke, versions)
+│   ├── build-llm-docs.ts  LLM docs generator (llms.txt, llms-full.txt)
+│   ├── mcp-bridge.ts      stdio ↔ HTTP proxy to Worker /mcp (retry + hot-reload)
 │   └── mcp-setup.sh       Generates MCP configs for Gemini/Cursor
 ├── systems/
-│   ├── truck/             CAD kernel — Rust WASM + Cloudflare Worker + browser GUI
-│   │   ├── crate/         Rust source (wasm_app.rs, commands.rs)
-│   │   ├── web/           Static assets (HTML, JS, CSS, vendor libs) — served by truck worker
-│   │   ├── worker/        Hono + Zod Worker (port 8789, own wrangler.toml)
-│   │   ├── tests/         Playwright E2E + UI tests
-│   │   └── cad-schema.json  Generated schema (Rust → JSON, checked in)
+│   ├── truck/
+│   │   ├── crate/src/     Rust: wasm_app.rs (SceneController), commands.rs (params + schema)
+│   │   ├── web/           Static assets (HTML, JS, CSS, vendor libs, cf-versions.json)
+│   │   ├── worker/src/    Hono worker: index.ts (REST + OpenAPI + MCP), index.test.ts
+│   │   └── tests/         Playwright E2E
+│   ├── truck/cad-schema.json  GENERATED from Rust — drives Worker/MCP/OpenAPI/browser
 │   ├── test/worker/       Test worker (port 5175, validates N-worker pattern)
-│   ├── docs/website/      VitePress source + public assets (dist served by router)
+│   ├── docs/website/      VitePress source (dist served by router DOCS_ASSETS)
 │   └── ezpz/              KittyCAD kcl-ezpz integration
-├── docs/adr/              Architecture Decision Records
-└── .mcp.json              Claude Code MCP config
+└── docs/adr/              Architecture Decision Records
 ```
-
-## Key Files
-
-### Router (repo root)
-- `wrangler.toml` — plat-router config: DOCS_ASSETS binding, TRUCK/TEST service bindings, custom domain
-- `src/router.ts` — /docs/* (VitePress clean URLs + redirect rewriting), /test/* (strip + forward), /* (truck passthrough)
-- `workers.mjs` — Single registry of all workers (name, dir, port, inspectorPort, build)
-- `run.mjs` — Dev: spawns wrangler dev per worker with colored output. Deploy: builds + uploads.
-
-### Rust (kernel + schema)
-- `systems/truck/crate/src/wasm_app.rs` — SceneController + `execute()` dispatch
-- `systems/truck/crate/src/commands.rs` — Typed param structs + `build_schema()`
-- `systems/truck/crate/src/bin/generate_schema.rs` — Native binary for schema generation
-
-### JavaScript (browser)
-- `systems/truck/web/state.js` — `cadCommand()`, `reconcile()`, `executeWasm()`, `renderObjectList()`
-- `systems/truck/web/history.js` — `CadDocumentManager`: Automerge op log, undo/redo, timeline UI
-- `systems/truck/web/ui.js` — Gizmo mouse handlers, keyboard shortcuts, sheet toggles
-- `systems/truck/web/sketch.js` — Sketch tool (line/rect/triangle → extrude)
-- `systems/truck/web/cad-viewport.js` — Lit web component: WebGPU canvas, Three.js OrbitControls, gizmo traffic controller
-- `systems/truck/web/worker-relay.js` — SSE relay to Worker (only loaded when not local mode)
-- `systems/truck/web/index.html` — DaisyUI + Datastar signals, outliner, properties panel, control plane header
-- `systems/truck/web/style.css` — DaisyUI/Tailwind theming
-
-### Worker (Cloudflare)
-- `systems/truck/worker/src/index.ts` — Hono: `mountModule()` factory → REST routes + OpenAPI; stateless `/mcp` endpoint (MCP StreamableHTTP JSON-RPC)
-- `systems/truck/worker/src/index.test.ts` — Vitest: API + MCP contract tests (32 tests)
-
-### Generated artifacts
-- `systems/truck/cad-schema.json` — 20 WASM commands + 7 control plane commands, auto-generated from Rust (checked into git)
-- `systems/truck/web/cf-versions.json` — Version picker data (releases + PR previews)
-- `systems/truck/web/vendor/datastar.js` — Vendored Datastar v1.0.0-RC.7
-- `systems/truck/web/vendor/automerge-bundle.js` — Vendored Automerge
-- `systems/truck/web/vendor/lit.js` — Vendored Lit (Web Components)
-- `systems/truck/web/vendor/three.js` — Vendored Three.js r183
-
-### Config
-- `.mcp.json` — Claude Code MCP config (`truck-cad` → stdio bridge → Worker `/mcp`)
-- `.gemini/settings.json` — Gemini CLI MCP config (generated by `scripts/mcp-setup.sh`)
-- `scripts/mcp-bridge.ts` — Pure stdio ↔ HTTP proxy to Worker `/mcp` with retry + hot-reload polling
-- `scripts/mcp-setup.sh` — Generates MCP configs for Gemini/Cursor (bridge + Playwright WebGPU)
-- `scripts/playwright-mcp.config.json` — Playwright browser launch args for WebGPU
-- `cf-deploy.json` — Shared Cloudflare config (workers map, endpoints, account)
 
 ## Schema-Driven Architecture (ADR-005)
 
-**Single source of truth**: Rust param structs generate everything.
-
 ```
 Rust structs (#[derive(Deserialize, JsonSchema)])
-  → cargo run --bin generate-schema
-  → systems/truck/cad-schema.json (34 WASM commands + 7 control plane commands)
+  → bun run build:truck (wasm-pack + generate-schema)
+  → systems/truck/cad-schema.json
   → Worker: Zod enum + OpenAPI spec + route validation + /mcp tools
-  → Bridge: pure proxy to Worker /mcp (no schema reading)
   → Browser: cadCommand() dispatches to same execute()
-  → controlPlane section: JS-layer commands (undo, redo, set_mode, clear_data, etc.)
 ```
 
-**The contract chain**: Add a command in Rust → `bun run build:truck` → schema regenerates → Worker/MCP/OpenAPI/tests all update automatically. Nothing hand-written drifts.
+Add a command in Rust → `bun run build:truck` → schema regenerates → Worker/MCP/OpenAPI/tests all update automatically. Nothing hand-written drifts.
 
 ## Single Dispatch Path
 
 ```
 Everything → cadCommand(type, params, opts) → ctrl.execute(type, json) [WASM]
-                ↓ also: Automerge record, reconcile() → Datastar, state POST
+                ↓ also: Automerge record, reconcile() → Datastar signals → DOM
 ```
 
-- `cadCommand()` is the ONE entry point for all mutations (GUI, MCP, API, tests)
-- `execute(type, json)` in Rust handles all 20 WASM command types; JS-layer handles 7 control plane commands
-- `reconcile()` reads WASM state → pushes to Datastar signals → updates DOM
-- Gizmo drag stays direct WASM (60fps latency requirement)
+## Deploy
 
-## Deploy (versioned — Cloudflare Workers)
+Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only at **PR previews** and **releases**.
 
-Every upload gets an **immutable UUID URL** automatically (`preview_urls = true` in wrangler.toml).
-Named aliases are only created at two moments: **PR previews** and **releases**.
-
-```sh
-# Upload a single worker
-bun scripts/cf-deploy.ts upload --target truck
-bun scripts/cf-deploy.ts upload --target router
-
-# Upload all workers
-bun run deploy
-
-# PR preview (CI does this automatically)
-bun scripts/cf-deploy.ts upload --target truck --tag pr-42 --preview-alias pr-42
-
-# Promote to production
-bun scripts/cf-deploy.ts promote --target truck
-
-# List versions
-bun scripts/cf-deploy.ts list --target truck
-```
-
-**CI pipeline** (`.github/workflows/ci.yml`):
+**CI** (`.github/workflows/ci.yml`):
 - All branches: `bun run build && bun run test`
 - Push to main: upload truck + build docs + upload router
-- PR opened: upload preview versions with `pr-{N}` aliases + sticky PR comment
+- PR opened: upload with `pr-{N}` aliases + sticky PR comment
 
-## MCP Architecture
+## MCP
 
-**Single implementation**: Worker `/mcp` endpoint (stateless MCP StreamableHTTP, JSON-RPC).
-Handles `initialize`, `tools/list`, `tools/call` — dispatches to the same `waitForCommand()` pipeline as REST. 29 tools total (20 WASM commands + 7 control plane + 2 meta: `cad_health`, `cad_schema`).
+**Two MCP servers** (both configured in `.mcp.json`, both must always work):
 
-**Bridge** (`scripts/mcp-bridge.ts`): pure stdio ↔ HTTP proxy. Adds:
-- **Auto-routing**: tries localhost first, falls back to PR preview URL if local server is down
-- Retry with exponential backoff (6 attempts, 1s→32s) — survives server restarts
-- Schema version polling (every 30s) → sends `tools/list_changed` notification — **hot-reload without client restart**
+1. **CAD MCP** — 29 tools via stdio bridge → Worker `/mcp` (stateless JSON-RPC)
+   - Auto-routing: localhost → PR preview → fallback with retry
+   - Hot-reload: polls schema version every 30s → `tools/list_changed`
+2. **Playwright MCP** — browser automation with WebGPU (`scripts/playwright-mcp-claude.config.json`)
 
-URL resolution (no `CAD_URL` set):
-1. `localhost:8788` — if dev server is running (quick health check)
-2. `pr-{N}-truck-cad.gedw99.workers.dev` — if current branch has an open PR
-3. `localhost:8788` — fallback (retry waits for server to start)
-
-| Mode | Config | Hot-reload |
-|------|--------|------------|
-| **Auto** | No config needed — detects local or PR preview | Version polling + retry |
-| **Explicit** | `CAD_URL=https://cad.ubuntusoftware.net` | Version polling on deploy |
-| **Direct HTTP** | `"type": "http"` → `/mcp` (no bridge needed) | Manual restart only |
-
-### Dev MCP Servers
-
-1. **CAD MCP** — `cad_add_cube`, `cad_translate`, `cad_boolean_subtract`, etc.
-2. **Playwright MCP** — `browser_navigate`, `browser_snapshot`, `browser_click`, etc.
-   - WebGPU-enabled via `scripts/playwright-mcp.config.json`
-   - Always available (independent of dev server)
-
-**Interactive verification pattern**:
+**Dev workflow** (MANDATORY — edit → test → verify → deploy → verify):
 ```
-1. Make code change
-2. bun run build:truck (if Rust changed)
-3. cad_add_cube({size: 1})            → drive via CAD MCP
-4. browser_snapshot                    → verify via Playwright MCP
-5. Write equivalent Playwright test
-6. bun run test:e2e                   → automate
+1. Edit code (TS auto-reloads, static assets served immediately — NO RESTART)
+2. bun run build:truck              (only if Rust changed)
+3. bun run test:api                 → no regressions
+4. browser_navigate + browser_snapshot → verify in browser (Playwright MCP)
+5. bun scripts/cf-deploy.ts upload  → deploy
+6. wrangler versions deploy <id>@100% --yes → promote
+7. browser_navigate (prod URL) + browser_snapshot → verify production
 ```
 
-## Workflow: Real-Time BIM & Design Review
-
-The platform is designed for **Real-Time Architectural Coordination**:
-- **Semantic BIM**: Using `ifc-lite` to parse building elements (Walls, Slabs) and mapping them to `truck-assembly` hierarchies.
-- **Immediate Visualization**: No batch exports. IFC files are loaded and rendered in the browser instantly via WebGPU.
-- **Live Clash Detection**: Leveraging `truck-shapeops` to perform boolean intersections between architectural and mechanical components in real-time as they are modified.
-- **Collaborative Design**: Automerge ensures all designers see design modifications and clash results instantly without coordination meetings.
-
-## Datastar Signals (UI State)
+## Datastar Signals
 
 | Signal | Source | Purpose |
 |--------|--------|---------|
@@ -242,34 +156,25 @@ The platform is designed for **Real-Time Architectural Coordination**:
 
 ## ADRs
 
-See `docs/adr/README.md` for the full index. Key decisions:
-- **ADR-001**: Three-layer architecture (HTTP API, GUI push, WASM boundary)
-- **ADR-004**: Hybrid BIM — Mechanical (truck B-Rep) + Architectural (ifc-lite IFC)
-- **ADR-005**: Schema-driven unified API — Rust is single source of truth
-- **ADR-008**: Undo/Redo — Automerge op log with timeline UI
-- **ADR-010**: MCP + OpenAPI stack — Hono + Zod-OpenAPI + AI agent integration
-- **ADR-011**: Control Plane — undo/redo, mode, documents, sync as API commands
-- **ADR-013**: Lit + Three.js + Passive WASM — JS owns camera, WASM renders
-- **ADR-017**: Versioned Deployments — Cloudflare Workers gradual rollout
+See `docs/adr/README.md`. Key: ADR-001 (3-layer arch), ADR-004 (hybrid BIM), ADR-005 (schema-driven), ADR-008 (undo/redo), ADR-010 (MCP+OpenAPI), ADR-013 (Lit+Three+Passive WASM), ADR-017 (versioned deploy).
 
 ## AI Agent Rules
 
-1. **Use npm scripts**: All commands go through `package.json` scripts. `bun run dev` starts everything, `bun run test` tests everything.
-   - NEVER manually edit MCP configs (`~/.claude/mcp.json`, `~/.claude/settings.json`, etc.)
-   - NEVER use curl to call MCP endpoints — use native MCP tools (`cad_add_cube`, etc.)
-2. **Schema first**: Never add/change API without updating `commands.rs` first, then `bun run build:truck`
-3. **Test driven**: Use `bun run test` to verify changes across the entire stack
-4. **Single dispatch**: ALL mutations go through `cadCommand()` — never call WASM directly (except gizmo drag)
-5. **Don't hand-write**: Zod enums, MCP tool registrations, OpenAPI paths — all auto-generated from schema
-6. **reconcile() only**: Never write to Datastar signals directly — `reconcile()` is the single sync point
-7. **data-testid**: All interactive HTML elements must have `data-testid` attributes for testing
-8. **ADR context**: Read `docs/adr/README.md` before proposing architectural changes
-9. **No legacy / backward compatibility**: There are no existing users. Do not add migration paths, legacy fallback code, or backward-compat shims. Write clean code for the current design only.
+1. **Use bun run scripts** — never bypass with ad-hoc commands or manual config edits
+2. **Schema first** — change `commands.rs` → `bun run build:truck` → everything downstream updates
+3. **Single dispatch** — all mutations through `cadCommand()`, all state sync through `reconcile()`
+4. **DRY** — `cf-deploy.json` owns deploy config, `cad-schema.json` owns commands. Import the JSON. Never duplicate into env vars, wrangler [vars], or hardcoded strings
+5. **Isomorphic local/cloud** — relative paths in HTML (`/docs/`, `/api/health`). Workers redirect cross-worker paths to the router
+6. **Verify with Playwright MCP** — always check fixes in browser before AND after deploy. Never assume
+7. **No hand-writing** — Zod enums, MCP tools, OpenAPI paths are all auto-generated from schema
+8. **data-testid** — all interactive HTML elements need them for testing
+9. **No legacy/compat** — no existing users, no migration paths, clean code only
+10. **ADR context** — read `docs/adr/README.md` before proposing architectural changes
 
-## Library Reference (for AI assistants)
-- Automerge patterns & API: `systems/docs/website/public/llms/automerge-llms-full.txt`
-- kkrpc patterns & API: `systems/docs/website/public/llms/kkrpc-llms-full.txt`
-- Cross-language interop (Go, Python, Rust, Swift): `.claude/skills/interop/SKILL.md`
+## Library Reference
+- Automerge: `systems/docs/website/public/llms/automerge-llms-full.txt`
+- kkrpc: `systems/docs/website/public/llms/kkrpc-llms-full.txt`
+- Cross-language interop: `.claude/skills/interop/SKILL.md`
 
 ## Deployed URLs
 
@@ -277,6 +182,5 @@ See `docs/adr/README.md` for the full index. Key decisions:
 |-----|---------|
 | `https://cad.ubuntusoftware.net` | Production (custom domain → plat-router) |
 | `https://truck-cad.gedw99.workers.dev` | Truck worker (workers.dev) |
-| `https://cad.ubuntusoftware.net/docs/` | Docs (VitePress via router DOCS_ASSETS) |
-| `https://cad.ubuntusoftware.net/docs/llms.txt` | LLM docs (auto-generated) |
-| `http://localhost:8788` | Local dev (router → all workers via `bun run dev`) |
+| `https://cad.ubuntusoftware.net/docs/` | Docs (VitePress via router) |
+| `http://localhost:8788` | Local dev (router → all workers) |

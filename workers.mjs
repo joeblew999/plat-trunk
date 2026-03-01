@@ -56,4 +56,8 @@ export const devServers = [
     name: 'docs-dev',
     command: 'cd systems/docs/website && bun x vitepress dev --port 5176',
   },
+  {
+    name: 'watch-api-client',
+    command: 'watchexec -w systems/truck/web/src -w systems/truck/worker/src/index.ts -e ts --debounce 500ms -- bun run build:api-client',
+  },
 ];

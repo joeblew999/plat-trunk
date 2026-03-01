@@ -1,6 +1,7 @@
-import { cadCommand, reconcile, moduleRouter } from './state.js';
+import { cadCommand, reconcile, moduleRouter, getSchema } from './state.js';
 import { storeBlob, getBlob } from './blob-store.js';
 import { resetTierState, registerWarmObjects } from './tier-manager.js';
+import { api } from './api-client.js';
 
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
 // Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
@@ -67,16 +68,20 @@ class CadDocumentManager {
             if (modelDocUrl && isValidAutomergeUrl(modelDocUrl)) {
                 console.log(`[Automerge] Loading doc for model ${modelId}: ${modelDocUrl}`);
                 await this.loadDocument(modelDocUrl);
-            } else {
-                // Fallback to legacy last-doc
+            } else if (modelId === 'default') {
+                // Legacy fallback — only for default model (prevents cross-contamination)
                 const lastUrl = localStorage.getItem('cad-last-doc-url');
                 if (lastUrl && isValidAutomergeUrl(lastUrl)) {
                     console.log(`[Automerge] Loading legacy last-doc: ${lastUrl}`);
                     await this.loadDocument(lastUrl);
                 } else {
                     console.log(`[Automerge] Creating new doc for model ${modelId}`);
-                    await this.createDocument(modelId === 'default' ? 'Untitled' : `Model ${modelId}`);
+                    await this.createDocument('Untitled');
                 }
+            } else {
+                // Cloud model with no local doc — create new + load from cloud
+                console.log(`[Automerge] Creating new doc for cloud model ${modelId}`);
+                await this.createDocument(`Model ${modelId}`);
             }
         }
     }
@@ -91,34 +96,44 @@ class CadDocumentManager {
 
         await this.handle.doc();
 
-        // First visit with default model — load demo scene for a "wow moment"
+        // First visit — load baseline scene (cloud model or demo).
+        // These are navigation/restore actions, NOT user edits.
+        // Store as snapshot (baseline state) — not as an Automerge operation.
+        // This means you can't "undo" opening a model, which is correct.
         const modelId = window.__modelId || 'default';
-        let demoLoaded = false;
-        if (modelId === 'default') {
+        let sceneJson = null;
+        if (modelId !== 'default') {
+            // Cloud model: fetch saved scene from API
+            try {
+                const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
+                if (res.ok) {
+                    sceneJson = await res.text();
+                    console.log(`[Cloud] Loaded model "${modelId}" from cloud`);
+                }
+            } catch (e) {
+                console.warn(`[Cloud] Failed to load model "${modelId}":`, e);
+            }
+        } else {
             try {
                 const res = await fetch('examples/default-cube.json');
-                if (res.ok) {
-                    const json = await res.text();
-                    cadCommand('clear', {}, { record: false, broadcast: false, reconcile: false });
-                    cadCommand('import_scene', { json }, { record: false, broadcast: false, reconcile: false });
-                    await this.record('import_scene', { json });
-                    reconcile({});
-                    demoLoaded = true;
-                }
+                if (res.ok) sceneJson = await res.text();
             } catch (e) {
                 console.warn('[Demo] Failed to load demo scene:', e);
             }
         }
 
-        // Fallback: record the Rust default cube if demo didn't load
-        if (!demoLoaded) {
-            const ctrl = this._ctrl();
-            if (ctrl) {
-                const ids = ctrl.object_ids();
-                if (ids.length > 0) {
-                    await this.record('add_cube', { size: 1.0 }, { objectId: ids[0] });
-                }
-            }
+        if (sceneJson) {
+            // Import into WASM — data plane commands used for navigation (override schema defaults)
+            cadCommand('clear', {}, { record: false, reconcile: false });
+            cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
+            reconcile({});
+
+            // Store as baseline snapshot at op index 0 (not an operation)
+            const snapshotRef = await storeBlob(sceneJson);
+            this.handle.change(d => {
+                if (!d.snapshots) d.snapshots = [];
+                d.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
+            });
         }
 
         this._localOpCount = this._getDocOpCount();
@@ -316,7 +331,8 @@ class CadDocumentManager {
             const doc = this.handle.doc();
             if (!doc) return;
 
-            const REPLAY = { record: false, broadcast: false, reconcile: false, source: 'replay' };
+            // Data plane commands used for replay — override schema defaults
+            const REPLAY = { record: false, reconcile: false, source: 'replay' };
             const prevSelectedId = window._ds?.root?.selectedId ?? null;
 
             // Clear stale tier manager state — scene is about to be rebuilt from scratch
@@ -382,7 +398,7 @@ class CadDocumentManager {
             }
             // Tell WASM about selection so tier manager's "never evict selected" guard works
             if (newSel) {
-                cadCommand('select', { id: newSel }, { record: false, broadcast: false, reconcile: false, source: 'replay' });
+                cadCommand('select', { id: newSel }, { reconcile: false, source: 'replay' });
             }
             if (ds?.root) ds.root.selectedId = newSel;
 
@@ -551,40 +567,44 @@ class CadDocumentManager {
             return;
         }
 
-        const TYPE_COLORS = {
-            add_cube: 'btn-primary',
-            add_sphere: 'btn-secondary',
-            add_cylinder: 'btn-accent',
-            add_torus: 'btn-info',
-            translate: 'btn-ghost',
-            rotate: 'btn-ghost',
-            scale: 'btn-ghost',
-            duplicate: 'btn-info',
-            boolean_union: 'btn-success',
-            boolean_subtract: 'btn-warning',
-            boolean_intersect: 'btn-error',
-            delete: 'btn-error',
-            clear: 'btn-ghost',
-            set_style: 'btn-ghost',
-            sketch_extrude: 'btn-primary',
+        // Schema-driven timeline metadata — new commands auto-inherit domain styling.
+        // Domain → default chip color. Only 5 domain-level overrides exist.
+        const DOMAIN_COLORS = {
+            geometry: 'btn-primary', booleans: 'btn-success',
+            scene: 'btn-ghost',     style: 'btn-ghost',
+            sketch: 'btn-primary',
         };
-
-        const TYPE_LABELS = {
-            add_cube: 'Cube',
-            add_sphere: 'Sphere',
-            add_cylinder: 'Cyl',
-            add_torus: 'Torus',
-            translate: 'Move',
-            rotate: 'Rot',
-            scale: 'Scale',
-            duplicate: 'Dup',
-            boolean_union: 'Union',
-            boolean_subtract: 'Sub',
-            boolean_intersect: 'Inter',
-            delete: 'Del',
-            clear: 'Clear',
-            set_style: 'Style',
-            sketch_extrude: 'Extrude',
+        // Per-command color overrides where domain default is wrong (presentation-only)
+        const COLOR_OVERRIDES = {
+            boolean_subtract: 'btn-warning', boolean_intersect: 'btn-error',
+            clash_detect: 'btn-info', delete: 'btn-error', duplicate: 'btn-info',
+        };
+        const schema = getSchema();
+        const chipColor = (type) => {
+            if (COLOR_OVERRIDES[type]) return COLOR_OVERRIDES[type];
+            const cmd = schema?.commands?.[type];
+            if (!cmd) return 'btn-ghost';
+            // Geometry domain: only creation (add_*) gets primary; transforms are ghost
+            if (cmd.domain === 'geometry' && !type.startsWith('add_')) return 'btn-ghost';
+            return DOMAIN_COLORS[cmd.domain] || 'btn-ghost';
+        };
+        // Label derived from schema description — no hardcoded command→label map.
+        const chipLabel = (type) => {
+            const cmd = schema?.commands?.[type];
+            if (!cmd?.description) return type;
+            // Strip parentheticals: "Set object color (RGBA)" → "Set object color"
+            const desc = cmd.description.replace(/\s*\(.*\)/, '');
+            const words = desc.split(/\s+/);
+            // "Add a cube primitive" → "Cube"
+            if (words[0] === 'Add' && words.length >= 3) return words[2][0].toUpperCase() + words[2].slice(1);
+            // "Set object material style" → "Style", "Get full scene state" → "State"
+            if (words[0] === 'Set' || words[0] === 'Get') {
+                const w = words[words.length - 1];
+                return w[0].toUpperCase() + w.slice(1);
+            }
+            // First verb: "Move", "Union", "Delete", "Extrude", "Scale", "Rotate", "Clear", etc.
+            const ABBR = { Delete: 'Del', Subtract: 'Sub', Duplicate: 'Dup', Intersect: 'Inter', Rotate: 'Rot' };
+            return ABBR[words[0]] || words[0];
         };
 
         // Group consecutive ops with same groupId into single chip
@@ -601,11 +621,11 @@ class CadDocumentManager {
                     }
                 }
                 const primary = group[0];
-                const label = (TYPE_LABELS[primary.type] || primary.type) +
+                const label = chipLabel(primary.type) +
                     (group.length > 1 ? `+${group.length - 1}` : '');
                 chips.push({
                     label,
-                    color: TYPE_COLORS[primary.type] || 'btn-ghost',
+                    color: chipColor(primary.type),
                     enabled: primary.enabled,
                     own: primary.actorId === this.actorId,
                     groupId: gid,
@@ -614,8 +634,8 @@ class CadDocumentManager {
                 i += group.length;
             } else {
                 chips.push({
-                    label: TYPE_LABELS[op.type] || op.type,
-                    color: TYPE_COLORS[op.type] || 'btn-ghost',
+                    label: chipLabel(op.type),
+                    color: chipColor(op.type),
                     enabled: op.enabled,
                     own: op.actorId === this.actorId,
                     groupId: null,

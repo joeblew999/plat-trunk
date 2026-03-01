@@ -72,7 +72,7 @@ export class CadOutliner extends LitElement {
   }
 
   _select(id) {
-    window.cadCommand?.('select', { id }, { record: false, broadcast: false });
+    window.cadCommand?.('select', { id });
   }
 
   _focus(id) {

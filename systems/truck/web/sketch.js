@@ -4,7 +4,7 @@
 
 import { cadCommand, cadQuery, reconcile, showFeedback } from './state.js';
 
-const cmd = (type, params = {}) => cadQuery(type, params, { record: false, broadcast: false });
+const cmd = (type, params = {}) => cadQuery(type, params);
 const ds = () => window._ds;
 const fb = (msg, err) => showFeedback(msg, err);
 
