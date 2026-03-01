@@ -11,6 +11,7 @@
 
 pub mod sketch;
 pub mod commands;
+mod bool_robustness;
 
 #[cfg(feature = "mvt")]
 pub mod mvt;

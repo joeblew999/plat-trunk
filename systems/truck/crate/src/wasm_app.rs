@@ -1328,13 +1328,18 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn boolean_union(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_union({}, {})", id_a, id_b);
-        let mut s = self.state.borrow_mut();
-        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
-        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
-        if idx_a == idx_b { return String::new(); }
 
-        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
-        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+        // Extract solids and indices, then DROP the borrow before the boolean op.
+        // This prevents RefCell poisoning if a panic escapes catch_unwind.
+        let (solid_a, solid_b, idx_a, idx_b) = {
+            let s = self.state.borrow();
+            let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+            let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+            if idx_a == idx_b { return String::new(); }
+            let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+            let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+            (sa, sb, idx_a, idx_b)
+        }; // borrow dropped here
 
         let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
             truck_shapeops::or(a, b, 0.05).or_else(|| {
@@ -1347,6 +1352,7 @@ impl SceneController {
 
         match result {
             Some(solid) => {
+                let mut s = self.state.borrow_mut();
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
@@ -1367,13 +1373,16 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn boolean_subtract(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_subtract({}, {})", id_a, id_b);
-        let mut s = self.state.borrow_mut();
-        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
-        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
-        if idx_a == idx_b { return String::new(); }
 
-        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
-        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+        let (solid_a, solid_b, idx_a, idx_b) = {
+            let s = self.state.borrow();
+            let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+            let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+            if idx_a == idx_b { return String::new(); }
+            let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+            let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+            (sa, sb, idx_a, idx_b)
+        };
 
         let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
             let mut not_b = b.clone(); not_b.not();
@@ -1382,6 +1391,7 @@ impl SceneController {
 
         match result {
             Some(solid) => {
+                let mut s = self.state.borrow_mut();
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
@@ -1402,13 +1412,16 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn boolean_intersect(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_intersect({}, {})", id_a, id_b);
-        let mut s = self.state.borrow_mut();
-        let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
-        let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
-        if idx_a == idx_b { return String::new(); }
 
-        let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
-        let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+        let (solid_a, solid_b, idx_a, idx_b) = {
+            let s = self.state.borrow();
+            let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
+            let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
+            if idx_a == idx_b { return String::new(); }
+            let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
+            let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
+            (sa, sb, idx_a, idx_b)
+        };
 
         let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
             truck_shapeops::and(a, b, 0.05)
@@ -1416,6 +1429,7 @@ impl SceneController {
 
         match result {
             Some(solid) => {
+                let mut s = self.state.borrow_mut();
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 s.objects.remove(hi);
                 s.objects.remove(lo);
