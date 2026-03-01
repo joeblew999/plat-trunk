@@ -9,10 +9,20 @@
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createWriteStream, mkdirSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { workers, devServers } from './workers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const children = [];
+
+// --- Dev log file: readable by Claude Code / other agents ---
+const LOG_DIR = join(homedir(), '.cache', 'plat-trunk');
+mkdirSync(LOG_DIR, { recursive: true });
+const LOG_FILE = join(LOG_DIR, 'dev.log');
+const logStream = createWriteStream(LOG_FILE, { flags: 'w' }); // overwrite each run
+console.error(`[run.mjs] Dev log: ${LOG_FILE}`);
 
 // Color codes for process output prefixes
 const colors = ['\x1b[36m', '\x1b[33m', '\x1b[35m', '\x1b[32m', '\x1b[34m', '\x1b[31m'];
@@ -27,12 +37,16 @@ function start(name, cmd, cwd, colorIdx = 0) {
   });
   child.stdout?.on('data', (d) => {
     for (const line of d.toString().split('\n').filter(Boolean)) {
-      process.stdout.write(prefix + line + '\n');
+      const out = prefix + line + '\n';
+      process.stdout.write(out);
+      logStream.write(`[${new Date().toISOString()}] ${out}`);
     }
   });
   child.stderr?.on('data', (d) => {
     for (const line of d.toString().split('\n').filter(Boolean)) {
-      process.stderr.write(prefix + line + '\n');
+      const out = prefix + line + '\n';
+      process.stderr.write(out);
+      logStream.write(`[${new Date().toISOString()}] ${out}`);
     }
   });
   child.on('exit', (code) => {

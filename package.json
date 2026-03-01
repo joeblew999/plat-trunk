@@ -17,7 +17,10 @@
     "deploy:nuke:code": "bun scripts/cf-deploy.ts nuke code",
     "deploy:nuke:data": "bun scripts/cf-deploy.ts nuke data",
     "deploy:nuke:dns": "bun scripts/cf-deploy.ts nuke dns",
-    "deploy:nuke:all": "bun scripts/cf-deploy.ts nuke all"
+    "deploy:nuke:all": "bun scripts/cf-deploy.ts nuke all",
+    "truck:update": "bash scripts/truck-update.sh",
+    "truck:update:quick": "bash scripts/truck-update.sh --no-build",
+    "truck:status": "bash scripts/truck-update.sh --status"
   },
   "dependencies": {
     "hono": "4.11.9"

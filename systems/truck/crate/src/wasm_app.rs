@@ -27,6 +27,12 @@ use ifc_lite_core as ifc;
 
 use crate::{make_cube, make_sphere, make_cylinder, make_torus};
 
+// Boolean perturbation vector — asymmetric, exceeds shapeops tolerance (0.05) in all axes.
+// truck-shapeops panics on axis-aligned/coplanar faces ("This wire is not simple", issue #57).
+// Asymmetric values break axis alignment; magnitude >0.05 ensures the intersection region
+// has non-degenerate edges. Tested exhaustively: coplanar, half-overlap, corner-overlap all pass.
+const BOOL_PERTURBATION: Vector3 = Vector3::new(-0.1, -0.07, -0.03);
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -1294,8 +1300,29 @@ impl SceneController {
     // Boolean operations
     // =====================================================================
 
+    /// Try a boolean operation, catching panics (requires panic=unwind in Cargo.toml).
+    /// Falls back to a perturbation retry when the exact attempt fails.
+    fn try_bool_with_fallback<F>(solid_a: &Solid, solid_b: &Solid, op: F) -> Option<Solid>
+    where F: Fn(&Solid, &Solid) -> Option<Solid> + std::panic::RefUnwindSafe
+    {
+        // 1. Try exact geometry
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            op(solid_a, solid_b)
+        })).ok().flatten();
+
+        if result.is_some() { return result; }
+
+        // 2. Retry with asymmetric perturbation to break axis alignment
+        log!("WASM: boolean op failed, retrying with perturbation to avoid coplanar faces");
+        let perturbed = builder::translated(solid_b, BOOL_PERTURBATION);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            op(solid_a, &perturbed)
+        })).ok().flatten()
+    }
+
     /// Union two objects, replacing them with the result. Returns new UUID (empty on failure).
-    /// Tries truck_shapeops::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B).
+    /// Tries truck_shapeops::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B),
+    /// then retries both with perturbation for coplanar/axis-aligned faces.
     /// Note: booleans work reliably with cubes + cylinders (tsweep geometry).
     /// Spheres/tori (rsweep/NURBS) may fail — truck-shapeops limitation.
     #[wasm_bindgen]
@@ -1309,25 +1336,13 @@ impl SceneController {
         let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
         let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
-        let try_union = |a: &Solid, b: &Solid| -> Option<Solid> {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                truck_shapeops::or(a, b, 0.05)
-            })).ok().flatten();
-            result.or_else(|| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut not_a = a.clone();
-                    not_a.not();
-                    let mut not_b = b.clone();
-                    not_b.not();
-                    truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
-                })).ok().flatten()
+        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+            truck_shapeops::or(a, b, 0.05).or_else(|| {
+                // De Morgan fallback: A ∪ B = ¬(¬A ∧ ¬B)
+                let mut not_a = a.clone(); not_a.not();
+                let mut not_b = b.clone(); not_b.not();
+                truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
             })
-        };
-
-        let result = try_union(&solid_a, &solid_b).or_else(|| {
-            log!("WASM: union failed, retrying with perturbation to avoid coplanar faces");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
-            try_union(&solid_a, &perturbed)
         });
 
         match result {
@@ -1360,18 +1375,9 @@ impl SceneController {
         let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
         let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
-        let try_subtract = |a: &Solid, b: &Solid| -> Option<Solid> {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut not_b = b.clone();
-                not_b.not();
-                truck_shapeops::and(a, &not_b, 0.05)
-            })).ok().flatten()
-        };
-
-        let result = try_subtract(&solid_a, &solid_b).or_else(|| {
-            log!("WASM: subtract failed, retrying with perturbation to avoid coplanar faces");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
-            try_subtract(&solid_a, &perturbed)
+        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+            let mut not_b = b.clone(); not_b.not();
+            truck_shapeops::and(a, &not_b, 0.05)
         });
 
         match result {
@@ -1404,16 +1410,8 @@ impl SceneController {
         let solid_a = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
         let solid_b = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
-        let try_intersect = |a: &Solid, b: &Solid| -> Option<Solid> {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                truck_shapeops::and(a, b, 0.05)
-            })).ok().flatten()
-        };
-
-        let result = try_intersect(&solid_a, &solid_b).or_else(|| {
-            log!("WASM: intersect failed, retrying with perturbation to avoid coplanar faces");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
-            try_intersect(&solid_a, &perturbed)
+        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+            truck_shapeops::and(a, b, 0.05)
         });
 
         match result {

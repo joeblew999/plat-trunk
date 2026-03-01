@@ -1,5 +1,7 @@
 # Project Context: plat-trunk
 
+**Runtime: bun** — all JS/TS runs through `bun`. Never use `npm`, `npx`, or `node` directly. Use `bun run`, `bun x`, `bun install`.
+
 Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truck) B-Rep kernel (Rust/WASM) for 3D modeling, WebGPU for rendering, Automerge CRDT for collaboration.
 
 ## Quick Start

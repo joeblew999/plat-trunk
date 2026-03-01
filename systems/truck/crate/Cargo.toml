@@ -71,6 +71,10 @@ gltf = ["dep:gltf"]
 
 [profile.release]
 opt-level = "s"
+panic = "unwind"  # Required: catch_unwind in boolean ops needs unwind (default wasm=abort)
+
+[profile.dev]
+panic = "unwind"
 
 [build-dependencies]
 prost-build = "0.14.3"
