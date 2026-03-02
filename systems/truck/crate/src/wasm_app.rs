@@ -1524,20 +1524,8 @@ impl SceneController {
         let idx = s.objects.len();
         let style = entry.style.unwrap_or_else(|| ObjectStyle::from_index(idx));
 
-        // Prefer pre-computed mesh (skips expensive BRep tessellation).
-        // Keep solid for future editing ops (booleans, transforms, STEP export).
-        if let Some(mesh) = entry.mesh {
-            let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
-            let (center, radius) = pick_mesh.bounding_sphere();
-            s.scene.add_object(&polygon);
-            s.scene.add_object(&wireframe);
-            let id_str = id.to_string();
-            s.id_to_index.insert(id_str.clone(), idx);
-            s.bounding_spheres.push((id_str.clone(), center, radius));
-            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
-            s.objects.push(SceneObject { id, name, solid: entry.solid, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
-            return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
-        } else if let Some(solid) = entry.solid {
+        // Solid-first: BRep wireframe shows clean edges; mesh-only for glTF imports.
+        if let Some(solid) = entry.solid {
             let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
             let (center, radius) = pick_mesh.bounding_sphere();
             s.scene.add_object(&polygon);
@@ -1547,6 +1535,17 @@ impl SceneController {
             s.bounding_spheres.push((id_str.clone(), center, radius));
             let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
             s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
+        } else if let Some(mesh) = entry.mesh {
+            let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
+            let (center, radius) = pick_mesh.bounding_sphere();
+            s.scene.add_object(&polygon);
+            s.scene.add_object(&wireframe);
+            let id_str = id.to_string();
+            s.id_to_index.insert(id_str.clone(), idx);
+            s.bounding_spheres.push((id_str.clone(), center, radius));
+            let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+            s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
             return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
         }
         JsValue::from_str("{\"error\":\"No solid or mesh in entry\"}")
@@ -1777,19 +1776,8 @@ impl SceneController {
             let idx = s.objects.len();
             let style = entry.style.unwrap_or_else(|| ObjectStyle::from_index(idx));
             
-            // Prefer pre-computed mesh (skips expensive BRep tessellation).
-            // Keep solid for future editing ops (booleans, transforms, STEP export).
-            if let Some(mesh) = entry.mesh {
-                let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
-                let (center, radius) = pick_mesh.bounding_sphere();
-                s.scene.add_object(&polygon);
-                s.scene.add_object(&wireframe);
-                let id_str = id.to_string();
-                s.id_to_index.insert(id_str.clone(), idx);
-                s.bounding_spheres.push((id_str, center, radius));
-                let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
-                s.objects.push(SceneObject { id, name, solid: entry.solid, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
-            } else if let Some(solid) = entry.solid {
+            // Solid-first: BRep wireframe shows clean edges; mesh-only for glTF imports.
+            if let Some(solid) = entry.solid {
                 let (polygon, wireframe, pick_mesh, mesh) = solid_to_instances(&s.creator, &solid, &style);
                 let (center, radius) = pick_mesh.bounding_sphere();
                 s.scene.add_object(&polygon);
@@ -1799,6 +1787,16 @@ impl SceneController {
                 s.bounding_spheres.push((id_str, center, radius));
                 let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
                 s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            } else if let Some(mesh) = entry.mesh {
+                let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
+                let (center, radius) = pick_mesh.bounding_sphere();
+                s.scene.add_object(&polygon);
+                s.scene.add_object(&wireframe);
+                let id_str = id.to_string();
+                s.id_to_index.insert(id_str.clone(), idx);
+                s.bounding_spheres.push((id_str, center, radius));
+                let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
+                s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
             }
         }
         log!("WASM: Imported {} objects", s.objects.len());
