@@ -894,6 +894,23 @@
       },
       "returns": "modelId"
     },
+    "delete_model": {
+      "description": "Delete a model from cloud storage",
+      "layer": "js",
+      "params": {
+        "properties": {
+          "id": {
+            "description": "Model ID to delete",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "returns": "success"
+    },
     "get_status": {
       "description": "Get system status: mode, sync state, object count",
       "layer": "js",
@@ -908,6 +925,23 @@
       "layer": "js",
       "params": {
         "properties": {},
+        "type": "object"
+      },
+      "returns": "success"
+    },
+    "save_cloud": {
+      "description": "Save the current scene to cloud storage with thumbnail",
+      "layer": "js",
+      "params": {
+        "properties": {
+          "name": {
+            "description": "Model name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
         "type": "object"
       },
       "returns": "success"
@@ -949,6 +983,15 @@
         "type": "object"
       },
       "returns": "mode"
+    },
+    "share_model": {
+      "description": "Copy a shareable URL for the current model to clipboard",
+      "layer": "js",
+      "params": {
+        "properties": {},
+        "type": "object"
+      },
+      "returns": "url"
     },
     "undo": {
       "description": "Undo the last operation",

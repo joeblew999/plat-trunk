@@ -41,7 +41,10 @@
                 localStorage.setItem('cad-last-model-id', id);
                 history.replaceState(null, '', '/model/' + id + location.search);
             } else {
-                // No model in URL — redirect to a fresh model
+                // No model in URL — redirect to a fresh model.
+                // Hide page immediately to prevent visual flash while redirect is pending.
+                document.documentElement.style.display = 'none';
+                window.__redirecting = true;
                 location.replace('/model/new' + location.search);
                 return;
             }
@@ -236,6 +239,12 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             </details>
         </div>
     </aside>
+
+    <!-- ═══════════════════ LOADING OVERLAY ═══════════════════ -->
+    <div id="loading-overlay" class="app-loading">
+        <span class="loading loading-spinner loading-md"></span>
+        <span class="text-xs opacity-60 mt-2">Loading CAD...</span>
+    </div>
 
     <!-- ═══════════════════ VIEWPORT ═══════════════════ -->
     <main class="app-canvas">
@@ -460,11 +469,16 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <script type="module">
 
+        // Bail out if redirecting — prevent stale Automerge doc from loading
+        if (window.__redirecting) throw new Error('redirect');
+
         // ADR-0026 Phase 4: Clean browser-side state before init when ?reset=1
         if (window.__resetRequested) {
+            localStorage.clear();
             await Promise.all([
                 new Promise(r => { const req = indexedDB.deleteDatabase('cad-objects'); req.onsuccess = r; req.onerror = r; }),
                 new Promise(r => { const req = indexedDB.deleteDatabase('cad-blobs'); req.onsuccess = r; req.onerror = r; }),
+                new Promise(r => { const req = indexedDB.deleteDatabase('cad-docs'); req.onsuccess = r; req.onerror = r; }),
             ]);
             if (window.resetTierState) window.resetTierState();
         }
@@ -535,6 +549,7 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             // ADR-0026 Phase 1: Single readiness signal for all subsystems.
             // Set ONLY after WASM + cadCommand + Automerge are all initialized.
             window.__appReady = true;
+            document.getElementById('loading-overlay')?.remove();
             console.log('App ready.');
         }
     </script>

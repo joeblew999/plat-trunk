@@ -141,6 +141,36 @@ pub fn build_schema() -> serde_json::Value {
             "layer": "js",
             "params": { "type": "object", "properties": {} },
             "returns": "success"
+        },
+        "save_cloud": {
+            "description": "Save the current scene to cloud storage with thumbnail",
+            "layer": "js",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Model name" }
+                },
+                "required": ["name"]
+            },
+            "returns": "success"
+        },
+        "delete_model": {
+            "description": "Delete a model from cloud storage",
+            "layer": "js",
+            "params": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Model ID to delete" }
+                },
+                "required": ["id"]
+            },
+            "returns": "success"
+        },
+        "share_model": {
+            "description": "Copy a shareable URL for the current model to clipboard",
+            "layer": "js",
+            "params": { "type": "object", "properties": {} },
+            "returns": "url"
         }
     });
 

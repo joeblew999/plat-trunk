@@ -57,7 +57,7 @@ class CadDocumentManager {
         // Check URL for ?doc= parameter
         const params = new URLSearchParams(window.location.search);
         const docParam = params.get('doc');
-        const modelId = window.__modelId || 'default';
+        const modelId = window.__modelId;
 
         if (docParam && isValidAutomergeUrl(docParam)) {
             console.log(`[Automerge] Loading doc from URL: ${docParam}`);
@@ -68,19 +68,9 @@ class CadDocumentManager {
             if (modelDocUrl && isValidAutomergeUrl(modelDocUrl)) {
                 console.log(`[Automerge] Loading doc for model ${modelId}: ${modelDocUrl}`);
                 await this.loadDocument(modelDocUrl);
-            } else if (modelId === 'default') {
-                // Legacy fallback — only for default model (prevents cross-contamination)
-                const lastUrl = localStorage.getItem('cad-last-doc-url');
-                if (lastUrl && isValidAutomergeUrl(lastUrl)) {
-                    console.log(`[Automerge] Loading legacy last-doc: ${lastUrl}`);
-                    await this.loadDocument(lastUrl);
-                } else {
-                    console.log(`[Automerge] Creating new doc for model ${modelId}`);
-                    await this.createDocument('Untitled');
-                }
             } else {
-                // Cloud model with no local doc — create new + load from cloud
-                console.log(`[Automerge] Creating new doc for cloud model ${modelId}`);
+                // New model with no local doc — create new + try cloud
+                console.log(`[Automerge] Creating new doc for model ${modelId}`);
                 await this.createDocument(`Model ${modelId}`);
             }
         }
@@ -161,11 +151,34 @@ class CadDocumentManager {
     /** Load an existing document by Automerge URL */
     async loadDocument(url) {
         this.handle = await this.repo.find(url);
-        const modelId = window.__modelId || 'default';
+        const modelId = window.__modelId;
         localStorage.setItem('cad-last-doc-url', url);
         localStorage.setItem(`cad-doc-url-${modelId}`, url);
         this._listenForChanges();
         await this._replayScene();
+
+        // Fallback: if doc exists but scene is empty (e.g. blob store was wiped),
+        // try loading from cloud API as a recovery measure.
+        const ids = moduleRouter.query('objectIds');
+        const doc = this.handle.doc();
+        const hasOps = doc?.operations?.length > 0;
+        if ((!ids || ids.length === 0) && !hasOps) {
+            try {
+                const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
+                if (res.ok) {
+                    const sceneJson = await res.text();
+                    if (sceneJson) {
+                        cadCommand('clear', {}, { record: false, reconcile: false });
+                        cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
+                        reconcile({});
+                        console.log(`[Cloud] Recovered model "${modelId}" from cloud`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`[Cloud] Recovery fetch failed for "${modelId}":`, e);
+            }
+        }
+
         this._localOpCount = this._getDocOpCount();
         this._updateDocInfo();
         return url;
@@ -445,7 +458,7 @@ class CadDocumentManager {
     async _progressiveLoad(entries, doc, startIndex, REPLAY) {
         const ctrl = this._ctrl();
         if (!ctrl) return;
-        const modelId = window.__modelId || 'default';
+        const modelId = window.__modelId;
 
         // Clear current scene
         cadCommand('clear', {}, REPLAY);

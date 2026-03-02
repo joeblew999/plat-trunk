@@ -1,86 +1,48 @@
-// ui.js — Document management, file save/load, example scenes, responsive layout.
+// ui.js — Thin event bindings for model lifecycle + file I/O + responsive layout.
+// All model operations go through cadCommand() — see state.js handleJsCommand().
 // Keyboard shortcuts → keyboard.js. Gizmo interaction → cad-viewport.js (ADR-0013).
 
 import { cadCommand, cadQuery, showFeedback } from './state.js';
-import { api } from './api-client.js';
-import { getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail.js';
 
 function ctrl() { return window.sceneController; }
-function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
 
-// ─── Document management (Automerge) ────────────────────────────
+// ─── Model lifecycle (all via cadCommand) ────────────────────────
 
-document.getElementById('newDocBtn')?.addEventListener('click', async () => {
-    const mgr = docMgr();
-    if (mgr) {
-        const name = prompt('Document name:', 'Untitled');
-        if (name === null) return;
-        ctrl()?.clear_scene();
-        await window.cadDocManager.createDocument(name);
-        cadQuery('deselect', {});
-        showFeedback('New document created', false);
-    }
+document.getElementById('newDocBtn')?.addEventListener('click', () => {
+    cadCommand('create_model');
 });
 
-document.getElementById('shareBtn')?.addEventListener('click', () => {
-    const mgr = docMgr();
-    if (mgr) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('doc', mgr.documentUrl);
-        navigator.clipboard.writeText(url.toString()).then(() => {
-            showFeedback('Share URL copied!', false);
-        }).catch(() => {
-            prompt('Copy this URL to share:', url.toString());
-        });
-    } else {
-        showFeedback('No collaborative document active', true);
-    }
+document.getElementById('shareBtn')?.addEventListener('click', async () => {
+    const result = await cadCommand('share_model');
+    if (result?.url) showFeedback('Share URL copied!', false);
+    else showFeedback('No document active', true);
 });
 
-document.getElementById('docInfo')?.addEventListener('click', () => {
-    const mgr = docMgr();
-    if (mgr) {
-        navigator.clipboard.writeText(mgr.documentUrl).then(() => {
-            showFeedback('Doc URL copied', false);
-        });
-    }
+document.getElementById('docInfo')?.addEventListener('click', async () => {
+    const result = await cadCommand('share_model');
+    if (result?.url) showFeedback('Doc URL copied', false);
 });
 
 // ─── Save / Load ─────────────────────────────────────────────────
 
-document.getElementById('saveBtn')?.addEventListener('click', () => {
-    if (!ctrl()) return;
-    const json = ctrl().export_scene();
+document.getElementById('saveBtn')?.addEventListener('click', async () => {
+    const result = cadQuery('export_scene', {});
+    const json = result?.scene;
+    if (!json) return;
     const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = URL.createObjectURL(blob);
     a.download = 'cad-scene.json';
     a.click();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(a.href);
 });
 
 document.getElementById('saveCloudBtn')?.addEventListener('click', async () => {
-    if (!ctrl()) return;
-    const modelId = window.__modelId;
-    const name = prompt('Model name:', modelId);
+    const name = prompt('Model name:', window.__modelId);
     if (!name) return;
-    try {
-        const scene = ctrl().export_scene();
-        const res = await api.models[':id'].$put({
-            param: { id: modelId },
-            json: { name, scene },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        // Upload thumbnail (use debounced capture or sync fallback)
-        const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
-        if (thumb) await uploadThumbnail(modelId, thumb);
-        showFeedback(`Saved "${name}" to cloud`, false);
-        // Refresh gallery if visible
-        document.querySelector('cad-gallery')?.refresh();
-    } catch (err) {
-        showFeedback(`Cloud save failed: ${err.message}`, true);
-    }
+    const result = await cadCommand('save_cloud', { name });
+    if (result?.success) showFeedback(`Saved "${name}" to cloud`, false);
+    else showFeedback(result?.error || 'Cloud save failed', true);
 });
 
 document.getElementById('loadBtn')?.addEventListener('click', () => {
@@ -93,9 +55,6 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
     const reader = new FileReader();
     reader.onload = () => {
         cadCommand('import_scene', { json: reader.result });
-        // Select first object after import
-        const ids = ctrl().object_ids();
-        if (ids.length > 0) cadQuery('select', { id: ids[0] });
     };
     reader.readAsText(file);
     e.target.value = '';

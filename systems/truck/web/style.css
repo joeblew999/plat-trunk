@@ -251,3 +251,14 @@ body {
 @media (min-width: 1024px) {
   .app-dock { display: none !important; }
 }
+
+/* ─── Loading overlay ────────────────────────────────── */
+.app-loading {
+  grid-area: canvas;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: oklch(var(--b1));
+}

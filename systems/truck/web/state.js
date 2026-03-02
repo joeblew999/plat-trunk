@@ -11,7 +11,7 @@
 import { moduleRouter } from './core/module-router.js';
 import { storeBlob } from './blob-store.js';
 import { api } from './api-client.js';
-import { scheduleThumbnailCapture } from './thumbnail.js';
+import { scheduleThumbnailCapture, getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail.js';
 
 // ─── Schema-driven command classification ────────────────────────
 // The cad-schema.json (served at /api/cad/schema) declares every command:
@@ -279,21 +279,48 @@ async function handleJsCommand(type, params) {
       return { error: 'DocManager not ready' };
 
     case 'create_model':
-      if (mgr) {
-        await mgr.createDocument(params.name || 'Untitled');
-        // Reset scene via moduleRouter
-        const core = moduleRouter.core();
-        if (core) core.clear_scene();
-        return { success: true, modelId: 'new' }; // simplified
-      }
-      return { error: 'DocManager not ready' };
+      // Navigate to /model/new — generates fresh random ID + clean Automerge doc
+      window.location.href = '/model/new';
+      return { success: true };
+
+    case 'save_cloud': {
+      const mid = window.__modelId;
+      const result = moduleRouter.execute('export_scene', {});
+      const sceneJson = result?.scene;
+      if (!sceneJson) throw new Error('Scene export returned no data');
+      const res = await api.models[':id'].$put({
+        param: { id: mid },
+        json: { name: params.name, scene: sceneJson },
+      });
+      if (!res.ok) throw new Error(`Cloud save failed: HTTP ${res.status}`);
+      const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
+      if (thumb) await uploadThumbnail(mid, thumb);
+      document.querySelector('cad-gallery')?.refresh();
+      return { success: true, modelId: mid };
+    }
+
+    case 'delete_model': {
+      await api.models[':id'].$delete({ param: { id: params.id } });
+      document.querySelector('cad-gallery')?.refresh();
+      return { success: true };
+    }
+
+    case 'share_model': {
+      if (!mgr?.documentUrl) return { error: 'No document active' };
+      const shareUrl = new URL(window.location.href);
+      shareUrl.searchParams.set('doc', mgr.documentUrl);
+      const urlStr = shareUrl.toString();
+      try { await navigator.clipboard.writeText(urlStr); } catch {}
+      return { url: urlStr };
+    }
 
     case 'clear_data':
       if (confirm('WIPE ALL LOCAL DATA? This cannot be undone.')) {
         localStorage.clear();
-        // Also clear ADR-0025 IndexedDB stores (blob store + object store)
+        // Clear all IndexedDB stores (blobs, objects, Automerge docs)
         indexedDB.deleteDatabase('cad-blobs');
         indexedDB.deleteDatabase('cad-objects');
+        indexedDB.deleteDatabase('cad-docs');
         location.reload();
         return { success: true };
       }

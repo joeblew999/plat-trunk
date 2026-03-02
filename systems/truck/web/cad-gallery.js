@@ -46,8 +46,7 @@ export class CadGallery extends LitElement {
   async _delete(id, name) {
     if (!confirm(`Delete "${name}"?`)) return;
     try {
-      await api.models[':id'].$delete({ param: { id } });
-      this.refresh();
+      await window.cadCommand('delete_model', { id });
     } catch (err) {
       this.error = `Delete failed: ${err.message}`;
     }
