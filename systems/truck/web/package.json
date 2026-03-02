@@ -1,0 +1,27 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "gen:api-types": "bun x openapi-typescript http://localhost:8789/api/openapi.json -o api-types.ts"
+  },
+  "dependencies": {
+    "lit": "^3",
+    "three": "^0.172",
+    "openapi-fetch": "^0.13",
+    "@automerge/automerge": "^3",
+    "@automerge/automerge-repo": "^2",
+    "@automerge/automerge-repo-storage-indexeddb": "^2",
+    "@automerge/automerge-repo-network-broadcastchannel": "^2",
+    "daisyui": "^5"
+  },
+  "devDependencies": {
+    "vite": "^6",
+    "vite-plugin-wasm": "^3",
+    "@tailwindcss/vite": "^4",
+    "typescript": "^5",
+    "@types/three": "^0.172",
+    "openapi-typescript": "^7"
+  }
+}

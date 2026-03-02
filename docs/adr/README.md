@@ -35,6 +35,9 @@ This directory contains the ADRs for the **plat-trunk** CAD Kernel Platform.
 | [0025](0025-tiered-object-scaling.md) | Content-Addressed Storage & Tiered Object Scaling | **Proposed** (Phase 0 urgent) |
 | [0026](0026-test-cleanup.md) | Test Cleanup — Review & Hardening of E2E Infrastructure | **Review** |
 | [0032](0032-ai-gui.md) | AI GUI — Integrated AI Assistance | **Proposed** |
+| [0033](0033-bundle.md) | Bundling — Dual-Mode (Source + Bundle) Distribution | **Proposed** |
+| [0034](0034-urdf.md) | URDF Robot Integration | **Proposed** |
+| [0035](0035-vite-typescript.md) | Vite + TypeScript for Browser Code | **Implemented** |
 
 ## Future Roadmap
 

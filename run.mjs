@@ -73,21 +73,30 @@ function exec(cmd, cwd) {
 // ─── Commands ──────────────────────────────────────────
 
 async function dev() {
-  // 1. Install deps for each worker
-  for (const w of workers) {
-    exec('bun install --silent', w.dir);
+  // 1. Install deps for each worker and devServer (if it has a dir)
+  const installDirs = [
+    ...workers.map(w => w.dir),
+    ...devServers.filter(s => s.dir).map(s => s.dir),
+  ];
+  for (const dir of installDirs) {
+    exec('bun install --silent', dir);
   }
 
-  // 2. Build workers that need it (initial build before starting)
-  for (const w of workers) {
-    if (w.build) {
-      console.log(`\nBuilding ${w.name}...`);
-      try {
-        exec(w.build, '.');
-      } catch (err) {
-        console.error(`Build failed for ${w.name}: ${err.message}`);
-        console.error('Continuing without build — wrangler will start but may error.');
-      }
+  // 2. Build workers + devServers that need an initial build before starting.
+  //    Workers: typically WASM compilation (slow, ~2-6s)
+  //    DevServers: typically a fast Vite production build to create dist/ (1-2s)
+  //    Both must complete before wrangler starts (wrangler needs dist/ for [assets]).
+  const buildTargets = [
+    ...workers.filter(w => w.build).map(w => ({ name: w.name, build: w.build })),
+    ...devServers.filter(s => s.build).map(s => ({ name: s.name, build: s.build })),
+  ];
+  for (const target of buildTargets) {
+    console.log(`\nBuilding ${target.name}...`);
+    try {
+      exec(target.build, '.');
+    } catch (err) {
+      console.error(`Build failed for ${target.name}: ${err.message}`);
+      console.error('Continuing without build — wrangler will start but may error.');
     }
   }
 

@@ -6,8 +6,6 @@
     <base href="/">
     <title>CAD</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='50,10 90,30 90,70 50,90 10,70 10,30' fill='%23444' stroke='%23fff' stroke-width='3'/><line x1='50' y1='10' x2='50' y2='90' stroke='%23fff' stroke-width='2'/><line x1='10' y1='30' x2='90' y2='30' stroke='%23fff' stroke-width='2'/><line x1='10' y1='70' x2='50' y2='50' stroke='%23fff' stroke-width='1.5' opacity='.5'/></svg>">
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <link rel="stylesheet" href="style.css" />
     <!-- Mode + URL routing -->
     <script>
@@ -56,12 +54,11 @@
             }
         })();
     </script>
-    <script type="module" src="vendor/datastar.js"></script>
+    <script type="module" src="/datastar.js"></script>
     <script type="module">
-        import { root, mergePatch, beginBatch, endBatch } from './vendor/datastar.js';
+        import { root, mergePatch, beginBatch, endBatch } from '/datastar.js';
         window._ds = { root, mergePatch, beginBatch, endBatch };
     </script>
-    <script src="vendor/automerge-bundle.js"></script>
 </head>
 <body data-signals="{
     modelId: window.__modelId || '',
@@ -97,19 +94,6 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H11a5 5 0 00-5 5v0a5 5 0 005 5h10"/><path d="M17 6l4 4-4 4"/></svg>
             </button>
             <span class="tb-sep"></span>
-            <!-- Control Plane -->
-            <div class="join" data-testid="mode-toggle">
-                <button data-testid="mode-local" class="btn btn-ghost btn-xs join-item"
-                        data-on:click="window.cadCommand('set_mode', {mode: 'local'})"
-                        data-class="{'btn-active': $statusMode === 'Local'}">Local</button>
-                <button data-testid="mode-online" class="btn btn-ghost btn-xs join-item"
-                        data-on:click="window.cadCommand('set_mode', {mode: 'online'})"
-                        data-class="{'btn-active': $statusMode === 'Online'}">Online</button>
-            </div>
-            <button data-testid="get-status" class="btn btn-ghost btn-xs opacity-40" title="Get system status"
-                    data-on:click="window.cadCommand('get_status').then(r => alert(JSON.stringify(r, null, 2)))">Status</button>
-            <button data-testid="clear-data" class="btn btn-ghost btn-xs text-error opacity-60 hover:opacity-100" title="Wipe all local data"
-                    data-on:click="window.cadCommand('clear_data')">Wipe</button>
             <a href="/docs/" class="btn btn-ghost btn-xs opacity-40" title="Documentation">Docs</a>
             <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
         </div>
@@ -168,6 +152,26 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
     <!-- ═══════════════════ LEFT PANEL: CONTROL PLANE ═══════════════════ -->
     <aside class="app-outliner" data-testid="outliner">
+        <!-- ── Control Plane ── -->
+        <h3 data-section="control">Control</h3>
+        <div class="flex flex-col gap-1">
+            <div class="flex gap-1 items-center">
+                <div class="join flex-1" data-testid="mode-toggle">
+                    <button data-testid="mode-local" class="btn btn-xs join-item flex-1"
+                            data-on:click="window.cadCommand('set_mode', {mode: 'local'})"
+                            data-class="{'btn-active btn-primary': $statusMode === 'Local'}">Local</button>
+                    <button data-testid="mode-online" class="btn btn-xs join-item flex-1"
+                            data-on:click="window.cadCommand('set_mode', {mode: 'online'})"
+                            data-class="{'btn-active btn-success': $statusMode === 'Online'}">Online</button>
+                </div>
+                <button data-testid="get-status" class="btn btn-xs btn-ghost opacity-50" title="Get system status"
+                        data-on:click="window.cadCommand('get_status').then(r => alert(JSON.stringify(r, null, 2)))">Status</button>
+            </div>
+            <button data-testid="clear-data" class="btn btn-xs btn-ghost text-error opacity-60 hover:opacity-100 w-full" title="Wipe all local data"
+                    data-on:click="window.cadCommand('clear_data')">Wipe Local Data</button>
+        </div>
+
+        <!-- ── Scene ── -->
         <h3 data-section="scene">Scene</h3>
         <cad-outliner data-testid="object-list" class="text-xs block"
             data-attr:object-ids="JSON.stringify($litState.objectIds || [])"
@@ -474,16 +478,9 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <script type="module">
-        import { boot } from './boot.js';
+        import { boot } from './boot.ts';
         try { await boot(); } catch (e) { if (e.message !== 'redirect') console.error('Boot failed:', e); }
     </script>
-    <script>
-        if (!window.__cadLocalMode) {
-            var s = document.createElement('script');
-            s.type = 'module';
-            s.src = 'worker-relay.js';
-            document.body.appendChild(s);
-        }
-    </script>
+
 </body>
 </html>

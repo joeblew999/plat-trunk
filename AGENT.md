@@ -1,24 +1,32 @@
 # Project Context: plat-trunk
 
+You are a smart systems architect and make sure you do things in the right way to ensure a clean system that avoids Technical Debt and makes it easy to extend the system without breaking things. 
+
+
 **Runtime: bun** — all JS/TS runs through `bun`. Never use `npm`, `npx`, or `node` directly. Use `bun run`, `bun x`, `bun install`.
 
 Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truck) B-Rep kernel (Rust/WASM) for 3D modeling, WebGPU for rendering, Automerge CRDT for collaboration.
 
 ## Quick Start
 ```sh
-bun install             # Install dependencies
-bun run dev             # Start all workers (localhost:8788)
+bun install             # Install dependencies (also installs systems/truck/web/node_modules)
+bun run dev             # Start all workers + Vite dev server
+# → UI with HMR: http://localhost:5173  (use this for development)
+# → API/worker:  http://localhost:8789
+# → Router:      http://localhost:8788  (serves built dist, run build:truck-web first)
 # Ctrl+C to stop
 ```
 
 ## Commands
 ```sh
 # Dev
-bun run dev             # Start router + truck + test workers (run.mjs)
+bun run dev             # Start router + truck + test workers + Vite dev server (run.mjs)
+# Use localhost:5173 for UI development — .ts changes hot-reload without restart
 
 # Build
-bun run build           # Build WASM + docs
+bun run build           # Build WASM + truck-web (Vite) + docs
 bun run build:truck     # wasm-pack build + cargo run --bin generate-schema → cad-schema.json
+bun run build:truck-web # Vite build → systems/truck/web/dist/ (served by wrangler)
 bun run build:docs      # Build VitePress docs
 
 # Test
@@ -51,7 +59,10 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 ## Core Stack
 - **Kernel**: Rust (`truck` B-Rep), vendor source in `.src/truck`
 - **Backend**: Hono + Zod + `@hono/zod-openapi` (Cloudflare Workers)
-- **Frontend**: Lit (Web Components) + Three.js (camera/orbit) + Datastar v1.0.0-RC.7 (signals) + DaisyUI/Tailwind + WebGPU
+- **Frontend**: Lit (Web Components) + Three.js (camera/orbit) + Datastar v1.0.0-RC.7 (signals) + DaisyUI/Tailwind v4 + WebGPU
+  - All browser code in `systems/truck/web/*.ts` — built by Vite, no manual vendor bundles
+  - Dev: `localhost:5173` (Vite with HMR) — proxies `/api` + `/mcp` to truck-cad (8789)
+  - Prod: `vite build` → `dist/` → served by wrangler ASSETS binding
 - **Sync**: Automerge CRDT for local-first op log + undo/redo
 - **Camera**: Three.js OrbitControls → pushes 4x4 matrix to WASM each frame (Passive WASM, ADR-0013)
 - **BIM**: `ifc-lite` source in `.src/ifc-lite` for semantic building data
@@ -75,7 +86,8 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 ├── systems/
 │   ├── truck/
 │   │   ├── crate/src/     Rust: wasm_app.rs (SceneController), commands.rs (params + schema)
-│   │   ├── web/           Static assets (HTML, JS, CSS, vendor libs, cf-versions.json)
+│   │   ├── web/           Browser TypeScript (Vite project): *.ts, vite.config.ts, public/
+│   │   │                  → dist/ (gitignored, built by `bun run build:truck-web`)
 │   │   ├── worker/src/    Hono worker: index.ts (REST + OpenAPI + MCP), index.test.ts
 │   │   └── tests/         Playwright E2E
 │   ├── truck/cad-schema.json  GENERATED from Rust — drives Worker/MCP/OpenAPI/browser
@@ -89,13 +101,24 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 
 ```
 Rust structs (#[derive(Deserialize, JsonSchema)])
-  → bun run build:truck (wasm-pack + generate-schema)
-  → systems/truck/cad-schema.json
-  → Worker: Zod enum + OpenAPI spec + route validation + /mcp tools
-  → Browser: cadCommand() dispatches to same execute()
+  → bun run build:truck          wasm-pack --release + cargo run --bin generate-schema
+  → systems/truck/cad-schema.json                     [COMMITTED generated artifact]
+  → bun run gen:openapi          scripts/gen-openapi.ts reads cad-schema.json
+  → systems/truck/web/openapi.json                    [gitignored intermediate]
+  → bun run gen:api-types        openapi-typescript + chain-origin header
+  → systems/truck/web/api-types.ts                    [COMMITTED generated artifact]
+  → bun run build:truck-web      Vite build (imports api-types.ts via openapi-fetch)
+  → systems/truck/web/dist/                           [gitignored, served by wrangler]
+
+  → Worker: OpenAPIHono routes use same cad-schema.json at runtime
+  → /api/openapi.json            live spec endpoint (mirrors gen-openapi.ts exactly)
+  → /mcp tools                   29 CAD tools generated from cad-schema.json
+  → Browser: cadCommand() dispatches to same Rust execute()
 ```
 
-Add a command in Rust → `bun run build:truck` → schema regenerates → Worker/MCP/OpenAPI/tests all update automatically. Nothing hand-written drifts.
+**Add a Rust command** → `bun run build:truck` + `bun run gen:api-types` → schema + types regenerate → Worker/MCP/OpenAPI/browser all update. Nothing hand-written drifts.
+
+**bun run build:truck-web** runs the full gen chain automatically (gen:api-types is a prerequisite).
 
 ## Single Dispatch Path
 
@@ -124,13 +147,17 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 
 **Dev workflow** (MANDATORY — edit → test → verify → deploy → verify):
 ```
-1. Edit code (TS auto-reloads, static assets served immediately — NO RESTART)
-2. bun run build:truck              (only if Rust changed)
+1. bun run dev                      → starts Vite (5173) + wrangler workers
+   - Browser TS changes: HMR at localhost:5173 — NO restart needed
+   - Worker TS changes: wrangler auto-reloads — NO restart needed
+   - Rust changes: watchexec triggers WASM rebuild automatically
+2. bun run build:truck              (only if Rust changed outside dev)
 3. bun run test:api                 → no regressions
-4. browser_navigate + browser_snapshot → verify in browser (Playwright MCP)
-5. bun scripts/cf-deploy.ts upload  → deploy
-6. wrangler versions deploy <id>@100% --yes → promote
-7. browser_navigate (prod URL) + browser_snapshot → verify production
+4. browser_navigate('http://localhost:5173') + browser_snapshot → verify in browser
+5. bun run build:truck-web          → build dist/ before deploying
+6. bun scripts/cf-deploy.ts upload  → deploy
+7. wrangler versions deploy <id>@100% --yes → promote
+8. browser_navigate (prod URL) + browser_snapshot → verify production
 ```
 
 ## Datastar Signals

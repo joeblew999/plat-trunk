@@ -37,6 +37,14 @@ test-results/
 systems/truck/tests/test-results/
 systems/truck/tests/playwright-report/
 
+# Vite build output (truck web UI)
+systems/truck/web/dist/
+systems/truck/web/node_modules/
+
+# Generated OpenAPI spec (intermediate build artifact: cad-schema.json → gen:openapi → openapi.json → gen:api-types → api-types.ts)
+# api-types.ts is committed (like cad-schema.json); openapi.json is the intermediate step, always regenerated
+systems/truck/web/openapi.json
+
 # VitePress build output
 systems/docs/website/.vitepress/dist/
 systems/docs/website/.vitepress/cache/

@@ -1,3 +1,6 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
 /* CAD GUI — Fusion 360-style CSS Grid app shell */
 
 body {

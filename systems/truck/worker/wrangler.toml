@@ -22,9 +22,9 @@ workers_dev = true
 preview_urls = true
 
 # Web UI — static assets served at the edge
-# Source: systems/truck/web/ (HTML, JS, CSS, WASM, vendor libs)
+# Source: systems/truck/web/dist/ (built by Vite: bun run build:truck-web)
 [assets]
-directory = "../web"
+directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "none"
 

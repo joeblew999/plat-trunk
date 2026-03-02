@@ -57,7 +57,16 @@ export const devServers = [
     command: 'cd systems/docs/website && bun x vitepress dev --port 5176',
   },
   {
-    name: 'watch-api-client',
-    command: 'watchexec -w systems/truck/web/src -w systems/truck/worker/src/index.ts -e ts --debounce 500ms -- bun run build:api-client',
+    // Vite dev server for truck web UI (HMR at localhost:5173)
+    // Proxies /api and /mcp to truck-cad worker (localhost:8789)
+    // Use localhost:5173 for dev — .ts changes reload without restart
+    //
+    // build: initial Vite production build — creates dist/ so wrangler dev can start.
+    // wrangler.toml [assets] directory = "../web/dist" requires this to exist.
+    // After this one-time build, Vite dev server handles HMR at :5173 (no restart needed).
+    name: 'truck-web-dev',
+    dir: 'systems/truck/web',
+    build: 'cd systems/truck/web && bun run build',
+    command: 'cd systems/truck/web && bun x vite',
   },
 ];
