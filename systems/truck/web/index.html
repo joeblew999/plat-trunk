@@ -41,11 +41,16 @@
                 localStorage.setItem('cad-last-model-id', id);
                 history.replaceState(null, '', '/model/' + id + location.search);
             } else {
-                // No model in URL — redirect to a fresh model.
+                // No model in URL — resume last model or create fresh one.
                 // Hide page immediately to prevent visual flash while redirect is pending.
                 document.documentElement.style.display = 'none';
                 window.__redirecting = true;
-                location.replace('/model/new' + location.search);
+                var lastId = localStorage.getItem('cad-last-model-id');
+                if (lastId) {
+                    location.replace('/model/' + lastId + location.search);
+                } else {
+                    location.replace('/model/new' + location.search);
+                }
                 return;
             }
         })();

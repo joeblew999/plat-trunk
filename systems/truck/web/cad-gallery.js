@@ -59,9 +59,9 @@ export class CadGallery extends LitElement {
   _open(id) {
     // Skip if already on this model
     if (id === window.__modelId) return;
-    // Dirty check: warn if there are unsaved operations
+    // Dirty check: warn if there are ops recorded since last cloud save
     const mgr = window.cadDocManager;
-    if (mgr?.canUndo && !confirm('You have unsaved changes. Leave this model?')) return;
+    if (mgr?.isDirty && !confirm('You have unsaved changes. Leave this model?')) return;
     window.location.href = `/model/${id}`;
   }
 

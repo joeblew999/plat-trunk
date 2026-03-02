@@ -28,6 +28,7 @@ class CadDocumentManager {
         this._replayInProgress = false;
         this._suppressChangeReplay = false;
         this._localOpCount = 0;
+        this._lastSavedOpIndex = 0;  // op count at last cloud save
         this.enabled = !window.__cadSyncDisabled;
     }
 
@@ -140,6 +141,7 @@ class CadDocumentManager {
         }
 
         this._localOpCount = this._getDocOpCount();
+        this._lastSavedOpIndex = this._localOpCount;  // baseline = "saved"
         localStorage.setItem('cad-last-doc-url', this.handle.url);
         localStorage.setItem(`cad-doc-url-${modelId}`, this.handle.url);
         this._listenForChanges();
@@ -171,6 +173,12 @@ class CadDocumentManager {
                         cadCommand('clear', {}, { record: false, reconcile: false });
                         cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
                         reconcile({});
+                        // Store as baseline snapshot (matches createDocument behavior)
+                        const snapshotRef = await storeBlob(sceneJson);
+                        this.handle.change(d => {
+                            if (!d.snapshots) d.snapshots = [];
+                            d.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
+                        });
                         console.log(`[Cloud] Recovered model "${modelId}" from cloud`);
                     }
                 }
@@ -180,6 +188,7 @@ class CadDocumentManager {
         }
 
         this._localOpCount = this._getDocOpCount();
+        this._lastSavedOpIndex = this._localOpCount;  // baseline = "saved"
         this._updateDocInfo();
         return url;
     }
@@ -342,6 +351,18 @@ class CadDocumentManager {
             }
         }
         return foundDisabled;
+    }
+
+    /** True when there are user ops recorded since the last cloud save. */
+    get isDirty() {
+        const doc = this.handle?.doc();
+        if (!doc) return false;
+        return doc.operations.length > this._lastSavedOpIndex;
+    }
+
+    /** Mark current op count as "saved" — resets isDirty. Called after cloud save. */
+    markSaved() {
+        this._lastSavedOpIndex = this._getDocOpCount();
     }
 
     /** Replay all enabled ops to rebuild the scene from scratch.

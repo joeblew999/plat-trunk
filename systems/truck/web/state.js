@@ -296,6 +296,7 @@ async function handleJsCommand(type, params) {
       const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
       if (thumb) await uploadThumbnail(mid, thumb);
       document.querySelector('cad-gallery')?.refresh();
+      window.cadDocManager?.markSaved();
       return { success: true, modelId: mid };
     }
 
