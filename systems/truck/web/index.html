@@ -15,8 +15,9 @@
             var params = new URLSearchParams(location.search);
             window.__cadLocalMode = params.has('local');
             if (params.has('clear')) {
+                indexedDB.deleteDatabase('cad-objects');
+                indexedDB.deleteDatabase('cad-blobs');
                 indexedDB.deleteDatabase('cad-docs');
-                localStorage.removeItem('cad-last-doc-url');
                 localStorage.removeItem('cad-actor-id');
                 localStorage.removeItem('cad-last-model-id');
                 location.href = '/?local';
@@ -473,90 +474,8 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
     <script type="module">
-
-        // Bail out if redirecting — prevent stale Automerge doc from loading
-        if (window.__redirecting) throw new Error('redirect');
-
-        // ADR-0026 Phase 4: Clean browser-side state before init when ?reset=1
-        if (window.__resetRequested) {
-            localStorage.clear();
-            await Promise.all([
-                new Promise(r => { const req = indexedDB.deleteDatabase('cad-objects'); req.onsuccess = r; req.onerror = r; }),
-                new Promise(r => { const req = indexedDB.deleteDatabase('cad-blobs'); req.onsuccess = r; req.onerror = r; }),
-                new Promise(r => { const req = indexedDB.deleteDatabase('cad-docs'); req.onsuccess = r; req.onerror = r; }),
-            ]);
-            if (window.resetTierState) window.resetTierState();
-        }
-
-        // 0. Register <live-signals> debug panel + version picker (no WASM dependency)
-        await import('./live-signals.js');
-        await import('./cf-control-plane.js');
-
-        // 1. Export WASM modules as globals (cad-viewport does the actual init)
-        const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js');
-        window.__wasmInit = wasm.default;
-        window.__SceneController = wasm.SceneController;
-
-        // 2. Register custom elements
-        await import('./cad-viewport.js');
-        await import('./cad-outliner.js');
-        await import('./cad-gallery.js');
-
-        // 3. Load state, history, UI, keyboard, sketch modules
-        await import('./state.js');
-        await import('./history.js');
-        await import('./ui.js');
-        await import('./keyboard.js');
-        await import('./sketch.js');
-
-        // 4. Post-WASM-init: wait for sceneController, then mode indicator + Automerge
-        let retries = 0;
-        while (!window.sceneController && retries < 60) {
-            await new Promise(r => setTimeout(r, 100));
-            retries++;
-        }
-        if (!window.sceneController) {
-            console.error('WASM init timeout');
-        } else {
-            console.log('CAD running.');
-
-            // Mode indicator
-            var modeEl = document.getElementById('status-mode');
-            var indicatorEl = document.getElementById('mode-indicator');
-            if (window.__cadLocalMode) {
-                if (modeEl) modeEl.textContent = 'Local mode';
-                if (indicatorEl) indicatorEl.textContent = 'Local';
-            } else {
-                if (modeEl) modeEl.textContent = 'Online';
-                if (indicatorEl) indicatorEl.textContent = 'Online';
-            }
-
-            // MCP section: populate origin URL
-            var mcpUrl = document.querySelector('[data-testid="mcp-url"]');
-            if (mcpUrl) mcpUrl.textContent = location.origin + '/mcp';
-            document.querySelectorAll('.mcp-origin').forEach(function(el) { el.textContent = location.origin; });
-
-            // Init Automerge
-            retries = 0;
-            while (!window.cadDocManager && retries < 30) {
-                await new Promise(r => setTimeout(r, 100));
-                retries++;
-            }
-            if (window.cadDocManager) {
-                try {
-                    await window.cadDocManager.init();
-                    console.log('Automerge doc ready:', window.cadDocManager.documentUrl);
-                } catch (err) {
-                    console.warn('Automerge init failed:', err);
-                }
-            }
-
-            // ADR-0026 Phase 1: Single readiness signal for all subsystems.
-            // Set ONLY after WASM + cadCommand + Automerge are all initialized.
-            window.__appReady = true;
-            document.getElementById('loading-overlay')?.remove();
-            console.log('App ready.');
-        }
+        import { boot } from './boot.js';
+        try { await boot(); } catch (e) { if (e.message !== 'redirect') console.error('Boot failed:', e); }
     </script>
     <script>
         if (!window.__cadLocalMode) {

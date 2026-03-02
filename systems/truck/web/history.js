@@ -1,7 +1,6 @@
 import { cadCommand, reconcile, moduleRouter, getSchema } from './state.js';
 import { storeBlob, getBlob } from './blob-store.js';
 import { resetTierState, registerWarmObjects } from './tier-manager.js';
-import { api } from './api-client.js';
 
 // CadDocumentManager — Automerge-backed operation log for collaborative CAD.
 // Acts as a SUBSCRIBER (like bc?.broadcast() in test-hono), NOT a gateway.
@@ -15,8 +14,11 @@ import { api } from './api-client.js';
 //
 // Undo = set enabled=false on last own op (or entire group). Redo = re-enable.
 // Scene is rebuilt by replaying all enabled ops from the last checkpoint.
+//
+// Model loading (cloud/example/cache) lives in model-loader.js — this file
+// is the Automerge undo/redo engine only.
 
-import { Repo, isValidAutomergeUrl, IndexedDBStorageAdapter, BroadcastChannelNetworkAdapter } from './vendor/automerge-bundle.js';
+import { Repo, IndexedDBStorageAdapter, BroadcastChannelNetworkAdapter } from './vendor/automerge-bundle.js';
 
 const SNAPSHOT_INTERVAL = 10; // checkpoint every N ops for faster replay
 
@@ -43,154 +45,13 @@ class CadDocumentManager {
 
     _ctrl() { return window.sceneController; }
 
-    /** Initialize the Automerge repo with local storage + cross-tab sync */
-    async init(networkAdapters = []) {
-        const adapters = [
-            new BroadcastChannelNetworkAdapter(),
-            ...networkAdapters,
-        ];
-
+    /** Initialize the Automerge repo (storage + cross-tab sync).
+     *  Does NOT load a model — that's model-loader.js's job. */
+    async initRepo(networkAdapters = []) {
         this.repo = new Repo({
-            network: adapters,
+            network: [new BroadcastChannelNetworkAdapter(), ...networkAdapters],
             storage: new IndexedDBStorageAdapter('cad-docs'),
         });
-
-        // Check URL for ?doc= parameter
-        const params = new URLSearchParams(window.location.search);
-        const docParam = params.get('doc');
-        const modelId = window.__modelId;
-
-        if (docParam && isValidAutomergeUrl(docParam)) {
-            console.log(`[Automerge] Loading doc from URL: ${docParam}`);
-            await this.loadDocument(docParam);
-        } else {
-            // Check localStorage for document associated with this modelId
-            const modelDocUrl = localStorage.getItem(`cad-doc-url-${modelId}`);
-            if (modelDocUrl && isValidAutomergeUrl(modelDocUrl)) {
-                console.log(`[Automerge] Loading doc for model ${modelId}: ${modelDocUrl}`);
-                await this.loadDocument(modelDocUrl);
-            } else {
-                // New model with no local doc — create new + try cloud
-                console.log(`[Automerge] Creating new doc for model ${modelId}`);
-                await this.createDocument(`Model ${modelId}`);
-            }
-        }
-    }
-
-    /** Create a new document with empty op log */
-    async createDocument(name) {
-        this.handle = this.repo.create({
-            name: name || 'Untitled',
-            createdAt: new Date().toISOString(),
-            operations: [],
-        });
-
-        await this.handle.doc();
-
-        // First visit — load baseline scene (cloud model or demo).
-        // These are navigation/restore actions, NOT user edits.
-        // Store as snapshot (baseline state) — not as an Automerge operation.
-        // This means you can't "undo" opening a model, which is correct.
-        const modelId = window.__modelId;
-        const exampleParam = new URLSearchParams(window.location.search).get('example');
-        let sceneJson = null;
-        if (exampleParam) {
-            // Example file requested via ?example= query param (from dropdown)
-            try {
-                const res = await fetch(`examples/${exampleParam}`);
-                if (res.ok) {
-                    sceneJson = await res.text();
-                    console.log(`[Example] Loaded "${exampleParam}" as baseline`);
-                }
-            } catch (e) {
-                console.warn(`[Example] Failed to load "${exampleParam}":`, e);
-            }
-        } else {
-            // Try cloud model first, fall back to default cube
-            try {
-                const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
-                if (res.ok) {
-                    sceneJson = await res.text();
-                    console.log(`[Cloud] Loaded model "${modelId}" from cloud`);
-                }
-            } catch (e) {
-                console.warn(`[Cloud] Model "${modelId}" not in cloud, loading default`, e);
-            }
-            if (!sceneJson) {
-                try {
-                    const res = await fetch('examples/default-cube.json');
-                    if (res.ok) sceneJson = await res.text();
-                } catch (e) {
-                    console.warn('[Demo] Failed to load demo scene:', e);
-                }
-            }
-        }
-
-        if (sceneJson) {
-            // Import into WASM — data plane commands used for navigation (override schema defaults)
-            cadCommand('clear', {}, { record: false, reconcile: false });
-            cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
-            reconcile({});
-
-            // Store as baseline snapshot at op index 0 (not an operation)
-            const snapshotRef = await storeBlob(sceneJson);
-            this.handle.change(d => {
-                if (!d.snapshots) d.snapshots = [];
-                d.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
-            });
-        }
-
-        this._localOpCount = this._getDocOpCount();
-        this._lastSavedOpIndex = this._localOpCount;  // baseline = "saved"
-        localStorage.setItem('cad-last-doc-url', this.handle.url);
-        localStorage.setItem(`cad-doc-url-${modelId}`, this.handle.url);
-        this._listenForChanges();
-        this._updateDocInfo();
-        this._renderTimeline();
-        return this.handle.url;
-    }
-
-    /** Load an existing document by Automerge URL */
-    async loadDocument(url) {
-        this.handle = await this.repo.find(url);
-        const modelId = window.__modelId;
-        localStorage.setItem('cad-last-doc-url', url);
-        localStorage.setItem(`cad-doc-url-${modelId}`, url);
-        this._listenForChanges();
-        await this._replayScene();
-
-        // Fallback: if doc exists but scene is empty (e.g. blob store was wiped),
-        // try loading from cloud API as a recovery measure.
-        const ids = moduleRouter.query('objectIds');
-        const doc = this.handle.doc();
-        const hasOps = doc?.operations?.length > 0;
-        if ((!ids || ids.length === 0) && !hasOps) {
-            try {
-                const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
-                if (res.ok) {
-                    const sceneJson = await res.text();
-                    if (sceneJson) {
-                        cadCommand('clear', {}, { record: false, reconcile: false });
-                        cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
-                        reconcile({});
-                        // Store as baseline snapshot (matches createDocument behavior)
-                        const snapshotRef = await storeBlob(sceneJson);
-                        this.handle.change(d => {
-                            if (!d.snapshots) d.snapshots = [];
-                            d.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
-                        });
-                        console.log(`[Cloud] Recovered model "${modelId}" from cloud`);
-                    }
-                }
-            } catch (e) {
-                console.warn(`[Cloud] Recovery fetch failed for "${modelId}":`, e);
-            }
-        }
-
-        this._localOpCount = this._getDocOpCount();
-        this._lastSavedOpIndex = this._localOpCount;  // baseline = "saved"
-        this._updateDocInfo();
-        return url;
     }
 
     /** Record a completed operation into the Automerge op log.
