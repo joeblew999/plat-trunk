@@ -100,7 +100,7 @@ class CadDocumentManager {
         // These are navigation/restore actions, NOT user edits.
         // Store as snapshot (baseline state) — not as an Automerge operation.
         // This means you can't "undo" opening a model, which is correct.
-        const modelId = window.__modelId || 'default';
+        const modelId = window.__modelId;
         const exampleParam = new URLSearchParams(window.location.search).get('example');
         let sceneJson = null;
         if (exampleParam) {
@@ -114,8 +114,8 @@ class CadDocumentManager {
             } catch (e) {
                 console.warn(`[Example] Failed to load "${exampleParam}":`, e);
             }
-        } else if (modelId !== 'default') {
-            // Cloud model: fetch saved scene from API
+        } else {
+            // Try cloud model first, fall back to default cube
             try {
                 const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
                 if (res.ok) {
@@ -123,14 +123,15 @@ class CadDocumentManager {
                     console.log(`[Cloud] Loaded model "${modelId}" from cloud`);
                 }
             } catch (e) {
-                console.warn(`[Cloud] Failed to load model "${modelId}":`, e);
+                console.warn(`[Cloud] Model "${modelId}" not in cloud, loading default`, e);
             }
-        } else {
-            try {
-                const res = await fetch('examples/default-cube.json');
-                if (res.ok) sceneJson = await res.text();
-            } catch (e) {
-                console.warn('[Demo] Failed to load demo scene:', e);
+            if (!sceneJson) {
+                try {
+                    const res = await fetch('examples/default-cube.json');
+                    if (res.ok) sceneJson = await res.text();
+                } catch (e) {
+                    console.warn('[Demo] Failed to load demo scene:', e);
+                }
             }
         }
 

@@ -3,6 +3,7 @@
 
 import { cadCommand, cadQuery, showFeedback } from './state.js';
 import { api } from './api-client.js';
+import { getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail.js';
 
 function ctrl() { return window.sceneController; }
 function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
@@ -61,23 +62,20 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
 
 document.getElementById('saveCloudBtn')?.addEventListener('click', async () => {
     if (!ctrl()) return;
-    const defaultName = window.__modelId === 'default' ? 'My Model' : window.__modelId;
-    const name = prompt('Model name:', defaultName);
+    const modelId = window.__modelId;
+    const name = prompt('Model name:', modelId);
     if (!name) return;
     try {
         const scene = ctrl().export_scene();
-        const modelId = window.__modelId === 'default' ? Math.random().toString(36).slice(2, 10) : window.__modelId;
         const res = await api.models[':id'].$put({
             param: { id: modelId },
             json: { name, scene },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Upload thumbnail (use debounced capture or sync fallback)
+        const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
+        if (thumb) await uploadThumbnail(modelId, thumb);
         showFeedback(`Saved "${name}" to cloud`, false);
-        // Update URL to point to the saved model
-        if (window.__modelId === 'default') {
-            window.__modelId = modelId;
-            history.replaceState(null, '', `/model/${modelId}${location.search}`);
-        }
         // Refresh gallery if visible
         document.querySelector('cad-gallery')?.refresh();
     } catch (err) {

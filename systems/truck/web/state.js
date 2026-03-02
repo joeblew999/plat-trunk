@@ -11,6 +11,7 @@
 import { moduleRouter } from './core/module-router.js';
 import { storeBlob } from './blob-store.js';
 import { api } from './api-client.js';
+import { scheduleThumbnailCapture } from './thumbnail.js';
 
 // ─── Schema-driven command classification ────────────────────────
 // The cad-schema.json (served at /api/cad/schema) declares every command:
@@ -397,6 +398,7 @@ async function cadCommand(type, params = {}, options = {}) {
     const state = doReconcile ? reconcile(result) : {};
 
     showCommandFeedback(type, result);
+    scheduleThumbnailCapture();
 
     // Broadcast state to Worker API
     if (broadcast && !window.__cadLocalMode && source !== 'api') {
