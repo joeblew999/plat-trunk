@@ -425,6 +425,12 @@ async function cadCommand(type, params = {}, options = {}) {
     const state = doReconcile ? reconcile(result) : {};
 
     showCommandFeedback(type, result);
+
+    // Auto-select first object after scene import (import_scene/step/ifc)
+    if (type.startsWith('import_') && state.objectIds?.length > 0 && !state.selectedId) {
+      cadQuery('select', { id: state.objectIds[0] });
+    }
+
     scheduleThumbnailCapture();
 
     // Broadcast state to Worker API

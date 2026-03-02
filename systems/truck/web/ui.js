@@ -40,9 +40,19 @@ document.getElementById('saveBtn')?.addEventListener('click', async () => {
 document.getElementById('saveCloudBtn')?.addEventListener('click', async () => {
     const name = prompt('Model name:', window.__modelId);
     if (!name) return;
-    const result = await cadCommand('save_cloud', { name });
-    if (result?.success) showFeedback(`Saved "${name}" to cloud`, false);
-    else showFeedback(result?.error || 'Cloud save failed', true);
+    const btn = document.getElementById('saveCloudBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    try {
+        const result = await cadCommand('save_cloud', { name });
+        if (result?.success) showFeedback(`Saved "${name}" to cloud`, false);
+        else showFeedback(result?.error || 'Cloud save failed', true);
+    } catch (err) {
+        showFeedback(`Cloud save failed: ${err.message}`, true);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Cloud';
+    }
 });
 
 document.getElementById('loadBtn')?.addEventListener('click', () => {

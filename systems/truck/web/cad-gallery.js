@@ -45,14 +45,23 @@ export class CadGallery extends LitElement {
 
   async _delete(id, name) {
     if (!confirm(`Delete "${name}"?`)) return;
+    this._deletingId = id;
+    this.requestUpdate();
     try {
       await window.cadCommand('delete_model', { id });
     } catch (err) {
       this.error = `Delete failed: ${err.message}`;
     }
+    this._deletingId = null;
+    this.requestUpdate();
   }
 
   _open(id) {
+    // Skip if already on this model
+    if (id === window.__modelId) return;
+    // Dirty check: warn if there are unsaved operations
+    const mgr = window.cadDocManager;
+    if (mgr?.canUndo && !confirm('You have unsaved changes. Leave this model?')) return;
     window.location.href = `/model/${id}`;
   }
 
@@ -88,12 +97,14 @@ export class CadGallery extends LitElement {
               <h4 class="text-xs font-medium truncate">${m.name}</h4>
               <div class="flex justify-between items-center">
                 <span class="text-[10px] opacity-50">${m.objectCount} obj${m.objectCount !== 1 ? 's' : ''}</span>
-                <button class="btn btn-xs btn-ghost btn-square opacity-40 hover:opacity-100 hover:text-error"
+                ${this._deletingId === m.id
+                  ? html`<span class="loading loading-spinner loading-xs"></span>`
+                  : html`<button class="btn btn-xs btn-ghost btn-square opacity-40 hover:opacity-100 hover:text-error"
                         title="Delete" @click=${(e) => { e.stopPropagation(); this._delete(m.id, m.name); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
                   </svg>
-                </button>
+                </button>`}
               </div>
             </div>
           </div>
