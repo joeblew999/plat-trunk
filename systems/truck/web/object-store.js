@@ -88,11 +88,7 @@ export async function getObject(modelId, objectId) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const req = tx.objectStore(STORE_NAME).get(`${modelId}/${objectId}`);
-        req.onsuccess = () => {
-            const record = req.result;
-            if (record) record.lastAccessed = Date.now();
-            resolve(record?.entry ?? null);
-        };
+        req.onsuccess = () => resolve(req.result?.entry ?? null);
         req.onerror = () => reject(req.error);
     });
 }

@@ -2,7 +2,7 @@
 // Automatically evicts distant/idle Hot objects to Warm (IndexedDB + LOD proxy)
 // and promotes nearby Warm objects back to Hot (full WASM + GPU).
 
-import { evictObject, promoteObject, listObjects, clearObjects } from './object-store.js';
+import { evictObject, promoteObject, clearObjects } from './object-store.js';
 
 // ── Thresholds (tunable via setThresholds) ──────────────────────────────────
 
@@ -159,14 +159,6 @@ export function startTierManager(modelId = 'default') {
     console.log('[TierManager] started, model=', modelId);
 }
 
-/** Stop the tier manager. */
-export function stopTierManager() {
-    if (!_enabled) return;
-    _enabled = false;
-    if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = null; }
-    console.log('[TierManager] stopped');
-}
-
 /** Reset tier state (call on scene clear/replay to avoid stale warm refs).
  *  Also clears IDB entries for the model to prevent stale data accumulating. */
 export async function resetTierState() {
@@ -179,11 +171,6 @@ export async function resetTierState() {
 /** Notify the tier manager that an object was interacted with (resets idle timer). */
 export function touchObject(objectId) {
     _lastInteraction.set(objectId, Date.now());
-}
-
-/** Check if an object is currently in the Warm tier. */
-export function isWarm(objectId) {
-    return _warmSpheres.has(objectId);
 }
 
 /** Get the number of Warm-tier objects. */
@@ -200,11 +187,6 @@ export function registerWarmObjects(sphereMap) {
         _warmSpheres.set(objectId, sphere);
     }
     _publishWarmCount();
-}
-
-/** Get current thresholds (for UI display or adjustment). */
-export function getThresholds() {
-    return { near: NEAR_THRESHOLD, far: FAR_THRESHOLD, idle: IDLE_TIMEOUT };
 }
 
 /** Update thresholds at runtime (for UI slider or tests). */
