@@ -120,6 +120,9 @@ async function createDocWithScene(mgr, modelId, sceneJson, source) {
 
 async function fetchCloud(modelId) {
     try {
+        // HEAD first to avoid noisy 404 in browser console for new models
+        const head = await api.models[':id'].$get({ param: { id: modelId } });
+        if (!head.ok) return null;
         const res = await api.models[':id'].scene.$get({ param: { id: modelId } });
         if (res.ok) return await res.text();
     } catch { /* cloud unavailable or model not saved */ }
