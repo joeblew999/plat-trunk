@@ -101,8 +101,20 @@ class CadDocumentManager {
         // Store as snapshot (baseline state) — not as an Automerge operation.
         // This means you can't "undo" opening a model, which is correct.
         const modelId = window.__modelId || 'default';
+        const exampleParam = new URLSearchParams(window.location.search).get('example');
         let sceneJson = null;
-        if (modelId !== 'default') {
+        if (exampleParam) {
+            // Example file requested via ?example= query param (from dropdown)
+            try {
+                const res = await fetch(`examples/${exampleParam}`);
+                if (res.ok) {
+                    sceneJson = await res.text();
+                    console.log(`[Example] Loaded "${exampleParam}" as baseline`);
+                }
+            } catch (e) {
+                console.warn(`[Example] Failed to load "${exampleParam}":`, e);
+            }
+        } else if (modelId !== 'default') {
             // Cloud model: fetch saved scene from API
             try {
                 const res = await api.models[':id'].scene.$get({ param: { id: modelId } });

@@ -119,18 +119,11 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
             opt.title = ex.description;
             select.appendChild(opt);
         }
-        select.addEventListener('change', async () => {
-            if (!select.value || !ctrl()) return;
-            try {
-                const res = await fetch(`examples/${select.value}`);
-                if (!res.ok) throw new Error('Failed to load');
-                const json = await res.text();
-                cadCommand('import_scene', { json });
-                const ids = ctrl().object_ids();
-                if (ids.length > 0) cadQuery('select', { id: ids[0] });
-                showFeedback(`Loaded: ${select.options[select.selectedIndex].text}`, false);
-            } catch { showFeedback('Failed to load example', true); }
-            select.value = '';
+        select.addEventListener('change', () => {
+            if (!select.value) return;
+            // Navigate to a fresh model with the example as baseline.
+            // This prevents Automerge cross-contamination with the current model.
+            window.location.href = `/model/new?example=${encodeURIComponent(select.value)}`;
         });
     } catch {}
 })();
