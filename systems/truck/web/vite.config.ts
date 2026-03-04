@@ -7,10 +7,6 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
-    rollupOptions: {
-      // datastar.js lives in public/ and is served at /datastar.js — don't bundle it
-      external: ['/datastar.js'],
-    },
   },
   server: {
     port: 5173,
@@ -19,5 +15,4 @@ export default defineConfig({
       '/mcp': { target: 'http://localhost:8789', changeOrigin: true },
     },
   },
-  optimizeDeps: { exclude: ['@automerge/automerge-wasm'] },
 });

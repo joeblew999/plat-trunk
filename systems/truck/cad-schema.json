@@ -10,6 +10,8 @@
           "size": {
             "default": 1.0,
             "format": "double",
+            "maximum": 1000.0,
+            "minimum": 0.001,
             "type": "number"
           }
         },
@@ -29,11 +31,15 @@
           "height": {
             "default": 1.0,
             "format": "double",
+            "maximum": 1000.0,
+            "minimum": 0.001,
             "type": "number"
           },
           "radius": {
             "default": 0.5,
             "format": "double",
+            "maximum": 1000.0,
+            "minimum": 0.001,
             "type": "number"
           }
         },
@@ -53,6 +59,8 @@
           "radius": {
             "default": 1.0,
             "format": "double",
+            "maximum": 1000.0,
+            "minimum": 0.001,
             "type": "number"
           }
         },
@@ -72,11 +80,15 @@
           "majorRadius": {
             "default": 1.0,
             "format": "double",
+            "maximum": 1000.0,
+            "minimum": 0.001,
             "type": "number"
           },
           "minorRadius": {
             "default": 0.3,
             "format": "double",
+            "maximum": 999.0,
+            "minimum": 0.001,
             "type": "number"
           }
         },
@@ -452,6 +464,44 @@
       },
       "readonly": true,
       "returns": "stats"
+    },
+    "quick_rect_extrude": {
+      "description": "Create a rectangular sketch and extrude it to 3D in one step",
+      "domain": "sketch",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "depth": {
+            "format": "double",
+            "type": "number"
+          },
+          "height": {
+            "format": "double",
+            "type": "number"
+          },
+          "plane": {
+            "description": "Sketch plane: \"xy\", \"xz\", or \"yz\" (default: \"xy\")",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "depth",
+          "height",
+          "width"
+        ],
+        "title": "QuickRectExtrudeParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
     },
     "rename": {
       "description": "Rename an object",

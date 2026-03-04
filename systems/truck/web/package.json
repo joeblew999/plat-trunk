@@ -10,10 +10,6 @@
     "lit": "^3",
     "three": "^0.172",
     "openapi-fetch": "^0.13",
-    "@automerge/automerge": "^3",
-    "@automerge/automerge-repo": "^2",
-    "@automerge/automerge-repo-storage-indexeddb": "^2",
-    "@automerge/automerge-repo-network-broadcastchannel": "^2",
     "daisyui": "^5"
   },
   "devDependencies": {

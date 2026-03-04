@@ -162,6 +162,10 @@ struct ExportEntry {
     /// [cx, cy, cz, radius] — allows JS to do viewport culling without loading geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bounding_sphere: Option<[f64; 4]>,
+    /// Whether this object is rsweep geometry (sphere/torus).
+    /// Persisted so import_scene can restore rsweep_ids and block boolean ops on replay.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    is_rsweep: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +241,8 @@ struct SharedState {
     name_counters: HashMap<String, usize>,
     // Passive WASM: JS owns camera via set_camera (ADR-0013)
     camera_external: bool,
+    // Track rsweep objects (sphere/torus) — boolean ops trap on rsweep geometry
+    rsweep_ids: std::collections::HashSet<String>,
 }
 
 /// Rebuild the id→index lookup after any mutation that changes Vec ordering.
@@ -917,10 +923,11 @@ impl SceneController {
             active_sketch: None,
             name_counters: HashMap::new(),
             camera_external: false,
+            rsweep_ids: std::collections::HashSet::new(),
         };
 
         // Start with a default cube
-        let default_id = add_solid_to_state(&mut shared, make_cube(1.0), "Box", None);
+        let default_id = add_solid_to_state(&mut shared, make_cube(1.0).expect("default cube"), "Box", None);
         shared.selected = Some(default_id);
 
         let state = Rc::new(RefCell::new(shared));
@@ -1118,7 +1125,10 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn add_cube(&self, size: f64) -> String {
         log!("WASM: add_cube({})", size);
-        let solid = make_cube(size);
+        let solid = match make_cube(size) {
+            Ok(s) => s,
+            Err(e) => { error!("add_cube: {}", e); return String::new(); }
+        };
         let mut s = self.state.borrow_mut();
         add_solid_to_state(&mut s, solid, "Box", None)
     }
@@ -1126,15 +1136,23 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn add_sphere(&self, radius: f64) -> String {
         log!("WASM: add_sphere({})", radius);
-        let solid = make_sphere(radius);
+        let solid = match make_sphere(radius) {
+            Ok(s) => s,
+            Err(e) => { error!("add_sphere: {}", e); return String::new(); }
+        };
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Sphere", None)
+        let id = add_solid_to_state(&mut s, solid, "Sphere", None);
+        if !id.is_empty() { s.rsweep_ids.insert(id.clone()); }
+        id
     }
 
     #[wasm_bindgen]
     pub fn add_cylinder(&self, radius: f64, height: f64) -> String {
         log!("WASM: add_cylinder({}, {})", radius, height);
-        let solid = make_cylinder(radius, height);
+        let solid = match make_cylinder(radius, height) {
+            Ok(s) => s,
+            Err(e) => { error!("add_cylinder: {}", e); return String::new(); }
+        };
         let mut s = self.state.borrow_mut();
         add_solid_to_state(&mut s, solid, "Cylinder", None)
     }
@@ -1142,9 +1160,14 @@ impl SceneController {
     #[wasm_bindgen]
     pub fn add_torus(&self, major_r: f64, minor_r: f64) -> String {
         log!("WASM: add_torus({}, {})", major_r, minor_r);
-        let solid = make_torus(major_r, minor_r);
+        let solid = match make_torus(major_r, minor_r) {
+            Ok(s) => s,
+            Err(e) => { error!("add_torus: {}", e); return String::new(); }
+        };
         let mut s = self.state.borrow_mut();
-        add_solid_to_state(&mut s, solid, "Torus", None)
+        let id = add_solid_to_state(&mut s, solid, "Torus", None);
+        if !id.is_empty() { s.rsweep_ids.insert(id.clone()); }
+        id
     }
 
     // =====================================================================
@@ -1299,24 +1322,58 @@ impl SceneController {
     // Boolean operations
     // =====================================================================
 
-    /// Try a boolean operation, catching panics (requires panic=unwind in Cargo.toml).
-    /// Falls back to a perturbation retry when the exact attempt fails.
-    fn try_bool_with_fallback<F>(solid_a: &Solid, solid_b: &Solid, op: F) -> Option<Solid>
+    /// Try a boolean op: exact geometry first, then perturbed fallback.
+    ///
+    /// truck_shapeops fails on axis-aligned/coplanar faces (returns None or degenerate result).
+    /// BOOL_PERTURBATION breaks the alignment so truck_shapeops can find intersection curves.
+    ///
+    /// Previously, subtract/intersect with perturbation would PANIC inside Solid::new() when
+    /// the result had degenerate topology. That panic is now fixed upstream (Solid::try_new().ok()?
+    /// in truck-shapeops/transversal/integrate/mod.rs), so all failures safely return None.
+    /// We can now safely attempt perturbation as a fallback for all boolean ops.
+    fn try_bool_op<F>(solid_a: &Solid, solid_b: &Solid, op: F) -> Option<Solid>
     where F: Fn(&Solid, &Solid) -> Option<Solid> + std::panic::RefUnwindSafe
     {
-        // 1. Try exact geometry
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // First try exact geometry
+        let exact = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             op(solid_a, solid_b)
         })).ok().flatten();
-
-        if result.is_some() { return result; }
-
-        // 2. Retry with asymmetric perturbation to break axis alignment
-        log!("WASM: boolean op failed, retrying with perturbation to avoid coplanar faces");
+        if exact.is_some() { return exact; }
+        // Fallback: perturb solid_b to break axis alignment
         let perturbed = builder::translated(solid_b, BOOL_PERTURBATION);
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             op(solid_a, &perturbed)
         })).ok().flatten()
+    }
+
+    /// AABB containment check: returns (a_contains_b, b_contains_a).
+    /// Uses pick mesh vertex AABB for accurate containment detection.
+    ///
+    /// The bounding sphere check had false positives for objects with similar sphere radii,
+    /// e.g. cube(1) (sphere r≈0.866) vs cylinder(r=0.4, h=1.5) (sphere r≈0.850): the cylinder
+    /// sphere fits inside the cube sphere even though the cylinder extends ±0.75 in Z beyond
+    /// the cube's ±0.5, causing union/intersect to silently return wrong results.
+    /// AABB is per-axis tight and catches this correctly.
+    fn check_sphere_containment(s: &SharedState, id_a: &str, id_b: &str) -> (bool, bool) {
+        let aabb = |id: &str| -> Option<([f64; 3], [f64; 3])> {
+            let &idx = s.id_to_index.get(id)?;
+            let pm = &s.objects[idx].pick_mesh;
+            if pm.positions.is_empty() { return None; }
+            let mut mn = [f64::INFINITY; 3];
+            let mut mx = [f64::NEG_INFINITY; 3];
+            for p in &pm.positions {
+                mn[0] = mn[0].min(p.x); mn[1] = mn[1].min(p.y); mn[2] = mn[2].min(p.z);
+                mx[0] = mx[0].max(p.x); mx[1] = mx[1].max(p.y); mx[2] = mx[2].max(p.z);
+            }
+            Some((mn, mx))
+        };
+        let (Some((mn_a, mx_a)), Some((mn_b, mx_b))) = (aabb(id_a), aabb(id_b)) else {
+            return (false, false);
+        };
+        // A contains B: B's AABB fits inside A's AABB on all axes (with small epsilon)
+        let a_contains_b = (0..3).all(|i| mn_a[i] <= mn_b[i] + 1e-4 && mx_b[i] <= mx_a[i] + 1e-4);
+        let b_contains_a = (0..3).all(|i| mn_b[i] <= mn_a[i] + 1e-4 && mx_a[i] <= mx_b[i] + 1e-4);
+        (a_contains_b, b_contains_a)
     }
 
     /// Union two objects, replacing them with the result. Returns new UUID (empty on failure).
@@ -1328,19 +1385,48 @@ impl SceneController {
     pub fn boolean_union(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_union({}, {})", id_a, id_b);
 
-        // Extract solids and indices, then DROP the borrow before the boolean op.
+        // Extract solids, indices, and containment, then DROP the borrow before the boolean op.
         // This prevents RefCell poisoning if a panic escapes catch_unwind.
-        let (solid_a, solid_b, idx_a, idx_b) = {
+        let (solid_a, solid_b, idx_a, idx_b, a_contains_b, b_contains_a) = {
             let s = self.state.borrow();
+            // Guard: rsweep geometry (sphere/torus) causes WASM trap in truck-shapeops
+            if s.rsweep_ids.contains(id_a) || s.rsweep_ids.contains(id_b) {
+                error!("Boolean union: sphere/torus geometry not supported by truck-shapeops in WASM");
+                return String::new();
+            }
             let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
             let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
             if idx_a == idx_b { return String::new(); }
             let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
             let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
-            (sa, sb, idx_a, idx_b)
+            let (acb, bca) = Self::check_sphere_containment(&s, id_a, id_b);
+            (sa, sb, idx_a, idx_b, acb, bca)
         }; // borrow dropped here
 
-        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+        // Containment short-circuit: avoid WASM trap when one solid is inside the other.
+        // "This shell is not oriented and closed" panic in truck_shapeops cannot be caught.
+        if a_contains_b {
+            log!("WASM: union containment: A⊃B, union=A, removing B");
+            let mut s = self.state.borrow_mut();
+            s.objects.remove(idx_b);
+            s.rsweep_ids.remove(id_b);
+            rebuild_id_index(&mut s);
+            rebuild_bounding_spheres(&mut s);
+            rebuild_scene(&mut s);
+            return id_a.to_string();
+        }
+        if b_contains_a {
+            log!("WASM: union containment: B⊃A, union=B, removing A");
+            let mut s = self.state.borrow_mut();
+            s.objects.remove(idx_a);
+            s.rsweep_ids.remove(id_a);
+            rebuild_id_index(&mut s);
+            rebuild_bounding_spheres(&mut s);
+            rebuild_scene(&mut s);
+            return id_b.to_string();
+        }
+
+        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
             truck_shapeops::or(a, b, 0.05).or_else(|| {
                 // De Morgan fallback: A ∪ B = ¬(¬A ∧ ¬B)
                 let mut not_a = a.clone(); not_a.not();
@@ -1373,17 +1459,29 @@ impl SceneController {
     pub fn boolean_subtract(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_subtract({}, {})", id_a, id_b);
 
-        let (solid_a, solid_b, idx_a, idx_b) = {
+        let (solid_a, solid_b, idx_a, idx_b, a_contains_b, b_contains_a) = {
             let s = self.state.borrow();
+            if s.rsweep_ids.contains(id_a) || s.rsweep_ids.contains(id_b) {
+                error!("Boolean subtract: sphere/torus geometry not supported by truck-shapeops in WASM");
+                return String::new();
+            }
             let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
             let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
             if idx_a == idx_b { return String::new(); }
             let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
             let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
-            (sa, sb, idx_a, idx_b)
+            let (acb, bca) = Self::check_sphere_containment(&s, id_a, id_b);
+            (sa, sb, idx_a, idx_b, acb, bca)
         };
 
-        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+        // Containment: B inside A creates internal void (not representable); A inside B = empty result.
+        // Both cases would cause WASM trap — return early with error.
+        if a_contains_b || b_contains_a {
+            error!("Boolean subtract: one solid is fully inside the other — result would be non-manifold or empty");
+            return String::new();
+        }
+
+        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
             let mut not_b = b.clone(); not_b.not();
             truck_shapeops::and(a, &not_b, 0.05)
         });
@@ -1412,17 +1510,44 @@ impl SceneController {
     pub fn boolean_intersect(&self, id_a: &str, id_b: &str) -> String {
         log!("WASM: boolean_intersect({}, {})", id_a, id_b);
 
-        let (solid_a, solid_b, idx_a, idx_b) = {
+        let (solid_a, solid_b, idx_a, idx_b, a_contains_b, b_contains_a) = {
             let s = self.state.borrow();
+            if s.rsweep_ids.contains(id_a) || s.rsweep_ids.contains(id_b) {
+                error!("Boolean intersect: sphere/torus geometry not supported by truck-shapeops in WASM");
+                return String::new();
+            }
             let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
             let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
             if idx_a == idx_b { return String::new(); }
             let sa = match &s.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
             let sb = match &s.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
-            (sa, sb, idx_a, idx_b)
+            let (acb, bca) = Self::check_sphere_containment(&s, id_a, id_b);
+            (sa, sb, idx_a, idx_b, acb, bca)
         };
 
-        let result = Self::try_bool_with_fallback(&solid_a, &solid_b, |a, b| {
+        // Containment: intersection of B-inside-A is B; intersection of A-inside-B is A.
+        if a_contains_b {
+            log!("WASM: intersect containment: A⊃B, intersection=B, removing A");
+            let mut s = self.state.borrow_mut();
+            s.objects.remove(idx_a);
+            s.rsweep_ids.remove(id_a);
+            rebuild_id_index(&mut s);
+            rebuild_bounding_spheres(&mut s);
+            rebuild_scene(&mut s);
+            return id_b.to_string();
+        }
+        if b_contains_a {
+            log!("WASM: intersect containment: B⊃A, intersection=A, removing B");
+            let mut s = self.state.borrow_mut();
+            s.objects.remove(idx_b);
+            s.rsweep_ids.remove(id_b);
+            rebuild_id_index(&mut s);
+            rebuild_bounding_spheres(&mut s);
+            rebuild_scene(&mut s);
+            return id_a.to_string();
+        }
+
+        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
             truck_shapeops::and(a, b, 0.05)
         });
 
@@ -1453,6 +1578,7 @@ impl SceneController {
     pub fn delete_object(&self, id: &str) -> bool {
         let mut s = self.state.borrow_mut();
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return false };
+        s.rsweep_ids.remove(id);
         s.objects.remove(idx);
         rebuild_id_index(&mut s);
         rebuild_bounding_spheres(&mut s);
@@ -1468,6 +1594,7 @@ impl SceneController {
         s.bounding_spheres.clear();
         s.lod_proxies.clear();
         s.name_counters.clear();
+        s.rsweep_ids.clear();
         s.interaction = InteractionMode::Idle;
         s.scene.clear_objects();
     }
@@ -1494,8 +1621,10 @@ impl SceneController {
         let idx = match s.id_to_index.get(id) { Some(&i) => i, None => return "null".to_string() };
         let obj = &s.objects[idx];
         let (center, radius) = obj.pick_mesh.bounding_sphere();
+        let id_str = obj.id.to_string();
         let entry = ExportEntry {
-            id: obj.id.to_string(),
+            is_rsweep: s.rsweep_ids.contains(&id_str),
+            id: id_str,
             name: obj.name.clone(),
             solid: obj.solid.clone(),
             mesh: Some(obj.mesh.clone()),
@@ -1535,6 +1664,7 @@ impl SceneController {
             s.bounding_spheres.push((id_str.clone(), center, radius));
             let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
             s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            if entry.is_rsweep { s.rsweep_ids.insert(id_str.clone()); }
             return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
         } else if let Some(mesh) = entry.mesh {
             let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
@@ -1546,6 +1676,7 @@ impl SceneController {
             s.bounding_spheres.push((id_str.clone(), center, radius));
             let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
             s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+            if entry.is_rsweep { s.rsweep_ids.insert(id_str.clone()); }
             return JsValue::from_str(&format!("{{\"objectId\":\"{}\"}}", id_str));
         }
         JsValue::from_str("{\"error\":\"No solid or mesh in entry\"}")
@@ -1653,8 +1784,10 @@ impl SceneController {
         let s = self.state.borrow();
         let entries: Vec<ExportEntry> = s.objects.iter().map(|obj| {
             let (center, radius) = obj.pick_mesh.bounding_sphere();
+            let id_str = obj.id.to_string();
             ExportEntry {
-                id: obj.id.to_string(),
+                is_rsweep: s.rsweep_ids.contains(&id_str),
+                id: id_str,
                 name: obj.name.clone(),
                 solid: obj.solid.clone(),
                 mesh: Some(obj.mesh.clone()),
@@ -1769,6 +1902,7 @@ impl SceneController {
         s.objects.clear();
         s.id_to_index.clear();
         s.bounding_spheres.clear();
+        s.rsweep_ids.clear();
         s.interaction = InteractionMode::Idle;
         s.scene.clear_objects();
         for entry in entries {
@@ -1787,6 +1921,7 @@ impl SceneController {
                 s.bounding_spheres.push((id_str, center, radius));
                 let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
                 s.objects.push(SceneObject { id, name, solid: Some(solid), mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+                if entry.is_rsweep { s.rsweep_ids.insert(id.to_string()); }
             } else if let Some(mesh) = entry.mesh {
                 let (polygon, wireframe, pick_mesh) = mesh_to_instances(&s.creator, &mesh, &style);
                 let (center, radius) = pick_mesh.bounding_sphere();
@@ -1797,6 +1932,7 @@ impl SceneController {
                 s.bounding_spheres.push((id_str, center, radius));
                 let name = if entry.name.is_empty() { format!("Object {}", idx + 1) } else { entry.name };
                 s.objects.push(SceneObject { id, name, solid: None, mesh, polygon, wireframe, style, pick_mesh, bim: entry.bim });
+                if entry.is_rsweep { s.rsweep_ids.insert(id.to_string()); }
             }
         }
         log!("WASM: Imported {} objects", s.objects.len());
@@ -2345,23 +2481,31 @@ impl SceneController {
             // ── Primitives ──────────────────────────────────────────
             "add_cube" => {
                 let params: AddCubeParams = serde_json::from_value(p).unwrap_or(AddCubeParams { size: 1.0 });
-                let id = self.add_cube(params.size);
-                serde_json::json!({ "objectId": id })
+                match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_cube(params.size) }),
+                }
             }
             "add_sphere" => {
                 let params: AddSphereParams = serde_json::from_value(p).unwrap_or(AddSphereParams { radius: 1.0 });
-                let id = self.add_sphere(params.radius);
-                serde_json::json!({ "objectId": id })
+                match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_sphere(params.radius) }),
+                }
             }
             "add_cylinder" => {
                 let params: AddCylinderParams = serde_json::from_value(p).unwrap_or(AddCylinderParams { radius: 0.5, height: 1.0 });
-                let id = self.add_cylinder(params.radius, params.height);
-                serde_json::json!({ "objectId": id })
+                match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_cylinder(params.radius, params.height) }),
+                }
             }
             "add_torus" => {
                 let params: AddTorusParams = serde_json::from_value(p).unwrap_or(AddTorusParams { major_radius: 1.0, minor_radius: 0.3 });
-                let id = self.add_torus(params.major_radius, params.minor_radius);
-                serde_json::json!({ "objectId": id })
+                match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_torus(params.major_radius, params.minor_radius) }),
+                }
             }
 
             // ── Transforms ──────────────────────────────────────────
@@ -2369,25 +2513,34 @@ impl SceneController {
                 match serde_json::from_value::<TranslateParams>(p) {
                     Ok(params) => {
                         let ok = self.translate_object(&params.object_id, params.dx, params.dy, params.dz);
-                        serde_json::json!({ "success": ok })
+                        if ok { serde_json::json!({ "success": true }) }
+                        else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
             }
             "rotate" => {
                 match serde_json::from_value::<RotateParams>(p) {
-                    Ok(params) => {
-                        let ok = self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg);
-                        serde_json::json!({ "success": ok })
+                    Ok(params) => match params.validate() {
+                        Err(e) => serde_json::json!({ "error": e }),
+                        Ok(()) => {
+                            let ok = self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg);
+                            if ok { serde_json::json!({ "success": true }) }
+                            else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
             }
             "scale" => {
                 match serde_json::from_value::<ScaleParams>(p) {
-                    Ok(params) => {
-                        let ok = self.scale_object(&params.object_id, params.sx, params.sy, params.sz);
-                        serde_json::json!({ "success": ok })
+                    Ok(params) => match params.validate() {
+                        Err(e) => serde_json::json!({ "error": e }),
+                        Ok(()) => {
+                            let ok = self.scale_object(&params.object_id, params.sx, params.sy, params.sz);
+                            if ok { serde_json::json!({ "success": true }) }
+                            else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
@@ -2407,9 +2560,17 @@ impl SceneController {
             "boolean_union" => {
                 match serde_json::from_value::<BooleanParams>(p) {
                     Ok(params) => {
-                        let id = self.boolean_union(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Union failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
+                        let is_rsweep = {
+                            let s = self.state.borrow();
+                            s.rsweep_ids.contains(&params.id_a) || s.rsweep_ids.contains(&params.id_b)
+                        };
+                        if is_rsweep {
+                            serde_json::json!({ "error": "Boolean ops with sphere/torus geometry are not supported in browser WASM (truck-shapeops limitation). Use cube/cylinder shapes." })
+                        } else {
+                            let id = self.boolean_union(&params.id_a, &params.id_b);
+                            if id.is_empty() { serde_json::json!({ "error": "Union failed: objects may not overlap or geometry is incompatible" }) }
+                            else { serde_json::json!({ "objectId": id }) }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
@@ -2417,9 +2578,17 @@ impl SceneController {
             "boolean_subtract" => {
                 match serde_json::from_value::<BooleanParams>(p) {
                     Ok(params) => {
-                        let id = self.boolean_subtract(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Subtract failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
+                        let is_rsweep = {
+                            let s = self.state.borrow();
+                            s.rsweep_ids.contains(&params.id_a) || s.rsweep_ids.contains(&params.id_b)
+                        };
+                        if is_rsweep {
+                            serde_json::json!({ "error": "Boolean ops with sphere/torus geometry are not supported in browser WASM (truck-shapeops limitation). Use cube/cylinder shapes." })
+                        } else {
+                            let id = self.boolean_subtract(&params.id_a, &params.id_b);
+                            if id.is_empty() { serde_json::json!({ "error": "Subtract failed: objects may not overlap or geometry is incompatible" }) }
+                            else { serde_json::json!({ "objectId": id }) }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
@@ -2427,9 +2596,17 @@ impl SceneController {
             "boolean_intersect" => {
                 match serde_json::from_value::<BooleanParams>(p) {
                     Ok(params) => {
-                        let id = self.boolean_intersect(&params.id_a, &params.id_b);
-                        if id.is_empty() { serde_json::json!({ "error": "Intersect failed" }) }
-                        else { serde_json::json!({ "objectId": id }) }
+                        let is_rsweep = {
+                            let s = self.state.borrow();
+                            s.rsweep_ids.contains(&params.id_a) || s.rsweep_ids.contains(&params.id_b)
+                        };
+                        if is_rsweep {
+                            serde_json::json!({ "error": "Boolean ops with sphere/torus geometry are not supported in browser WASM (truck-shapeops limitation). Use cube/cylinder shapes." })
+                        } else {
+                            let id = self.boolean_intersect(&params.id_a, &params.id_b);
+                            if id.is_empty() { serde_json::json!({ "error": "Intersect failed: objects may not overlap or geometry is incompatible" }) }
+                            else { serde_json::json!({ "objectId": id }) }
+                        }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
                 }
@@ -2824,11 +3001,41 @@ impl SceneController {
                     Ok(params) => {
                         if params.sketch_json.is_empty() || params.height <= 0.0 {
                             serde_json::json!({ "error": "Missing sketchJson or height" })
+                        } else if !self.sketch_import(&params.sketch_json) {
+                            serde_json::json!({ "error": "Invalid sketch JSON" })
                         } else {
-                            self.sketch_import(&params.sketch_json);
                             let id = self.sketch_extrude(params.height);
                             if id.is_empty() { serde_json::json!({ "error": "Extrude failed" }) }
                             else { serde_json::json!({ "objectId": id }) }
+                        }
+                    }
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                }
+            }
+            "quick_rect_extrude" => {
+                match serde_json::from_value::<QuickRectExtrudeParams>(p) {
+                    Ok(params) => {
+                        if params.width <= 0.0 || params.height <= 0.0 || params.depth <= 0.0 {
+                            serde_json::json!({ "error": "width, height, depth must all be > 0" })
+                        } else {
+                            let plane = match params.plane.as_deref().unwrap_or("xy") {
+                                "xz" => crate::sketch::SketchPlane::XZ,
+                                "yz" => crate::sketch::SketchPlane::YZ,
+                                _    => crate::sketch::SketchPlane::XY,
+                            };
+                            let sketch = crate::sketch::quick_rect_sketch(params.width, params.height, plane);
+                            match crate::sketch::sketch_to_solid(&sketch, params.depth) {
+                                Ok(solid) => {
+                                    let mut s = self.state.borrow_mut();
+                                    let id = add_solid_to_state(&mut s, solid, "QuickRect", None);
+                                    rebuild_scene(&mut s);
+                                    serde_json::json!({ "objectId": id })
+                                }
+                                Err(e) => {
+                                    error!("WASM: quick_rect_extrude failed: {}", e);
+                                    serde_json::json!({ "error": format!("Extrude failed: {}", e) })
+                                }
+                            }
                         }
                     }
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),

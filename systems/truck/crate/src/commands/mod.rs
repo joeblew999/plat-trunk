@@ -27,7 +27,7 @@ pub use geometry::{AddCubeParams, AddSphereParams, AddCylinderParams, AddTorusPa
                    TranslateParams, RotateParams, ScaleParams, ObjectIdParam};
 pub use booleans::BooleanParams;
 pub use sketch::{BeginSketchParams, SketchAddPointParams, SketchAddEdgeParams,
-                 SketchAddConstraintParams, SketchExtrudeParams};
+                 SketchAddConstraintParams, SketchExtrudeParams, QuickRectExtrudeParams};
 pub use scene::{SelectParams, PickAtParams, ImportSceneParams, ImportStepParams, ImportIfcParams};
 pub use style::{SetStyleParams, SetColorParams, RenameParams, SetCameraParams};
 

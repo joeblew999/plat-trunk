@@ -70,6 +70,20 @@ function exec(cmd, cwd) {
   execSync(cmd, { cwd: resolve(ROOT, cwd || '.'), stdio: 'inherit' });
 }
 
+// ─── Helpers ───────────────────────────────────────────
+
+async function waitReady(name, url, maxMs = 30000) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) { console.log(`  ${name} ready ✓`); return; }
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  console.error(`  WARNING: ${name} health check timed out after ${maxMs}ms (${url})`);
+}
+
 // ─── Commands ──────────────────────────────────────────
 
 async function dev() {
@@ -100,15 +114,25 @@ async function dev() {
     }
   }
 
+  // 3. Apply D1 migrations for workers that declare them.
+  for (const w of workers.filter(w => w.migrate)) {
+    console.log(`\nApplying migrations for ${w.name}...`);
+    try {
+      exec(w.migrate, w.dir);
+    } catch (err) {
+      console.error(`Migration failed for ${w.name}: ${err.message}`);
+    }
+  }
+
   console.log('\nStarting workers...\n');
 
-  // 3. Start all wrangler dev processes (auto-reload TypeScript on save)
+  // 4. Start all wrangler dev processes (auto-reload TypeScript on save)
   let idx = 0;
   workers.forEach((w) => {
     start(w.name, 'bun x wrangler dev', w.dir, idx++);
   });
 
-  // 4. Start file watchers (rebuild on source changes)
+  // 5. Start file watchers (rebuild on source changes)
   for (const w of workers) {
     if (w.watch) {
       const paths = w.watch.paths.map(p => `-w ${p}`).join(' ');
@@ -119,9 +143,16 @@ async function dev() {
     }
   }
 
-  // 5. Start dev servers (VitePress, etc.)
+  // 6. Start dev servers (VitePress, etc.)
   for (const s of devServers) {
     start(s.name, s.command, '.', idx++);
+  }
+
+  // 7. Health check — poll each worker's health endpoint until 200 or timeout.
+  const healthTargets = workers.filter(w => w.healthUrl);
+  if (healthTargets.length) {
+    console.log('\nWaiting for workers to be ready...');
+    await Promise.all(healthTargets.map(w => waitReady(w.name, w.healthUrl)));
   }
 
   console.log('\nAll workers started. Press Ctrl+C to stop.\n');

@@ -1,0 +1,37 @@
+[package]
+name = "truck-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Plugin-agnostic CRDT op log for plat-trunk systems (truck-geometry, truck-mvt, ifc-lite, …)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# CRDT document — Automerge for merge-safe op log
+automerge = "0.7.4"
+
+# Serialization
+serde     = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+
+# Unique op IDs
+uuid = { version = "1", features = ["v4", "js", "serde"] }
+
+# WASM bridge (only used when compiled to wasm32)
+wasm-bindgen = "0.2.106"
+console_error_panic_hook = "0.1.7"
+log = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+# getrandom 0.3.x requires explicit opt-in for wasm32-unknown-unknown
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+# Nothing browser-specific — all tests are native Rust
+
+[features]
+default = []
+

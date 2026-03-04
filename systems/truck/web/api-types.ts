@@ -2948,6 +2948,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cad/{modelId}/async/quick_rect_extrude": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a rectangular sketch and extrude it to 3D in one step */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @example default */
+                    modelId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["quick_rect_extrudeRequest"];
+                };
+            };
+            responses: {
+                /** @description Queued */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommandQueued"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cad/{modelId}/sync/quick_rect_extrude": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a rectangular sketch and extrude it to 3D in one step (waits for result) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @example default */
+                    modelId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["quick_rect_extrudeRequest"];
+                };
+            };
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommandResult"];
+                    };
+                };
+                /** @description Timeout */
+                504: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cad/{modelId}/async/rename": {
         parameters: {
             query?: never;
@@ -4563,6 +4656,13 @@ export interface components {
             ndcY: number;
         };
         pick_mesh_statsRequest: Record<string, never>;
+        quick_rect_extrudeRequest: {
+            depth: number;
+            height: number;
+            /** @description Sketch plane: "xy", "xz", or "yz" (default: "xy") */
+            plane?: string | null;
+            width: number;
+        };
         renameRequest: {
             name: string;
             objectId: string;

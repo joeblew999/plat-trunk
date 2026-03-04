@@ -7,37 +7,60 @@ use serde::Deserialize;
 use schemars::JsonSchema;
 
 use super::{default_1, default_0_5, default_0_3, schema_for, SchemaEntry};
+use crate::{validate_cube, validate_sphere, validate_cylinder, validate_torus};
 
 // ─── Param structs ──────────────────────────────────────────────
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AddCubeParams {
     #[serde(default = "default_1")]
+    #[schemars(range(min = 0.001, max = 1000.0))]
     pub size: f64,
+}
+
+impl AddCubeParams {
+    pub fn validate(&self) -> Result<(), String> { validate_cube(self.size) }
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AddSphereParams {
     #[serde(default = "default_1")]
+    #[schemars(range(min = 0.001, max = 1000.0))]
     pub radius: f64,
+}
+
+impl AddSphereParams {
+    pub fn validate(&self) -> Result<(), String> { validate_sphere(self.radius) }
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AddCylinderParams {
     #[serde(default = "default_0_5")]
+    #[schemars(range(min = 0.001, max = 1000.0))]
     pub radius: f64,
     #[serde(default = "default_1")]
+    #[schemars(range(min = 0.001, max = 1000.0))]
     pub height: f64,
+}
+
+impl AddCylinderParams {
+    pub fn validate(&self) -> Result<(), String> { validate_cylinder(self.radius, self.height) }
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AddTorusParams {
     #[serde(default = "default_1")]
     #[serde(rename = "majorRadius")]
+    #[schemars(range(min = 0.001, max = 1000.0))]
     pub major_radius: f64,
     #[serde(default = "default_0_3")]
     #[serde(rename = "minorRadius")]
+    #[schemars(range(min = 0.001, max = 999.0))]
     pub minor_radius: f64,
+}
+
+impl AddTorusParams {
+    pub fn validate(&self) -> Result<(), String> { validate_torus(self.major_radius, self.minor_radius) }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -70,6 +93,19 @@ pub struct RotateParams {
     pub angle_deg: f64,
 }
 
+impl RotateParams {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let mag2 = self.axis_x * self.axis_x + self.axis_y * self.axis_y + self.axis_z * self.axis_z;
+        if mag2 < 1e-20 {
+            return Err("axis must be a non-zero vector (axisX/axisY/axisZ cannot all be 0)".to_string());
+        }
+        if !self.angle_deg.is_finite() {
+            return Err(format!("angleDeg must be finite, got {}", self.angle_deg));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct ScaleParams {
     #[serde(rename = "objectId")]
@@ -80,6 +116,18 @@ pub struct ScaleParams {
     pub sy: f64,
     #[serde(default = "default_1")]
     pub sz: f64,
+}
+
+impl ScaleParams {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.sx.abs() < 1e-10 { return Err(format!("sx must be non-zero, got {}", self.sx)); }
+        if self.sy.abs() < 1e-10 { return Err(format!("sy must be non-zero, got {}", self.sy)); }
+        if self.sz.abs() < 1e-10 { return Err(format!("sz must be non-zero, got {}", self.sz)); }
+        if !self.sx.is_finite() { return Err(format!("sx must be finite, got {}", self.sx)); }
+        if !self.sy.is_finite() { return Err(format!("sy must be finite, got {}", self.sy)); }
+        if !self.sz.is_finite() { return Err(format!("sz must be finite, got {}", self.sz)); }
+        Ok(())
+    }
 }
 
 /// Shared param for commands that take a single objectId.

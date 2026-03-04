@@ -217,11 +217,19 @@ const sketch = {
         fb(`Rectangle ${w}×${h} ready — set depth and Extrude`, false);
     },
 
-    /** One-click: draw rectangle on plane → extrude to 3D solid */
+    /** One-click: draw rectangle on plane → extrude to 3D solid (single WASM call) */
     async quickRectExtrude() {
-        await this.quickRect();
-        if (!this.isActive || edges.length < 3) return;
-        await this.extrude();
+        const d = ds();
+        const plane = d?.root?.sketchPlane || 'xy';
+        const w = parseFloat(d?.root?.sketchRectW) || 2;
+        const h = parseFloat(d?.root?.sketchRectH) || 1;
+        const depth = parseFloat(d?.root?.sketchExtH) || 1;
+        const result = await cadCommand('quick_rect_extrude', { width: w, height: h, depth, plane });
+        if (result?.objectId) {
+            reset();
+            reconcile({ objectId: result.objectId });
+            fb(`Extruded! Object: ${result.objectId.slice(0, 8)}`, false);
+        } else { fb(result?.error || 'Quick rect extrude failed', true); }
     },
 };
 

@@ -81,3 +81,39 @@ export class ModelStore {
     return obj ? obj.arrayBuffer() : null;
   }
 }
+
+// ── Domain helpers — keep object-count parsing and manifest construction
+//    out of index.ts (ADR-0036 §5) ────────────────────────────────────────
+
+/** Parse scene JSON and return object count. */
+export function analyzeScene(scene: string): { objectCount: number } {
+  try {
+    const parsed = JSON.parse(scene);
+    const objectCount = Array.isArray(parsed) ? parsed.length : (parsed.objects?.length ?? 0);
+    return { objectCount };
+  } catch {
+    return { objectCount: 0 };
+  }
+}
+
+/** Build a ModelManifest for a save operation, preserving existing metadata. */
+export function buildManifest(
+  id: string,
+  name: string,
+  description: string | undefined,
+  objectCount: number,
+  version: string,
+  existing: ModelManifest | null | undefined,
+  now: string,
+): ModelManifest {
+  return {
+    id,
+    name,
+    description,
+    objectCount,
+    version,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    hasThumbnail: existing?.hasThumbnail || false,
+  };
+}

@@ -256,7 +256,7 @@ async function handleJsCommand(type, params) {
     case 'get_status':
       return {
         mode: window.__cadLocalMode ? 'local' : 'online',
-        automergeReady: !!mgr?.handle,
+        automergeReady: !!mgr?._docBytes,
         automergeEnabled: mgr?.enabled ?? true,
         objectCount: window._ds?.root?.objectCount || 0,
         warmCount: window._ds?.root?.warmCount || 0
@@ -322,6 +322,7 @@ async function handleJsCommand(type, params) {
         indexedDB.deleteDatabase('cad-blobs');
         indexedDB.deleteDatabase('cad-objects');
         indexedDB.deleteDatabase('cad-docs');
+        indexedDB.deleteDatabase('cad-sync');
         location.reload();
         return { success: true };
       }

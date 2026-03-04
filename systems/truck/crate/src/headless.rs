@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use truck_meshalgo::prelude::*;
@@ -19,9 +20,10 @@ use crate::{make_cube, make_cylinder, make_sphere, make_torus};
 use ifc_lite_core as ifc;
 
 // ---------------------------------------------------------------------------
-// Console logging FFI (Workers have console.log)
+// Console logging — WASM uses JS console.log, native uses println
 // ---------------------------------------------------------------------------
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -30,11 +32,22 @@ extern "C" {
     fn error(s: &str);
 }
 
+#[cfg(target_arch = "wasm32")]
 macro_rules! log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
+#[cfg(target_arch = "wasm32")]
 macro_rules! error {
     ($($t:tt)*) => (error(&format_args!($($t)*).to_string()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! log {
+    ($($t:tt)*) => { let _ = format!($($t)*); }
+}
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! error {
+    ($($t:tt)*) => { let _ = format!($($t)*); }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +162,7 @@ fn tessellate_solid(solid: &Solid) -> PolygonMesh {
 // HeadlessController — wasm_bindgen API
 // ---------------------------------------------------------------------------
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct HeadlessController {
     objects: Vec<HeadlessObject>,
     id_to_index: HashMap<String, usize>,
@@ -164,13 +177,16 @@ fn rebuild_id_index(objects: &[HeadlessObject], id_to_index: &mut HashMap<String
     }
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl HeadlessController {
-    #[wasm_bindgen(constructor)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(constructor))]
     pub fn new() -> HeadlessController {
-        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        let _ = console_log::init_with_level(log::Level::Info);
-        log!("WASM headless: HeadlessController::new()");
+        #[cfg(target_arch = "wasm32")]
+        {
+            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+            let _ = console_log::init_with_level(log::Level::Info);
+        }
+        log!("headless: HeadlessController::new()");
         HeadlessController {
             objects: Vec::new(),
             id_to_index: HashMap::new(),
@@ -218,25 +234,37 @@ impl HeadlessController {
 
     pub fn add_cube(&mut self, size: f64) -> String {
         log!("headless: add_cube({})", size);
-        let solid = make_cube(size);
+        let solid = match make_cube(size) {
+            Ok(s) => s,
+            Err(e) => { log!("add_cube error: {}", e); return String::new(); }
+        };
         self.add_solid(solid, "Box", None)
     }
 
     pub fn add_sphere(&mut self, radius: f64) -> String {
         log!("headless: add_sphere({})", radius);
-        let solid = make_sphere(radius);
+        let solid = match make_sphere(radius) {
+            Ok(s) => s,
+            Err(e) => { log!("add_sphere error: {}", e); return String::new(); }
+        };
         self.add_solid(solid, "Sphere", None)
     }
 
     pub fn add_cylinder(&mut self, radius: f64, height: f64) -> String {
         log!("headless: add_cylinder({}, {})", radius, height);
-        let solid = make_cylinder(radius, height);
+        let solid = match make_cylinder(radius, height) {
+            Ok(s) => s,
+            Err(e) => { log!("add_cylinder error: {}", e); return String::new(); }
+        };
         self.add_solid(solid, "Cylinder", None)
     }
 
     pub fn add_torus(&mut self, major_r: f64, minor_r: f64) -> String {
         log!("headless: add_torus({}, {})", major_r, minor_r);
-        let solid = make_torus(major_r, minor_r);
+        let solid = match make_torus(major_r, minor_r) {
+            Ok(s) => s,
+            Err(e) => { log!("add_torus error: {}", e); return String::new(); }
+        };
         self.add_solid(solid, "Torus", None)
     }
 
@@ -322,7 +350,7 @@ impl HeadlessController {
 
         let result = try_union(&solid_a, &solid_b).or_else(|| {
             log!("headless: union failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
             try_union(&solid_a, &perturbed)
         });
 
@@ -360,7 +388,7 @@ impl HeadlessController {
 
         let result = try_sub(&solid_a, &solid_b).or_else(|| {
             log!("headless: subtract failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
             try_sub(&solid_a, &perturbed)
         });
 
@@ -396,7 +424,7 @@ impl HeadlessController {
 
         let result = try_intersect(&solid_a, &solid_b).or_else(|| {
             log!("headless: intersect failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(1e-3, 1e-3, 1e-3));
+            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
             try_intersect(&solid_a, &perturbed)
         });
 
@@ -602,30 +630,60 @@ impl HeadlessController {
         match cmd {
             "add_cube" => {
                 let params: AddCubeParams = serde_json::from_value(p).unwrap_or(AddCubeParams { size: 1.0 });
-                Some(serde_json::json!({ "objectId": self.add_cube(params.size) }))
+                Some(match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_cube(params.size) }),
+                })
             }
             "add_sphere" => {
                 let params: AddSphereParams = serde_json::from_value(p).unwrap_or(AddSphereParams { radius: 1.0 });
-                Some(serde_json::json!({ "objectId": self.add_sphere(params.radius) }))
+                Some(match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_sphere(params.radius) }),
+                })
             }
             "add_cylinder" => {
                 let params: AddCylinderParams = serde_json::from_value(p).unwrap_or(AddCylinderParams { radius: 0.5, height: 1.0 });
-                Some(serde_json::json!({ "objectId": self.add_cylinder(params.radius, params.height) }))
+                Some(match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_cylinder(params.radius, params.height) }),
+                })
             }
             "add_torus" => {
                 let params: AddTorusParams = serde_json::from_value(p).unwrap_or(AddTorusParams { major_radius: 1.0, minor_radius: 0.3 });
-                Some(serde_json::json!({ "objectId": self.add_torus(params.major_radius, params.minor_radius) }))
+                Some(match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => serde_json::json!({ "objectId": self.add_torus(params.major_radius, params.minor_radius) }),
+                })
             }
             "translate" => Some(match serde_json::from_value::<TranslateParams>(p) {
-                Ok(params) => serde_json::json!({ "success": self.translate_object(&params.object_id, params.dx, params.dy, params.dz) }),
+                Ok(params) => {
+                    let ok = self.translate_object(&params.object_id, params.dx, params.dy, params.dz);
+                    if ok { serde_json::json!({ "success": true }) }
+                    else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
+                }
                 Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
             }),
             "rotate" => Some(match serde_json::from_value::<RotateParams>(p) {
-                Ok(params) => serde_json::json!({ "success": self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg) }),
+                Ok(params) => match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => {
+                        let ok = self.rotate_object(&params.object_id, params.axis_x, params.axis_y, params.axis_z, params.angle_deg);
+                        if ok { serde_json::json!({ "success": true }) }
+                        else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
+                    }
+                }
                 Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
             }),
             "scale" => Some(match serde_json::from_value::<ScaleParams>(p) {
-                Ok(params) => serde_json::json!({ "success": self.scale_object(&params.object_id, params.sx, params.sy, params.sz) }),
+                Ok(params) => match params.validate() {
+                    Err(e) => serde_json::json!({ "error": e }),
+                    Ok(()) => {
+                        let ok = self.scale_object(&params.object_id, params.sx, params.sy, params.sz);
+                        if ok { serde_json::json!({ "success": true }) }
+                        else { serde_json::json!({ "error": format!("Object '{}' not found", params.object_id) }) }
+                    }
+                }
                 Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
             }),
             "duplicate" => Some(match serde_json::from_value::<ObjectIdParam>(p) {
@@ -675,7 +733,7 @@ impl HeadlessController {
     }
 
     fn dispatch_sketch(&mut self, cmd: &str, p: serde_json::Value) -> Option<serde_json::Value> {
-        use crate::sketch::{Sketch, SketchPlane, SketchConstraintKind};
+        use crate::sketch::{Sketch, SketchPlane};
 
         match cmd {
             "begin_sketch" => Some(match serde_json::from_value::<BeginSketchParams>(p) {
@@ -770,8 +828,9 @@ impl HeadlessController {
                 Ok(params) => {
                     if params.sketch_json.is_empty() || params.height <= 0.0 {
                         serde_json::json!({ "error": "Missing sketchJson or height" })
+                    } else if !self.sketch_import_inner(&params.sketch_json) {
+                        serde_json::json!({ "error": "Invalid sketch JSON" })
                     } else {
-                        self.sketch_import_inner(&params.sketch_json);
                         let id = self.sketch_extrude_inner(params.height);
                         if id.is_empty() { serde_json::json!({ "error": "Extrude failed" }) }
                         else { serde_json::json!({ "objectId": id }) }

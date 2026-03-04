@@ -149,6 +149,44 @@ impl Sketch {
     pub fn find_edge(&self, id: Uuid) -> Option<&SketchEdge> {
         self.edges.iter().find(|e| e.id == id)
     }
+
+    /// Validate structural integrity: all edge/constraint references must exist.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let point_ids: std::collections::HashSet<Uuid> = self.points.iter().map(|p| p.id).collect();
+        let edge_ids: std::collections::HashSet<Uuid> = self.edges.iter().map(|e| e.id).collect();
+        for edge in &self.edges {
+            if !point_ids.contains(&edge.p0_id) {
+                return Err(format!("Edge {} references unknown point {}", edge.id, edge.p0_id));
+            }
+            if !point_ids.contains(&edge.p1_id) {
+                return Err(format!("Edge {} references unknown point {}", edge.id, edge.p1_id));
+            }
+        }
+        for c in &self.constraints {
+            let check_pt = |id: Uuid| -> std::result::Result<(), String> {
+                if !point_ids.contains(&id) { Err(format!("Constraint {} references unknown point {}", c.id, id)) }
+                else { Ok(()) }
+            };
+            let check_edge = |id: Uuid| -> std::result::Result<(), String> {
+                if !edge_ids.contains(&id) { Err(format!("Constraint {} references unknown edge {}", c.id, id)) }
+                else { Ok(()) }
+            };
+            match &c.kind {
+                SketchConstraintKind::Fixed { point_id, .. } => check_pt(*point_id)?,
+                SketchConstraintKind::Horizontal { edge_id } => check_edge(*edge_id)?,
+                SketchConstraintKind::Vertical { edge_id } => check_edge(*edge_id)?,
+                SketchConstraintKind::Distance { p0_id, p1_id, .. } => { check_pt(*p0_id)?; check_pt(*p1_id)?; }
+                SketchConstraintKind::HorizontalDistance { p0_id, p1_id, .. } => { check_pt(*p0_id)?; check_pt(*p1_id)?; }
+                SketchConstraintKind::VerticalDistance { p0_id, p1_id, .. } => { check_pt(*p0_id)?; check_pt(*p1_id)?; }
+                SketchConstraintKind::Coincident { p0_id, p1_id } => { check_pt(*p0_id)?; check_pt(*p1_id)?; }
+                SketchConstraintKind::Parallel { edge0_id, edge1_id } => { check_edge(*edge0_id)?; check_edge(*edge1_id)?; }
+                SketchConstraintKind::Perpendicular { edge0_id, edge1_id } => { check_edge(*edge0_id)?; check_edge(*edge1_id)?; }
+                SketchConstraintKind::EqualLength { edge0_id, edge1_id } => { check_edge(*edge0_id)?; check_edge(*edge1_id)?; }
+                SketchConstraintKind::Midpoint { edge_id, point_id } => { check_edge(*edge_id)?; check_pt(*point_id)?; }
+            }
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +346,8 @@ impl SolveContext {
 
 /// Solve a sketch's constraints, returning updated point positions.
 pub fn solve_sketch(sketch: &Sketch) -> std::result::Result<SolvedSketch, String> {
+    sketch.validate()?;
+
     if sketch.points.is_empty() {
         return Ok(SolvedSketch { positions: vec![] });
     }
@@ -420,6 +460,35 @@ pub fn sketch_to_solid(sketch: &Sketch, height: f64) -> std::result::Result<truc
 
     let extrude_vec = sketch.plane.normal() * height;
     Ok(builder::tsweep(&face, extrude_vec))
+}
+
+// ---------------------------------------------------------------------------
+// Quick-rect helper
+// ---------------------------------------------------------------------------
+
+/// Build a fully-constrained rectangular Sketch in one step.
+///
+/// Corners: (0,0), (width,0), (width,height), (0,height).
+/// Constraints: fixed origin, horizontal top/bottom, vertical left/right,
+///              width distance (bottom edge), height distance (left edge).
+pub fn quick_rect_sketch(width: f64, height: f64, plane: SketchPlane) -> Sketch {
+    let mut sketch = Sketch::new(plane);
+    let p0 = sketch.add_point(0.0, 0.0);
+    let p1 = sketch.add_point(width, 0.0);
+    let p2 = sketch.add_point(width, height);
+    let p3 = sketch.add_point(0.0, height);
+    let e_bottom = sketch.add_edge(p0, p1);
+    let e_right  = sketch.add_edge(p1, p2);
+    let e_top    = sketch.add_edge(p2, p3);
+    let e_left   = sketch.add_edge(p3, p0);
+    sketch.add_constraint(SketchConstraintKind::Fixed { point_id: p0, x: 0.0, y: 0.0 });
+    sketch.add_constraint(SketchConstraintKind::Horizontal { edge_id: e_bottom });
+    sketch.add_constraint(SketchConstraintKind::Horizontal { edge_id: e_top });
+    sketch.add_constraint(SketchConstraintKind::Vertical   { edge_id: e_right });
+    sketch.add_constraint(SketchConstraintKind::Vertical   { edge_id: e_left });
+    sketch.add_constraint(SketchConstraintKind::Distance { p0_id: p0, p1_id: p1, value: width });
+    sketch.add_constraint(SketchConstraintKind::Distance { p0_id: p0, p1_id: p3, value: height });
+    sketch
 }
 
 // ---------------------------------------------------------------------------

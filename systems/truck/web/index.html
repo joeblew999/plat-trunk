@@ -54,11 +54,7 @@
             }
         })();
     </script>
-    <script type="module" src="/datastar.js"></script>
-    <script type="module">
-        import { root, mergePatch, beginBatch, endBatch } from '/datastar.js';
-        window._ds = { root, mergePatch, beginBatch, endBatch };
-    </script>
+    <script type="module" src="/main.ts"></script>
 </head>
 <body data-signals="{
     modelId: window.__modelId || '',
@@ -477,10 +473,6 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <live-signals collapsed></live-signals>
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
-    <script type="module">
-        import { boot } from './boot.ts';
-        try { await boot(); } catch (e) { if (e.message !== 'redirect') console.error('Boot failed:', e); }
-    </script>
 
 </body>
 </html>

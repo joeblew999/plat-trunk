@@ -6,11 +6,14 @@ import { StreamableHTTPTransport } from '@hono/mcp';
 import cadSchema from '../../cad-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm';
-import { ModelStore } from './model-store';
+import { ModelStore, analyzeScene, buildManifest } from './model-store';
+import { appendOp, getOpsSince, countOps } from './op-log';
+import { syncApplyOp, syncGetReplayOps } from './sync-wasm';
 
 type Bindings = {
   ASSETS: Fetcher;
   MODELS: R2Bucket;
+  OP_LOG_DB: D1Database;
 };
 
 // app and api are created later via chained .openapi() calls for type export
@@ -105,7 +108,14 @@ function zodFromJsonSchema(props: Record<string, any>, required: string[] = []) 
   for (const [name, prop] of Object.entries(props)) {
     let field: z.ZodTypeAny;
     if (prop.type === 'string') field = z.string();
-    else if (prop.type === 'number') field = z.number();
+    else if (prop.type === 'number') {
+      let numField = z.number();
+      if (prop.minimum !== undefined) numField = numField.min(prop.minimum);
+      if (prop.maximum !== undefined) numField = numField.max(prop.maximum);
+      if (prop.exclusiveMinimum !== undefined) numField = numField.gt(prop.exclusiveMinimum);
+      if (prop.exclusiveMaximum !== undefined) numField = numField.lt(prop.exclusiveMaximum);
+      field = numField;
+    }
     else if (prop.type === 'boolean') field = z.boolean();
     else if (prop.type === 'array') field = z.array(z.any());
     else if (prop.type === 'object') field = z.record(z.string(), z.any());
@@ -408,25 +418,10 @@ const modelRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     const id = c.req.valid('param').id;
     const body = c.req.valid('json');
 
-    // Count objects from scene data (scene is a JSON array of objects)
-    let objectCount = 0;
-    try {
-      const parsed = JSON.parse(body.scene);
-      objectCount = Array.isArray(parsed) ? parsed.length : (parsed.objects?.length ?? 0);
-    } catch {}
-
+    const { objectCount } = analyzeScene(body.scene);
     const existing = await store.getManifest(id);
     const now = new Date().toISOString();
-    const manifest = {
-      id,
-      name: body.name,
-      description: body.description,
-      objectCount,
-      version: (cadSchema as ModuleSchema).version || '1.0.0',
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-      hasThumbnail: existing?.hasThumbnail || false,
-    };
+    const manifest = buildManifest(id, body.name, body.description, objectCount, (cadSchema as ModuleSchema).version || '1.0.0', existing, now);
     await store.save(id, manifest, body.scene);
     return c.json(manifest, 200);
   })
@@ -454,6 +449,78 @@ const modelRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=3600' } }) as any;
   });
 
+// =========================================================================
+// Op Log — D1-backed incremental sync (ADR-0036 Step 8)
+// =========================================================================
+
+const OpLogModelParam = z.object({
+  modelId: z.string().openapi({ param: { name: 'modelId', in: 'path' }, example: 'default' }),
+});
+const OpLogSinceQuery = z.object({
+  since: z.string().optional().openapi({ param: { name: 'since', in: 'query' }, example: '0', description: 'Return ops with op_index > since' }),
+});
+const OpLogAppendBody = z.object({
+  op_index: z.number().int(),
+  op_json: z.string(),
+  actor_id: z.string(),
+  ts: z.number().int(),
+}).openapi('OpLogAppendBody');
+const OpLogRow = z.object({
+  model_id: z.string(),
+  op_index: z.number(),
+  op_json: z.string(),
+  actor_id: z.string(),
+  ts: z.number(),
+}).openapi('OpLogRow');
+
+const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Get ops since index', request: { params: OpLogModelParam, query: OpLogSinceQuery }, responses: { 200: { description: 'Op rows', content: { 'application/json': { schema: z.array(OpLogRow) } } } } });
+const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Append op to log', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
+const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No ops', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
+
+const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(getOpsRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const { since } = c.req.valid('query');
+    const sinceIndex = since ? parseInt(since, 10) : 0;
+    const rows = await getOpsSince(c.env.OP_LOG_DB, modelId, sinceIndex);
+    return c.json(rows);
+  })
+  .openapi(appendOpRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const body = c.req.valid('json');
+    await appendOp(c.env.OP_LOG_DB, { model_id: modelId, ...body });
+    return c.json({ status: 'ok' as const });
+  })
+  .openapi(replayRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+
+    // Step 1 — load all ops from D1 in index order, build Automerge doc
+    const rows = await getOpsSince(c.env.OP_LOG_DB, modelId, -1);
+    if (rows.length === 0) return c.json({ error: 'No ops for model' }, 404);
+
+    let docBytes: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(0));
+    for (const row of rows) {
+      docBytes = await syncApplyOp(docBytes, row.op_json);
+    }
+
+    // Step 2 — sync WASM: get ordered, enabled-only ops
+    const replayOpsJson = await syncGetReplayOps(docBytes);
+    const replayOps: Array<{ type: string; params: Record<string, unknown> }> = JSON.parse(replayOpsJson);
+
+    // Step 3 — geometry WASM: replay ops → export scene
+    try {
+      const wasm = await initHeadlessWasm();
+      const ctrl = new wasm.HeadlessController();
+      for (const op of replayOps) {
+        ctrl.execute(op.type, JSON.stringify(op.params));
+      }
+      const sceneJson = JSON.parse(ctrl.execute('export_scene', '{}')).scene as string;
+      return new Response(sceneJson, { headers: { 'content-type': 'application/json' } }) as any;
+    } catch (err: any) {
+      return c.json({ error: `Replay failed: ${err.message}` }, 500);
+    }
+  });
+
 // Health + WASM test (chained for type export)
 const healthRoute = createRoute({ method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } } });
 const testWasmRoute = createRoute({ method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM', responses: { 200: { description: 'Result' } } });
@@ -473,6 +540,7 @@ mountModule(cadRoutes, 'cad', cadSchema as ModuleSchema);
 const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', platformRoutes)
   .route('/', modelRoutes)
+  .route('/', opLogRoutes)
   .route('/', cadRoutes);
 
 // Middleware applied at app level so .use() doesn't break the hc<AppType> chain
@@ -507,7 +575,8 @@ function registerSchemaTools(server: McpServer, schema: ModuleSchema) {
     server.registerTool(`cad_${name}`, { description: def.description, inputSchema: shape }, async (args: Record<string, any>) => {
       const { modelId, ...params } = args;
       const result = await waitForCommand(modelId || lastActiveModelId || 'default', name, params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      const isError = result.status === 'error' || result.status === 'timeout' || !!(result.result as any)?.error;
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError };
     });
   }
 
@@ -518,7 +587,8 @@ function registerSchemaTools(server: McpServer, schema: ModuleSchema) {
       server.registerTool(`cad_${name}`, { description: `[Control Plane] ${def.description}`, inputSchema: shape }, async (args: Record<string, any>) => {
         const { modelId, ...params } = args;
         const result = await waitForCommand(modelId || lastActiveModelId || 'default', name, params);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        const isError = result.status === 'error' || result.status === 'timeout' || !!(result.result as any)?.error;
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError };
       });
     }
   }
@@ -616,16 +686,11 @@ function registerModelTools(server: McpServer, env: Bindings) {
       return { content: [{ type: 'text', text: JSON.stringify({ error: 'Failed to export scene', details: exportResult }) }], isError: true };
     }
     const scene = typeof exportResult.result === 'string' ? exportResult.result : JSON.stringify(exportResult.result);
-    let objectCount = 0;
-    try { const parsed = JSON.parse(scene); objectCount = Array.isArray(parsed) ? parsed.length : (parsed.objects?.length ?? 0); } catch {}
+    const { objectCount } = analyzeScene(scene);
     const id = mid === 'default' ? crypto.randomUUID().slice(0, 8) : mid;
     const now = new Date().toISOString();
     const existing = await store.getManifest(id);
-    const manifest = {
-      id, name: args.name, description: args.description,
-      objectCount, version: (cadSchema as ModuleSchema).version || '1.0.0',
-      createdAt: existing?.createdAt || now, updatedAt: now, hasThumbnail: existing?.hasThumbnail || false,
-    };
+    const manifest = buildManifest(id, args.name, args.description, objectCount, (cadSchema as ModuleSchema).version || '1.0.0', existing, now);
     await store.save(id, manifest, scene);
     return { content: [{ type: 'text', text: JSON.stringify({ ...manifest, url: `/model/${id}` }, null, 2) }] };
   });

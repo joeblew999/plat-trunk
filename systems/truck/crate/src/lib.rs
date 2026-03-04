@@ -60,7 +60,70 @@ pub fn compute_bounding_sphere(solid: &Solid) -> (Point3, f64) {
 // Primitive builders (always compiled — reused by WASM app + tests)
 // ---------------------------------------------------------------------------
 
-pub fn make_cube(size: f64) -> Solid {
+// ── Primitive parameter validation — single source of truth ────────────────
+//
+// These functions are the ONLY place where primitive parameter constraints
+// live. Both the HTTP layer (geometry.rs params structs) and the geometry
+// builders below delegate here, so adding a new constraint means editing
+// exactly one function.
+
+pub fn validate_cube(size: f64) -> std::result::Result<(), String> {
+    if !size.is_finite() || size <= 0.0 {
+        return Err(format!("size must be > 0, got {}", size));
+    }
+    if size > 1000.0 {
+        return Err(format!("size must be ≤ 1000, got {}", size));
+    }
+    Ok(())
+}
+
+pub fn validate_sphere(radius: f64) -> std::result::Result<(), String> {
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err(format!("radius must be > 0, got {}", radius));
+    }
+    if radius > 1000.0 {
+        return Err(format!("radius must be ≤ 1000, got {}", radius));
+    }
+    Ok(())
+}
+
+pub fn validate_cylinder(radius: f64, height: f64) -> std::result::Result<(), String> {
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err(format!("radius must be > 0, got {}", radius));
+    }
+    if radius > 1000.0 {
+        return Err(format!("radius must be ≤ 1000, got {}", radius));
+    }
+    if !height.is_finite() || height <= 0.0 {
+        return Err(format!("height must be > 0, got {}", height));
+    }
+    if height > 1000.0 {
+        return Err(format!("height must be ≤ 1000, got {}", height));
+    }
+    Ok(())
+}
+
+pub fn validate_torus(major_r: f64, minor_r: f64) -> std::result::Result<(), String> {
+    if !major_r.is_finite() || major_r <= 0.0 {
+        return Err(format!("majorRadius must be > 0, got {}", major_r));
+    }
+    if major_r > 1000.0 {
+        return Err(format!("majorRadius must be ≤ 1000, got {}", major_r));
+    }
+    if !minor_r.is_finite() || minor_r <= 0.0 {
+        return Err(format!("minorRadius must be > 0, got {}", minor_r));
+    }
+    if minor_r >= major_r {
+        return Err(format!(
+            "minorRadius ({}) must be < majorRadius ({})",
+            minor_r, major_r
+        ));
+    }
+    Ok(())
+}
+
+pub fn make_cube(size: f64) -> std::result::Result<Solid, String> {
+    validate_cube(size)?;
     // Build via tsweep (vertex → edge → face → solid).
     // This topology is compatible with truck-shapeops boolean operations.
     // (primitive::cuboid produces topology that shapeops cannot process)
@@ -68,10 +131,11 @@ pub fn make_cube(size: f64) -> Solid {
     let v = builder::vertex(Point3::new(-half, -half, -half));
     let e = builder::tsweep(&v, Vector3::new(size, 0.0, 0.0));
     let f = builder::tsweep(&e, Vector3::new(0.0, size, 0.0));
-    builder::tsweep(&f, Vector3::new(0.0, 0.0, size))
+    Ok(builder::tsweep(&f, Vector3::new(0.0, 0.0, size)))
 }
 
-pub fn make_sphere(radius: f64) -> Solid {
+pub fn make_sphere(radius: f64) -> std::result::Result<Solid, String> {
+    validate_sphere(radius)?;
     // Use builder::cone to handle pole singularities correctly (like truck examples).
     // 1. Create a vertex at North Pole (0, 0, radius).
     let v0 = builder::vertex(Point3::new(0.0, 0.0, radius));
@@ -81,27 +145,29 @@ pub fn make_sphere(radius: f64) -> Solid {
     // 3. Revolve this arc around Z axis by 2*PI to form the sphere surface.
     //    The ends of the arc are on the Z axis, so cone() handles the degeneration.
     let shell = builder::cone(&wire, Vector3::unit_z(), Rad(2.0 * PI), 36);
-    Solid::new(vec![shell])
+    Ok(Solid::new(vec![shell]))
 }
 
-pub fn make_cylinder(radius: f64, height: f64) -> Solid {
+pub fn make_cylinder(radius: f64, height: f64) -> std::result::Result<Solid, String> {
+    validate_cylinder(radius, height)?;
     let v0 = builder::vertex(Point3::new(radius, 0.0, 0.0));
     let v1 = builder::vertex(Point3::new(-radius, 0.0, 0.0));
     let arc0 = builder::circle_arc(&v0, &v1, Point3::new(0.0, radius, 0.0));
     let arc1 = builder::circle_arc(&v1, &v0, Point3::new(0.0, -radius, 0.0));
     let wire = Wire::from(vec![arc0, arc1]);
     let face = builder::try_attach_plane(&[wire]).unwrap();
-    builder::tsweep(&face, Vector3::new(0.0, 0.0, height))
+    Ok(builder::tsweep(&face, Vector3::new(0.0, 0.0, height)))
 }
 
-pub fn make_torus(major_r: f64, minor_r: f64) -> Solid {
+pub fn make_torus(major_r: f64, minor_r: f64) -> std::result::Result<Solid, String> {
+    validate_torus(major_r, minor_r)?;
     let v0 = builder::vertex(Point3::new(major_r + minor_r, 0.0, 0.0));
     let v1 = builder::vertex(Point3::new(major_r - minor_r, 0.0, 0.0));
     let arc0 = builder::circle_arc(&v0, &v1, Point3::new(major_r, 0.0, minor_r));
     let arc1 = builder::circle_arc(&v1, &v0, Point3::new(major_r, 0.0, -minor_r));
     let wire = Wire::from(vec![arc0, arc1]);
     let face = builder::try_attach_plane(&[wire]).unwrap();
-    builder::rsweep(&face, Point3::origin(), Vector3::unit_z(), Rad(2.0 * PI), 36)
+    Ok(builder::rsweep(&face, Point3::origin(), Vector3::unit_z(), Rad(2.0 * PI), 36))
 }
 
 // ---------------------------------------------------------------------------
@@ -116,10 +182,17 @@ mod wasm_app;
 pub use wasm_app::SceneController;
 
 // Headless geometry engine (CF Worker): wasm32, no rendering
-#[cfg(all(target_arch = "wasm32", not(feature = "rendering")))]
-mod headless;
+// Also available on native for cargo test via the `native` feature flag.
+#[cfg(any(
+    all(target_arch = "wasm32", not(feature = "rendering")),
+    feature = "native",
+))]
+pub mod headless;
 
-#[cfg(all(target_arch = "wasm32", not(feature = "rendering")))]
+#[cfg(any(
+    all(target_arch = "wasm32", not(feature = "rendering")),
+    feature = "native",
+))]
 pub use headless::HeadlessController;
 
 use wasm_bindgen::prelude::wasm_bindgen;

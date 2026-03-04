@@ -56,6 +56,8 @@ function manifest(): Manifest {
 function upload() {
   const { name, w } = target();
   const { version } = ver();
+  // Size guard — fail fast before attempting upload to avoid billing surprises
+  execSync("bun scripts/check-sizes.ts", { cwd: rootDir, stdio: "inherit" });
   console.log(`Uploading ${name} v${version}...`);
   execSync("bun install", { cwd: resolve(rootDir, w.dir), encoding: "utf8" });
   try {

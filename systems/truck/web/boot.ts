@@ -21,6 +21,7 @@ export async function boot() {
             deleteDb('cad-objects'),
             deleteDb('cad-blobs'),
             deleteDb('cad-docs'),
+            deleteDb('cad-sync'),
         ]);
         if (window.resetTierState) window.resetTierState();
     }
@@ -42,7 +43,7 @@ export async function boot() {
 
     // Core modules (state, history, UI, keyboard, sketch)
     await import('./state');
-    await import('./history');
+    await import('./history-ui');
     await import('./ui');
     await import('./keyboard');
     await import('./sketch');

@@ -62,12 +62,17 @@ base64 = "0.22.1"
 name = "generate-schema"
 path = "src/bin/generate_schema.rs"
 
+[dev-dependencies]
+truck-sync = { path = "../../sync/crate" }
+
 [features]
 default = ["rendering", "mvt"]
 rendering = ["dep:truck-platform", "dep:truck-rendimpl", "dep:wgpu", "dep:winit", "dep:web-sys"]
 webgl = ["wgpu/webgl", "truck-platform/webgl", "truck-rendimpl/webgl"]
 mvt = ["dep:geozero", "dep:earcutr", "dep:bytes", "dep:prost"]
 gltf = ["dep:gltf"]
+# Enables HeadlessController on native targets for `cargo test --features native`
+native = []
 
 [profile.release]
 opt-level = "s"

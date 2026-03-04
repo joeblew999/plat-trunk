@@ -1,6 +1,10 @@
-# Project Context: plat-trunk
+# AGENT.md
+
+Project Context: plat-trunk
 
 You are a smart systems architect and make sure you do things in the right way to ensure a clean system that avoids Technical Debt and makes it easy to extend the system without breaking things. 
+
+
 
 
 **Runtime: bun** — all JS/TS runs through `bun`. Never use `npm`, `npx`, or `node` directly. Use `bun run`, `bun x`, `bun install`.
@@ -73,7 +77,7 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 . (repo root = plat-router worker)
 ├── wrangler.toml          Router config (DOCS_ASSETS, TRUCK/TEST service bindings, custom domain)
 ├── src/router.ts          Routing logic (~70 lines: /docs/*, /test/*, /* passthrough)
-├── workers.mjs            Worker registry (name, dir, port, build command)
+├── workers.mjs            Thin aggregator — imports from each systems/*/system.mjs
 ├── run.mjs                Dev orchestrator (spawns wrangler dev per worker)
 ├── package.json           All commands
 ├── cf-deploy.json         Deploy config: workers map, endpoints, account (SINGLE SOURCE OF TRUTH)
@@ -147,7 +151,8 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 
 **Dev workflow** (MANDATORY — edit → test → verify → deploy → verify):
 ```
-1. bun run dev                      → starts Vite (5173) + wrangler workers
+1. bun run dev                      → builds both WASMs (sync + geometry), applies D1 migrations,
+                                      starts Vite (5173) + wrangler workers, polls /api/health
    - Browser TS changes: HMR at localhost:5173 — NO restart needed
    - Worker TS changes: wrangler auto-reloads — NO restart needed
    - Rust changes: watchexec triggers WASM rebuild automatically
@@ -183,13 +188,41 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 - `cadUI` — UI state helpers
 - `showFeedbackSignal` — Toast feedback display
 
+## ADR-0036: Isomorphic WASM Core + D1 Op-Log (COMPLETE)
+
+**truck-sync crate** (`systems/sync/crate/`) — Automerge-backed op log, no geometry knowledge.
+- Op schema: `{id, type, params, enabled, timestamp, actorId, groupId?}` — matches JS `CadOperation` exactly
+- WASM built twice per target: `--target web` → `web/pkg-sync/` (browser), `--target bundler` → `worker/pkg-sync/` (CF Worker)
+- `bun run dev` builds both targets automatically via `DEV_BUILD` in `systems/sync/system.mjs`
+
+**D1 op-log** (`systems/truck/worker/src/op-log.ts`):
+- Migration: `systems/truck/worker/migrations/0001_op_log.sql` — auto-applied by `bun run dev`
+- `POST /api/models/{id}/ops` — append op (op_json must be full Op schema JSON string)
+- `GET /api/models/{id}/ops?since=N` — get ops with op_index > N (use `since=-1` for all)
+- `GET /api/models/{id}/replay` — headless WASM replay → scene JSON array (same shape as export_scene)
+
+**Browser entry point** (`systems/truck/web/main.ts`):
+- Vite drops inline `<script type="module">` in `<body>` — always use `<script src="...">` in `<head>`
+- `main.ts` = Datastar init + `boot()` — single entry point for Vite
+
+**system.mjs pattern** — each system owns its config in `systems/{name}/system.mjs`:
+- Exports `workers`, `devServers`, `DEV_BUILD`, `RELEASE_BUILD`
+- `workers.mjs` is a thin aggregator — imports from each system.mjs, no system-specific logic
+- Adding a new system = create `systems/{name}/system.mjs` + one import line in `workers.mjs`
+- `bun run check:alignment` verifies all system.mjs files, wrangler.toml names, migrations, and crate coverage
+
+**system.mjs worker config fields:**
+- `migrate`: shell command run before wrangler starts (D1 migrations, schema seeds)
+- `healthUrl`: polled after all workers start — dev script prints `ready ✓` when 200
+
 ## ADRs
 
-See `docs/adr/README.md`. Key: ADR-001 (3-layer arch), ADR-004 (hybrid BIM), ADR-005 (schema-driven), ADR-008 (undo/redo), ADR-010 (MCP+OpenAPI), ADR-013 (Lit+Three+Passive WASM), ADR-017 (versioned deploy).
+See `docs/adr/README.md`. Key: ADR-001 (3-layer arch), ADR-004 (hybrid BIM), ADR-005 (schema-driven), ADR-008 (undo/redo), ADR-010 (MCP+OpenAPI), ADR-013 (Lit+Three+Passive WASM), ADR-017 (versioned deploy), ADR-0035 (Vite+TS browser), ADR-0036 (isomorphic WASM core + D1 op-log).
 
 ## AI Agent Rules
 
-1. **Use bun run scripts** — never bypass with ad-hoc commands or manual config edits
+1. **Code + automation = one atomic change** — every code change must simultaneously update the relevant `systems/{name}/system.mjs` (build/migrate/healthUrl), run.mjs, package.json scripts, and AGENT.md. A migration without a `migrate:` field, or a boot change without updating the dev workflow section, is an incomplete change. Never finish one without the other.
+2. **Use bun run scripts** — never bypass with ad-hoc commands or manual config edits
 2. **Schema first** — change `commands.rs` → `bun run build:truck` → everything downstream updates
 3. **Single dispatch** — all mutations through `cadCommand()`, all state sync through `reconcile()`
 4. **DRY** — `cf-deploy.json` owns deploy config, `cad-schema.json` owns commands. Import the JSON. Never duplicate into env vars, wrangler [vars], or hardcoded strings

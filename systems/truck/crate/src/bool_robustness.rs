@@ -21,12 +21,12 @@ mod tests {
     // ── Helpers ──────────────────────────────────────────────
 
     fn cube_at(size: f64, dx: f64, dy: f64, dz: f64) -> Solid {
-        let c = make_cube(size);
+        let c = make_cube(size).expect("valid cube params");
         builder::translated(&c, Vector3::new(dx, dy, dz))
     }
 
     fn cylinder_at(r: f64, h: f64, dx: f64, dy: f64, dz: f64) -> Solid {
-        let c = make_cylinder(r, h);
+        let c = make_cylinder(r, h).expect("valid cylinder params");
         builder::translated(&c, Vector3::new(dx, dy, dz))
     }
 
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn union_3d_overlap_works() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.5);
         let result = try_op(|| union(&a, &b));
         assert!(result.is_some(), "3D diagonal union should succeed natively");
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn subtract_3d_overlap_works() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.5);
         let result = try_op(|| subtract(&a, &b));
         assert!(result.is_some(), "3D diagonal subtract should succeed natively");
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn intersect_3d_overlap_works() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.5);
         let result = try_op(|| intersect(&a, &b));
         assert!(result.is_some(), "3D diagonal intersect should succeed natively");
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn union_apart_no_panic() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 3.0, 0.0, 0.0);
         // Should not panic — may return Some (disjoint shells) or None
         let _ = try_op(|| union(&a, &b));
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn raw_union_coplanar_full_face_fails() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let result = try_op(|| union(&a, &b));
         // Documents the bug: raw shapeops panics or returns None
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn raw_union_half_overlap_fails() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.0, 0.0);
         let result = try_op(|| union(&a, &b));
         assert!(result.is_none(), "Axis-aligned half-overlap union fails without perturbation");
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn raw_union_corner_overlap_fails() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.0);
         let result = try_op(|| union(&a, &b));
         assert!(result.is_none(), "2D corner overlap union fails without perturbation");
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn fallback_union_coplanar_full_face() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, union);
         assert!(result.is_some(), "Perturbation fallback should recover coplanar full-face union");
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn fallback_union_half_overlap() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, union);
         assert!(result.is_some(), "Perturbation fallback should recover axis-aligned half-overlap union");
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn fallback_union_corner_overlap() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.0);
         let result = bool_with_fallback(&a, &b, union);
         assert!(result.is_some(), "Perturbation fallback should recover 2D corner-overlap union");
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn fallback_subtract_coplanar_full_face() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, subtract);
         assert!(result.is_some(), "Perturbation fallback should recover coplanar full-face subtract");
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn fallback_subtract_half_overlap() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, subtract);
         assert!(result.is_some(), "Perturbation fallback should recover axis-aligned half-overlap subtract");
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn fallback_intersect_coplanar() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, intersect);
         assert!(result.is_some(), "Perturbation fallback should recover coplanar full-face intersect");
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn subtract_cylinder_from_cube() {
-        let a = make_cube(2.0);
+        let a = make_cube(2.0).expect("valid cube params");
         let b = cylinder_at(0.5, 3.0, 0.0, 0.0, -1.5);
         let result = try_op(|| subtract(&a, &b));
         assert!(result.is_some(), "Cylinder subtracted from cube should work (makes a hole)");
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn union_cube_and_cylinder() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cylinder_at(0.3, 2.0, 0.0, 0.0, -1.0);
         let result = try_op(|| union(&a, &b));
         assert!(result.is_some(), "Cube + cylinder union should work");
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn chain_three_cubes_with_fallback() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let c = cube_at(1.0, 2.0, 0.0, 0.0);
 
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn fallback_union_different_sizes() {
-        let a = make_cube(2.0);
+        let a = make_cube(2.0).expect("valid cube params");
         let b = cube_at(1.0, 1.5, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, union);
         assert!(result.is_some(), "Different-size cubes union should work with fallback");
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn fallback_subtract_different_sizes() {
-        let a = make_cube(2.0);
+        let a = make_cube(2.0).expect("valid cube params");
         let b = cube_at(1.0, 1.5, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, subtract);
         assert!(result.is_some(), "Different-size cubes subtract should work with fallback");
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn fallback_union_edge_aligned() {
-        let a = make_cube(1.0);
+        let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 1.0, 0.0);
         let result = bool_with_fallback(&a, &b, union);
         assert!(result.is_some(), "Edge-aligned cubes should work with fallback");
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn cube_tessellation_succeeds() {
-        let cube = make_cube(1.0);
+        let cube = make_cube(1.0).expect("valid cube params");
         // triangulation returns Solid<Point3, PolylineCurve, Option<PolygonMesh>>
         let meshed = cube.triangulation(0.01);
         // Verify boundaries exist (shells with meshed faces)
@@ -256,14 +256,14 @@ mod tests {
 
     #[test]
     fn cylinder_tessellation_succeeds() {
-        let cyl = make_cylinder(0.5, 2.0);
+        let cyl = make_cylinder(0.5, 2.0).expect("valid cylinder params");
         let meshed = cyl.triangulation(0.01);
         assert!(!meshed.boundaries().is_empty(), "Cylinder should tessellate");
     }
 
     #[test]
     fn boolean_result_tessellates() {
-        let a = make_cube(2.0);
+        let a = make_cube(2.0).expect("valid cube params");
         let b = cylinder_at(0.5, 3.0, 0.0, 0.0, -1.5);
         let result = subtract(&a, &b).expect("Cube-cylinder subtract should work");
         let meshed = result.triangulation(0.01);

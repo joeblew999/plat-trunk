@@ -51,6 +51,15 @@ pub struct SketchExtrudeParams {
     pub height: f64,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct QuickRectExtrudeParams {
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    /// Sketch plane: "xy", "xz", or "yz" (default: "xy")
+    pub plane: Option<String>,
+}
+
 // ─── Shared constraint parser (used by wasm_app + headless) ─────
 
 fn parse_uuid(params: &serde_json::Value, field: &str) -> Option<uuid::Uuid> {
@@ -145,5 +154,6 @@ pub fn schema_entries() -> Vec<SchemaEntry> {
         ("sketch_export", "Export active sketch as JSON", empty, "sketchJson", true, true, "sketch"),
         // Final commit (recorded to Automerge)
         ("sketch_extrude", "Extrude a 2D sketch to 3D", schema_for::<SketchExtrudeParams>(), "objectId", false, false, "sketch"),
+        ("quick_rect_extrude", "Create a rectangular sketch and extrude it to 3D in one step", schema_for::<QuickRectExtrudeParams>(), "objectId", false, false, "sketch"),
     ]
 }
