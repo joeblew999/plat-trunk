@@ -12,7 +12,7 @@
     "check:alignment": "node check-alignment.mjs",
     "typecheck": "cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck",
     "test:smoke": "bun scripts/smoke.ts",
-    "test": "node check-alignment.mjs && bun run test:crate && bun run typecheck && bun run test:api",
+    "test": "node scripts/test.mjs",
     "test:crate": "cargo test -p truck-webgpu-gui --no-default-features --features native --test schema_contract && cargo test -p truck-sync && cargo test -p truck-webgpu-gui --no-default-features --features native",
     "test:api": "cd systems/truck/worker && bun x vitest run",
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
