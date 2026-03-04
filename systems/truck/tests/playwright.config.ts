@@ -1,9 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
-// Dev server must be running before tests start.
-// Start it with: task truck:test:serve:start
-// Or run the full pipeline: task truck:test:all
+import path from 'path';
+
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8788';
 const IS_SLOW = !!process.env.SLOW;
+
+// Repo root — two levels up from systems/truck/tests/
+const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 // WebGPU requires specific Chrome flags on macOS
 const WEBGPU_ARGS = [
@@ -24,6 +26,19 @@ const chromeWithWebGPU = {
 };
 
 export default defineConfig({
+  // Auto-start the full dev stack if not already running.
+  // reuseExistingServer: developer has `bun run dev` running → Playwright skips start.
+  // Cold start: builds WASM + starts router + truck-cad + Vite (allow 3 min).
+  webServer: {
+    command: 'bun run dev',
+    cwd: REPO_ROOT,
+    url: 'http://localhost:8789/api/health',  // truck-cad health (known endpoint)
+    reuseExistingServer: true,
+    timeout: 180_000,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  },
+
   testDir: './e2e',
   outputDir: './test-results',
   timeout: 60_000,
