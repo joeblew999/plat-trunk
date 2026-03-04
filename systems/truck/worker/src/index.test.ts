@@ -107,9 +107,9 @@ describe('CAD Schema', () => {
     expect(typeof body.commands.add_cube.readonly).toBe('boolean');
   });
 
-  it('schema command count matches imported cad-schema.json', async () => {
+  it('schema commands deep-equal committed cad-schema.json (catches add/delete/rename)', async () => {
     const { body } = await json('/api/cad/schema');
-    expect(Object.keys(body.commands).length).toBe(Object.keys(cadSchema.commands).length);
+    expect(body.commands).toEqual(cadSchema.commands);
   });
 
   it('ephemeral commands are marked correctly', async () => {

@@ -2,6 +2,11 @@ import { Page, expect } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
 import { SCREENSHOTS_DIR, VIDEOS_DIR, EXAMPLES_DIR } from '../paths';
+import cadSchema from '../../cad-schema.json';
+
+/** Union of all valid CAD command names — derived from the committed schema.
+ *  Rename a command in Rust → bun run build:truck → TypeScript error here. */
+export type CadCommandName = keyof typeof cadSchema['commands'];
 
 export { SCREENSHOTS_DIR, VIDEOS_DIR, EXAMPLES_DIR };
 
@@ -54,7 +59,7 @@ export const waitForWasm = waitForReady;
  */
 export async function apiCommand(
   page: Page,
-  type: string,
+  type: CadCommandName,
   params: Record<string, unknown> = {},
   opts: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
