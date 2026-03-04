@@ -4,26 +4,26 @@
 //!           sketch_add_constraint, sketch_solve, sketch_cancel,
 //!           sketch_export, sketch_extrude
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 use super::{schema_for, SchemaEntry};
 
 // ─── Param structs ──────────────────────────────────────────────
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct BeginSketchParams {
     /// Sketch plane: "xy", "xz", or "yz"
     pub plane: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SketchAddPointParams {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SketchAddEdgeParams {
     /// UUID of the first point
     #[serde(rename = "p0Id")]
@@ -33,7 +33,7 @@ pub struct SketchAddEdgeParams {
     pub p1_id: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SketchAddConstraintParams {
     /// Constraint type: "fixed", "horizontal", "vertical", "distance",
     /// "horizontal_distance", "vertical_distance", "coincident",
@@ -44,14 +44,14 @@ pub struct SketchAddConstraintParams {
     pub params: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SketchExtrudeParams {
     #[serde(rename = "sketchJson")]
     pub sketch_json: String,
     pub height: f64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct QuickRectExtrudeParams {
     pub width: f64,
     pub height: f64,

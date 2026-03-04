@@ -3,7 +3,7 @@
 //! Commands: add_cube, add_sphere, add_cylinder, add_torus,
 //!           translate, rotate, scale, duplicate
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 use super::{default_1, default_0_5, default_0_3, schema_for, SchemaEntry};
@@ -11,7 +11,7 @@ use crate::{validate_cube, validate_sphere, validate_cylinder, validate_torus};
 
 // ─── Param structs ──────────────────────────────────────────────
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct AddCubeParams {
     #[serde(default = "default_1")]
     #[schemars(range(min = 0.001, max = 1000.0))]
@@ -22,7 +22,7 @@ impl AddCubeParams {
     pub fn validate(&self) -> Result<(), String> { validate_cube(self.size) }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct AddSphereParams {
     #[serde(default = "default_1")]
     #[schemars(range(min = 0.001, max = 1000.0))]
@@ -33,7 +33,7 @@ impl AddSphereParams {
     pub fn validate(&self) -> Result<(), String> { validate_sphere(self.radius) }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct AddCylinderParams {
     #[serde(default = "default_0_5")]
     #[schemars(range(min = 0.001, max = 1000.0))]
@@ -47,7 +47,7 @@ impl AddCylinderParams {
     pub fn validate(&self) -> Result<(), String> { validate_cylinder(self.radius, self.height) }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct AddTorusParams {
     #[serde(default = "default_1")]
     #[serde(rename = "majorRadius")]
@@ -63,7 +63,7 @@ impl AddTorusParams {
     pub fn validate(&self) -> Result<(), String> { validate_torus(self.major_radius, self.minor_radius) }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct TranslateParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
@@ -75,7 +75,7 @@ pub struct TranslateParams {
     pub dz: f64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RotateParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
@@ -106,7 +106,7 @@ impl RotateParams {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct ScaleParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
@@ -131,7 +131,7 @@ impl ScaleParams {
 }
 
 /// Shared param for commands that take a single objectId.
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct ObjectIdParam {
     #[serde(rename = "objectId")]
     pub object_id: String,

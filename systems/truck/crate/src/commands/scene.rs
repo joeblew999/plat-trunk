@@ -4,19 +4,19 @@
 //!           export_scene, export_step, export_obj, export_stl,
 //!           import_scene, import_step, import_ifc
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 use super::{schema_for, SchemaEntry};
 
 // ─── Param structs ──────────────────────────────────────────────
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SelectParams {
     pub id: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct PickAtParams {
     #[serde(rename = "ndcX")]
     pub ndc_x: f64,
@@ -24,17 +24,17 @@ pub struct PickAtParams {
     pub ndc_y: f64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct ImportSceneParams {
     pub json: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct ImportStepParams {
     pub data: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct ImportIfcParams {
     pub data: String,
 }

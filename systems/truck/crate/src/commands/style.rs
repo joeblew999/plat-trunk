@@ -3,21 +3,21 @@
 //! Commands: set_style, set_color, get_object_style, rename,
 //!           set_camera, get_state, get_bim_metadata, pick_mesh_stats
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 use super::{default_1, default_45, default_near, default_far, schema_for, SchemaEntry};
 
 // ─── Param structs ──────────────────────────────────────────────
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SetStyleParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
     pub style: serde_json::Value,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SetColorParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
@@ -31,14 +31,14 @@ pub struct SetColorParams {
     pub a: f64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct RenameParams {
     #[serde(rename = "objectId")]
     pub object_id: String,
     pub name: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct SetCameraParams {
     /// 16 floats: column-major 4×4 camera-to-world matrix
     #[serde(rename = "matrixWorld")]

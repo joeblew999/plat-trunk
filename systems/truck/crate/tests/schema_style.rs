@@ -10,14 +10,17 @@
 #![cfg(feature = "native")]
 
 mod common;
-use common::object_id_from;
+use common::{object_id_from, p};
 use truck_webgpu_gui::headless::HeadlessController;
+use truck_webgpu_gui::commands::{AddCubeParams, AddSphereParams, RenameParams};
 
 #[test]
 fn rename_changes_name_visible_in_get_state() {
     let mut ctrl = HeadlessController::new();
-    let id = object_id_from(&ctrl.execute("add_cube", r#"{"size":1.0}"#));
-    let r = ctrl.execute("rename", &format!(r#"{{"objectId":"{}","name":"MyBox"}}"#, id));
+    let id = object_id_from(&ctrl.execute("add_cube", &p(AddCubeParams { size: 1.0 })));
+    let r = ctrl.execute("rename", &p(RenameParams {
+        object_id: id.clone(), name: "MyBox".into(),
+    }));
     assert_eq!(serde_json::from_str::<serde_json::Value>(&r).unwrap()["success"], true);
 
     let state: serde_json::Value = serde_json::from_str(&ctrl.execute("get_state", "{}")).unwrap();
@@ -27,8 +30,8 @@ fn rename_changes_name_visible_in_get_state() {
 #[test]
 fn get_state_reflects_current_object_count_and_ids() {
     let mut ctrl = HeadlessController::new();
-    let id1 = object_id_from(&ctrl.execute("add_cube",   r#"{"size":1.0}"#));
-    let id2 = object_id_from(&ctrl.execute("add_sphere", r#"{"radius":1.0}"#));
+    let id1 = object_id_from(&ctrl.execute("add_cube",   &p(AddCubeParams { size: 1.0 })));
+    let id2 = object_id_from(&ctrl.execute("add_sphere", &p(AddSphereParams { radius: 1.0 })));
     let state: serde_json::Value = serde_json::from_str(&ctrl.execute("get_state", "{}")).unwrap();
     assert_eq!(state["objectCount"], 2);
     assert_eq!(state["headless"], true);

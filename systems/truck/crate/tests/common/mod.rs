@@ -6,6 +6,14 @@
 use truck_webgpu_gui::headless::HeadlessController;
 use truck_sync::Op;
 
+/// Serialize a typed params struct to the JSON string expected by execute().
+/// Binds tests to the actual command param types — the codegen source of truth.
+/// If a field is renamed in the param struct, the serialized key changes → the
+/// dispatch in headless.rs must be updated too → drift is caught at compile time.
+pub fn p<T: serde::Serialize>(params: T) -> String {
+    serde_json::to_string(&params).expect("param serialization failed")
+}
+
 /// Extract objectId from a HeadlessController::execute JSON response.
 pub fn object_id_from(json: &str) -> String {
     let v: serde_json::Value = serde_json::from_str(json).expect("bad JSON");

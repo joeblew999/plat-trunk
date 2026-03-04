@@ -2,14 +2,14 @@
 //!
 //! Commands: boolean_union, boolean_subtract, boolean_intersect, clash_detect
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 use super::{schema_for, SchemaEntry};
 
 // ─── Param structs ──────────────────────────────────────────────
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 pub struct BooleanParams {
     #[serde(rename = "idA")]
     pub id_a: String,
