@@ -32,7 +32,7 @@ export default defineConfig({
   webServer: {
     command: 'bun run dev',
     cwd: REPO_ROOT,
-    url: 'http://localhost:8789/api/health',  // truck-cad health (known endpoint)
+    url: 'http://localhost:8788/api/health',  // via router → confirms full routing chain ready
     reuseExistingServer: true,
     timeout: 180_000,
     stdout: 'pipe',
