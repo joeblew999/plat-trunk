@@ -37,7 +37,7 @@ bucket_name = "cad-documents"
 [[d1_databases]]
 binding = "OP_LOG_DB"
 database_name = "cad-op-log"
-database_id = "local"
+database_id = "616ba28e-c967-4d34-95cd-fa3fe6d141a8"
 migrations_dir = "migrations"
 
 [dev]
