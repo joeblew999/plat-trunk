@@ -1,20 +1,25 @@
 #!/usr/bin/env bun
-// smoke.ts — Quick live-system check. Runs while dev server is up, no restart needed.
+// smoke.ts — Quick live-system check for dev or production.
 //
-// Usage: bun run test:smoke   (requires bun run dev to be running)
+// Usage:
+//   bun run test:smoke          Local dev (requires bun run dev)
+//   bun run test:smoke:prod     Production (cad.ubuntusoftware.net)
 //
 // Checks the full unidirectional data flow is live:
-//   Rust cad-schema.json → Worker routes → API → Browser Vite
+//   Rust cad-schema.json → Worker routes → API → Browser
 
-const WORKER = 'http://localhost:8789';
-const VITE   = 'http://localhost:5173';
-const ROUTER = 'http://localhost:8788';
+const isProd = process.argv.includes('--prod');
+
+const PROD_URL = 'https://cad.ubuntusoftware.net';
+const BASE = isProd ? PROD_URL : 'http://localhost:8788';
+const WORKER = isProd ? PROD_URL : 'http://localhost:8789';
+const VITE = isProd ? null : 'http://localhost:5173';
 
 let pass = 0, fail = 0;
 
 async function check(label: string, url: string, expect: (r: Response, body: string) => boolean) {
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
     const body = await r.text();
     if (expect(r, body)) {
       console.log(`  ✓  ${label}`);
@@ -29,18 +34,19 @@ async function check(label: string, url: string, expect: (r: Response, body: str
   }
 }
 
-console.log('\n── Smoke test ─────────────────────────────────────────────────');
-console.log(`   Worker: ${WORKER}   Vite: ${VITE}   Router: ${ROUTER}`);
+const env = isProd ? 'PRODUCTION' : 'LOCAL DEV';
+console.log(`\n── Smoke test (${env}) ──────────────────────────────────────`);
+console.log(`   Base: ${BASE}`);
 console.log('───────────────────────────────────────────────────────────────\n');
 
-// Worker: health
-await check('Worker health',         `${WORKER}/api/health`,      (r, b) => r.ok && b.includes('"status":"ok"'));
+// Health
+await check('API health',           `${BASE}/api/health`,        (r, b) => r.ok && b.includes('"status":"ok"'));
 
-// Worker: CAD schema (cad-schema.json served live)
-await check('Worker cad-schema',     `${WORKER}/api/cad/schema`,  (r, b) => r.ok && b.includes('"commands"'));
+// CAD schema
+await check('CAD schema',           `${BASE}/api/cad/schema`,    (r, b) => r.ok && b.includes('"commands"'));
 
-// Worker: OpenAPI spec (mirrors gen-openapi.ts) — path count driven by cad-schema.json
-await check('Worker openapi paths',  `${WORKER}/api/openapi.json`, (r, b) => {
+// OpenAPI spec
+await check('OpenAPI paths',        `${BASE}/api/openapi.json`,  (r, b) => {
   if (!r.ok) return false;
   const d = JSON.parse(b);
   const n = Object.keys(d.paths).length;
@@ -49,29 +55,26 @@ await check('Worker openapi paths',  `${WORKER}/api/openapi.json`, (r, b) => {
   return true;
 });
 
-// Worker: MCP endpoint accepts POST
-await check('Worker MCP endpoint',   `${WORKER}/mcp`, (r, _b) => {
-  // MCP returns 4xx for bad requests — just check it's reachable (not 502/503)
-  return r.status < 500;
-});
+// MCP endpoint
+await check('MCP endpoint',         `${BASE}/mcp`, (r, _b) => r.status < 500);
 
-// Vite dev server
-await check('Vite dev server',       `${VITE}/`,                  (r, b) => r.ok && b.includes('<!DOCTYPE html>'));
+// HTML app
+await check('App HTML',             `${BASE}/`,                  (r, b) => r.ok && b.includes('<!DOCTYPE html>'));
 
-// Vite: datastar served from public/
-await check('Vite datastar.js',      `${VITE}/datastar.js`,       (r) => r.ok && r.headers.get('content-type')?.includes('javascript') === true);
+// Docs
+await check('Docs',                 `${BASE}/docs/`,             (r, b) => r.ok && b.includes('<!DOCTYPE html>'));
 
-// Vite: CSS compiled (Tailwind v4 + DaisyUI)
-await check('Vite CSS (Tailwind+DaisyUI)', `${VITE}/style.css`,   (r, b) => r.ok && b.includes('tailwindcss'));
-
-// Router
-await check('Router (plat-router)',  `${ROUTER}/api/health`,      (r, b) => r.ok && b.includes('"status":"ok"'));
+// Vite-only checks (local dev)
+if (VITE) {
+  await check('Vite main.ts',       `${VITE}/main.ts`,           (r) => r.ok && r.headers.get('content-type')?.includes('javascript') === true);
+  await check('Vite CSS',           `${VITE}/style.css`,         (r, b) => r.ok && b.includes('tailwindcss'));
+}
 
 console.log(`\n───────────────────────────────────────────────────────────────`);
 if (fail === 0) {
-  console.log(`  ✓  All ${pass} checks passed — system is live and healthy\n`);
+  console.log(`  ✓  All ${pass} checks passed — ${env.toLowerCase()} is healthy\n`);
   process.exit(0);
 } else {
-  console.error(`  ✗  ${fail} failed, ${pass} passed — run "bun run dev" first\n`);
+  console.error(`  ✗  ${fail} failed, ${pass} passed\n`);
   process.exit(1);
 }
