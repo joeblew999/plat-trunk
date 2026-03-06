@@ -163,6 +163,9 @@ async function deploy() {
   exec('bun run build');
   // Deploy via cf-deploy.ts (handles correct order: sub-workers first, then router)
   exec('bun scripts/cf-deploy.ts deploy-all');
+  // Post-deploy: smoke test production
+  console.log('\n── Post-deploy smoke test ──────────────────────────────────\n');
+  exec('bun run test:smoke:prod');
 }
 
 // ─── Entry ─────────────────────────────────────────────
