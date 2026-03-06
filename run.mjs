@@ -138,7 +138,7 @@ async function dev() {
       const paths = w.watch.paths.map(p => `-w ${p}`).join(' ');
       const exts = w.watch.extensions.map(e => `-e ${e}`).join(' ');
       const debounce = w.watch.debounce ? `--debounce ${w.watch.debounce}ms` : '';
-      const cmd = `watchexec ${paths} ${exts} ${debounce} -- ${w.watch.command}`;
+      const cmd = `watchexec ${paths} ${exts} ${debounce} -- bash -c '${w.watch.command.replace(/'/g, "'\\''")}'`;
       start(w.watch.name, cmd, '.', idx++);
     }
   }

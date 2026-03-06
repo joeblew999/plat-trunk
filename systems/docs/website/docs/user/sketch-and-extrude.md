@@ -1,9 +1,5 @@
 # Sketch and Extrude
 
-<video controls width="100%">
-  <source src="/videos/sketch-and-extrude.webm" type="video/webm">
-</video>
-
 Create 3D solids from 2D constrained sketches. This is the parametric modeling workflow: draw a 2D profile, add geometric constraints, solve, then extrude into a 3D solid.
 
 ## Quick Start: Rectangle Extrude
@@ -16,6 +12,8 @@ The fastest way to create a parametric solid:
 4. Set **extrude height** and click **Extrude**
 
 A new 3D box appears in the scene, created from the constrained 2D sketch.
+
+Or use MCP: `quick_rect_extrude { width: 2, height: 1, depth: 0.5 }` — one tool call.
 
 ## Full Sketch Workflow
 
@@ -85,4 +83,4 @@ Click **Cancel Sketch** or press **Escape** to discard the active sketch without
 
 ## Automerge Collaboration
 
-Sketch extrude operations are stored in the Automerge op log as `sketch_extrude` operations. When a collaborator extrudes a sketch, the full sketch JSON is replayed on your side to produce the same solid. This means sketches are fully collaborative — the constraint solving and extrusion happen independently on each peer.
+Sketch extrude operations are stored in the Automerge op log as `sketch_extrude` operations with the full sketch JSON. When a collaborator extrudes a sketch, the sketch is replayed on your side to produce the same solid.

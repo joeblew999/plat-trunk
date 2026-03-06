@@ -1,52 +1,68 @@
 # Undo/Redo System
 
-Two-layer architecture combining fast local snapshots with Automerge CRDT operation log.
+Automerge CRDT-based undo/redo with operation enable/disable.
 
 ## Architecture
 
-### Layer 1: Snapshot-based Local Undo (fast)
+Undo/redo is implemented via the truck-sync Automerge op log. Each operation has an `enabled` flag — undo disables the last op, redo re-enables it.
 
-- Before each operation, capture a JSON snapshot of the entire scene
-- Undo = restore the previous snapshot (< 5ms)
-- Redo = restore the next snapshot
-- Stack-based: undo stack + redo stack
+### How It Works
 
-### Layer 2: Automerge Operation Log (collaborative)
+1. **Record** — every data-plane command (add_cube, translate, etc.) creates an Op in the Automerge document
+2. **Undo** — sets `enabled = false` on the most recent enabled op
+3. **Redo** — sets `enabled = true` on the most recent disabled op
+4. **Replay** — `get_replay_ops()` returns only enabled ops in order → geometry kernel replays them to reconstruct the scene
 
-- Every operation is also recorded in the Automerge document
-- Enables collaborative undo (each user undoes their own ops)
-- Persistent across sessions via IndexedDB/R2
+This is a **full replay** model — undo doesn't patch state, it replays from scratch with the undone op disabled.
 
 ## Operation Types
 
-| Op | Recorded Data | Undo Behavior |
-|---|---|---|
-| `add` | type, id, params | Remove the added object |
-| `translate` | objectId, dx, dy, dz | Reverse the translation |
-| `boolean` | op, idA, idB, resultId | Restore both input objects |
-| `delete` | objectId, snapshot | Restore deleted object |
-| `clear` | snapshot | Restore entire scene |
+All commands recorded to the Automerge op log:
+
+| Op Type | Recorded Params |
+|---|---|
+| `add_cube` | `{ size }` |
+| `add_sphere` | `{ radius }` |
+| `add_cylinder` | `{ radius, height }` |
+| `add_torus` | `{ majorRadius, minorRadius }` |
+| `translate` | `{ objectId, dx, dy, dz }` |
+| `rotate` | `{ objectId, angleDeg, axisX, axisY, axisZ }` |
+| `scale` | `{ objectId, sx, sy, sz }` |
+| `boolean_union/subtract/intersect` | `{ idA, idB }` |
+| `delete` | `{ objectId }` |
+| `clear` | `{}` |
+| `set_color` | `{ objectId, r, g, b, a }` |
+| `set_style` | `{ objectId, style }` |
+| `rename` | `{ objectId, name }` |
+| `sketch_extrude` | `{ height, sketchJson }` |
 
 ## Grouping
 
-Related operations are grouped into single undo steps:
-- Adding a primitive + auto-offset = one undo step
-- This prevents partial undos (e.g., object added but not positioned)
+Related operations share a `groupId`:
+- Adding a primitive + auto-offset = one group → single undo step
+- `set_group_enabled(doc, groupId, enabled)` toggles the whole group
+
+## Browser Implementation
+
+`CadDocumentManagerBase` in `history-domain.ts`:
+
+- Maintains an undo cursor tracking which ops are undoable
+- `record()` → `apply_op()` on Automerge doc + save to IndexedDB
+- `undo()` → `set_op_enabled(id, false)` + `_replayScene()`
+- `redo()` → `set_op_enabled(id, true)` + `_replayScene()`
+- Cross-tab sync via BroadcastChannel
 
 ## Timeline UI
 
-The timeline strip shows recent operations as clickable chips. Each chip represents one undo step.
+The history strip (`history-ui.ts`) shows recent operations as clickable chips. Disabled (undone) ops appear dimmed.
 
-## UUID Stability
+## Keyboard Shortcuts
 
-All objects have stable UUIDs (v4). UUIDs persist through:
-- Translations
-- Scene export/import
-- Undo/redo cycles
-- Cross-tab sync
+| Key | Action |
+|---|---|
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z | Redo |
 
 ## Performance
 
-- Snapshot capture: < 5ms
-- Snapshot restore: < 5ms
-- Scene replay (10 ops): ~200ms
+Scene replay time depends on op count. For typical scenes (< 50 ops), replay completes in under 100ms.

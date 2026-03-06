@@ -4,65 +4,86 @@
 
 - [x] WebGPU-based 3D viewer with truck B-Rep kernel (WASM)
 - [x] 4 primitives: cube, sphere, cylinder, torus
-- [x] Boolean operations: union, subtract, intersect (cubes/cylinders only)
+- [x] Boolean operations: union, subtract, intersect
 - [x] Translate transform
 - [x] Save/load scenes as JSON (full B-Rep, no tessellation loss)
 - [x] Responsive UI: desktop sidebar, mobile bottom sheet + dock
 - [x] Auto-offset primitives — new objects partially overlap, ready for booleans
-- [x] Docs: auto-generated screenshots + lesson videos (R2-hosted)
 - [x] Deployed to Cloudflare Workers + custom domain
 
 ## v0.2 — Undo/Redo + Gizmo
 
-- [x] **UUID identity** — every object has a stable UUID v4, persisted through transforms and export/import
-- [x] **Undo/redo** — snapshot-based with Ctrl+Z / Ctrl+Shift+Z keyboard shortcuts
-- [x] **Operation grouping** — related operations (add + offset) grouped into single undo steps
-- [x] **Timeline UI** — visual strip showing recent operations as clickable chips
-- [x] **Click-to-select** — ray-cast picking via bounding sphere intersection
-- [x] **Translate gizmo** — 3-axis colored arrows (X=red, Y=green, Z=blue), drag to move
-- [x] **Gizmo cancel** — Escape reverses drag, restores original position
-- [x] **Automerge integration** — CRDT-based op log for collaborative editing
-- [x] **Cross-tab sync** — BroadcastChannel adapter for same-browser collaboration
-- [x] **Document management** — new doc, share URL, example scenes
-- [x] **Keyboard shortcuts** — Ctrl+Z undo, Ctrl+Shift+Z redo, Escape cancel, Delete remove
-- [x] **24 E2E tests** — Playwright tests covering all operations including gizmo
+- [x] UUID identity — every object has a stable UUID v4
+- [x] Undo/redo with Ctrl+Z / Ctrl+Shift+Z
+- [x] Operation grouping — related ops as single undo steps
+- [x] Timeline UI — visual strip with clickable chips
+- [x] Click-to-select — ray-cast picking
+- [x] Translate gizmo — 3-axis colored arrows, drag to move
+- [x] Automerge integration — CRDT-based op log
+- [x] Cross-tab sync — BroadcastChannel
 
-## v0.3 — Parametric Modeling (Current)
+## v0.3 — Parametric Modeling
 
-- [x] **ezpz constraint solver** — integrated KittyCAD/ezpz for 2D sketch constraints (11 constraint types)
-- [x] **Sketch mode** — 2D sketch on XY/XZ/YZ planes with points and edges
-- [x] **Sketch constraints** — fixed, horizontal, vertical, distance, H/V-distance, coincident, parallel, perpendicular, equal length, midpoint
-- [x] **Constraint solver** — Newton-Raphson solver via ezpz, live preview of solved positions
-- [x] **Extrude** — 2D profile → 3D solid via truck `tsweep` (closed loop detection)
-- [x] **Quick rectangle** — one-click constrained rectangle with auto-constraints
-- [x] **Sketch export/import** — JSON serialization for Automerge replay
-- [x] **Automerge sketch ops** — `sketch_extrude` in op log, collaborative replay
-- [x] **31 tests** — 9 Rust unit (sketch), 11 golden resource, 11 Playwright E2E sketch tests
-- [ ] **Rotate gizmo** — circular handles for rotate-around-axis
-- [ ] **Scale gizmo** — square handles for uniform/non-uniform scale
+- [x] ezpz constraint solver — 11 constraint types
+- [x] Sketch mode — 2D sketch on XY/XZ/YZ planes
+- [x] Extrude — 2D profile → 3D solid via truck `tsweep`
+- [x] Quick rectangle — one-click constrained rectangle
+- [x] Sketch export/import — JSON for Automerge replay
 
-## Medium Term
+## v0.4–v0.5 — MCP + API
 
-- [ ] **Boolean ops for all shapes** — fix sphere/torus booleans in truck-shapeops
-- [ ] **STEP import/export** — leverage truck-stepio for industry-standard CAD interchange
-- [ ] **kkrpc integration** — bidirectional RPC for server-side modeling operations
-- [ ] **Mesh raycasting** — upgrade from bounding sphere to triangle-level picking
-- [ ] **Snap-to-grid** — constrain drag/sketch to grid increments
-- [ ] **Multi-select** — Shift+click to select multiple objects
-- [ ] **RDK (robotics) integration** — CAD modeling with robot kinematics/planning
+- [x] MCP endpoint (JSON-RPC 2.0) — 42 WASM commands + 10 control plane tools
+- [x] MCP bridge (`scripts/mcp-bridge.ts`) — stdio ↔ HTTP proxy with retry + hot-reload
+- [x] Schema-driven design — Rust `#[derive(JsonSchema)]` → cad-schema.json → OpenAPI → TypeScript types
+- [x] openapi-fetch + openapi-typescript — end-to-end typed API client
+- [x] STEP/OBJ/STL export
+- [x] STEP/IFC import with BIM metadata
+- [x] Rotate and scale transforms
+- [x] Duplicate and rename
 
-## Long Term
+## v0.6 — Platform Architecture
 
-- [ ] **Assembly mode** — multi-part assemblies with mates/joints
-- [ ] **Server-side rendering** — headless WebGPU for thumbnails and CI screenshots (Tier 3)
-- [ ] **Revolve** — 2D profile → 3D solid via truck `rsweep`
-- [ ] **Plugin system** — extend with custom operations via WASM modules
-- [x] **Hugo docs site** — full documentation site on Cloudflare Pages
-- [ ] **Mobile-first touch gestures** — multi-touch transform gizmos
+- [x] N-worker topology — plat-router dispatches to sub-workers via service bindings
+- [x] truck-sync Rust crate — plugin-agnostic CRDT op log (10 WASM exports, 10 tests)
+- [x] R2 model persistence — save/load/list/delete with thumbnails
+- [x] Gallery UI — model browser with thumbnails and create/delete
+- [x] VitePress documentation site
+- [x] Cloudflare deploy pipeline (`cf-deploy.ts`)
 
-## Known Issues
+## v0.7 — Browser Refactor (Current)
 
-- **Sphere/Torus booleans fail** — truck-shapeops NURBS surface intersection crashes. Cubes/cylinders work.
-- **Object size changes after translate** — bounding-box normalization rescales rendered objects. B-Rep geometry is correct.
-- **Large translations go off screen** — camera doesn't follow objects. Keep values small.
-- **Bounding sphere picking** — imprecise for elongated/flat objects. Mesh raycasting planned.
+- [x] TypeScript migration — all `.js` → `.ts` with strict types
+- [x] Schema-driven dispatch — `dispatch.ts` routes commands via schema classification
+- [x] `WasmResult` / `CadOptions` typed interfaces — no more `any` at WASM boundary
+- [x] Browser code split: `dispatch.ts`, `reconcile.ts`, `schema.ts`, `types.ts`
+- [x] Boolean ops stabilized — `Solid::try_new`, exact-then-perturbed fallback, AABB containment
+- [x] `quick_rect_extrude` — one-step parametric box creation
+- [x] Model persistence MCP tools — save, load, list, delete
+- [x] Documentation MCP tools — docs_index, docs_search, docs_read
+- [x] 30+ API tests, typecheck zero errors
+
+## Next — Multi-Actor Sync (ADR-0001)
+
+- [ ] Server-side headless WASM for MCP (no browser required for data-plane commands)
+- [ ] R2 Automerge doc persistence (replace D1 op-log)
+- [ ] Browser ↔ server Automerge sync
+- [ ] Presence (who's editing what)
+- [ ] Replay from Automerge doc
+
+## Future
+
+- [ ] Rotation gizmo — circular handles
+- [ ] Scale gizmo — square handles
+- [ ] Arc/circle sketch entities
+- [ ] Revolve — `rsweep` for rotational sweeps
+- [ ] Face-based sketch planes
+- [ ] Feature tree UI
+- [ ] Snap-to-grid
+- [ ] Multi-select
+- [ ] Assembly mode — multi-part with mates/joints
+
+## Known Limitations
+
+- ~20% of Android devices (primarily Samsung) lack WebGPU support
+- No sketch overlay visualization on canvas
+- Sketch planes limited to XY, XZ, YZ (no face-based planes yet)

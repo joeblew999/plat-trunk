@@ -17,9 +17,9 @@ Three modes in `InteractionMode` enum:
 
 ## Picking
 
-- **Bounding sphere** per object, computed from solid AABB
+- **AABB** (axis-aligned bounding box) per object, computed from pick mesh vertices — tighter than bounding spheres
 - `Camera::ray(ndc)` casts ray from screen coordinates
-- Ray-sphere intersection finds closest hit
+- Ray-AABB intersection finds closest hit
 - Gizmo arrow picking via ray-to-segment distance
 
 ## Gizmo Geometry
@@ -37,23 +37,21 @@ Three modes in `InteractionMode` enum:
 
 ## JS ↔ WASM API
 
-Public methods called from JS:
+Public methods called from JS via `dispatch.ts`:
 - `select_object_at(ndc_x, ndc_y) → JsValue` — pick and select
 - `begin_gizmo_drag(ndc_x, ndc_y) → JsValue` — start drag if clicking gizmo arrow
 - `update_gizmo_drag(ndc_x, ndc_y, prev_ndc_x, prev_ndc_y)` — live preview
 - `end_gizmo_drag() → JsValue` — finish drag, return { objectId, dx, dy, dz }
 - `cancel_gizmo_drag() → bool` — reverse translation
-- `set_on_select(f)` / `set_on_drag_complete(f)` — JS callbacks
 
 ## Automerge Integration
 
-On drag complete, JS commits a single `translate` operation to the Automerge op log.
+On drag complete, JS commits a single `translate` operation to the Automerge op log via `cadCommand('translate', ...)`.
 No ops created during drag (live preview only). Undo reverses the committed op.
 
 ## Future
 
 - **Rotation gizmo** — circular handles for rotate-around-axis
 - **Scale gizmo** — square handles for uniform/non-uniform scale
-- **Mesh raycasting** — upgrade from bounding sphere to triangle-level picking
 - **Snap-to-grid** — constrain drag to grid increments
 - **Multi-select** — Shift+click to select multiple objects

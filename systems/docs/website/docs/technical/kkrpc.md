@@ -1,46 +1,46 @@
-# kkrpc — WASM Boundary Layer <Badge type="warning" text="Planned" />
+# kkrpc — RPC Library Reference
 
-Typed bidirectional RPC for JS/TS ↔ WASM communication.
+Typed bidirectional RPC library. Used as a reference for the platform's RPC patterns.
 
-::: info Status
-Not yet implemented. The current WASM boundary uses direct wasm-bindgen calls. kkrpc is planned as the typed RPC layer for future multi-transport support.
-:::
+## Current Status
 
-## Role
+The truck-cad WASM boundary uses **direct wasm-bindgen calls** (synchronous `moduleRouter.execute()`), not kkrpc. This is simpler and sufficient for the current single-thread browser execution model.
 
-kkrpc is the typed boundary layer between JavaScript and WASM modules. Same API, transport swapped per target:
+kkrpc remains a reference for future multi-transport scenarios (SharedWorker, WebSocket, stdio).
 
-| Target | Transport |
+## Where kkrpc Patterns Apply
+
+The project uses kkrpc-style patterns in the MCP bridge:
+
+| Component | Pattern |
 |---|---|
-| Browser | SharedWorker (one WASM shared across tabs) |
-| Native webviews | Web Worker |
-| CF Workers | Direct call (same isolate) |
-| Bare metal | stdio (Node/Bun/Deno) |
+| `scripts/mcp-bridge.ts` | stdio ↔ HTTP proxy (JSON-RPC 2.0) |
+| Worker `/mcp` endpoint | JSON-RPC request/response |
+| SSE command relay | Async request → event → response |
 
-## WASM Compilation Strategy
+## WASM Boundary (Actual)
 
-Two builds, not three:
+The current WASM boundary is thin and synchronous:
 
-| Build | Target | Used By |
-|---|---|---|
-| `wasm32-unknown-unknown` | Browser + CF Workers | wasm-bindgen |
-| `wasm32-wasip1` | Bare metal | WASI runtime |
+```typescript
+// moduleRouter.execute() — direct wasm-bindgen call
+const result = moduleRouter.execute('add_cube', { size: 1 });
+// Returns WasmResult immediately (no RPC overhead)
+```
 
-## Key Principles
-
-- **Thin boundary**: Coarse operations, not fine-grained calls
-- **Typed arrays**: For bulk data transfer (mesh vertices, etc.)
-- **Lazy init**: WASM modules initialized on first use
-- **Zero-copy**: Where possible, share memory instead of copying
+Three dispatch paths (schema-driven via `dispatch.ts`):
+1. **JS Control Plane** — undo, redo, save — pure TypeScript
+2. **WASM Control Plane** — select, get_state — sync wasm-bindgen call
+3. **WASM Data Plane** — add_cube, translate — sync call + Automerge record
 
 ## CF Workers Limits
 
-Design to these constraints:
-- 3 MB compressed WASM
+Design constraints that apply to all WASM modules:
+- 3 MB compressed WASM per worker
 - 128 MB memory
-- 1s startup time
+- Separate workers for heavy WASM (truck-cad geometry is browser-only)
 
 ## References
 
 - https://docs.kkrpc.kunkun.sh
-- LLM reference: `docs/llms/kkrpc-llms-full.txt` (221KB)
+- LLM reference: `docs/llms/kkrpc-llms-full.txt`

@@ -2,14 +2,15 @@
 
 GPU rendering architecture for the CAD platform.
 
-## Tier 1: Browser-Native WebGPU
+## Browser-Native WebGPU
 
-The primary rendering path. truck B-Rep kernel + wgpu compiled to WASM, renders locally via WebGPU.
+The primary (and only) rendering path. truck B-Rep kernel + wgpu compiled to WASM, renders locally via WebGPU.
 
-- Zero server cost
+- Zero server cost — all geometry runs client-side
 - Full B-Rep precision
 - Real-time interaction (gizmo, camera orbit)
 - Requires Chrome 113+ or equivalent WebGPU support
+- ~20% of Android devices (primarily Samsung) lack WebGPU support
 
 ### Stack
 
@@ -23,15 +24,10 @@ The primary rendering path. truck B-Rep kernel + wgpu compiled to WASM, renders 
 ### Build
 
 ```sh
-task truck:wasm:build-browser-renderer
-# Outputs to web/gui/pkg-browser-renderer/
+bun run build:truck
+# Builds: systems/sync/crate → systems/truck/crate → cad-schema.json
+# Outputs WASM to: systems/truck/web/pkg-browser-renderer/
 ```
-
-## Tier 3: Server-Rendered Video (Future)
-
-For devices without WebGPU support. Same Rust binary running natively on a GPU server, streaming H.264 video via WebRTC (LiveKit).
-
-See `docs/adr/webgpu_server.md` for the full Tier 3 specification.
 
 ## Canvas Setup
 
@@ -48,3 +44,10 @@ Each solid is rendered as:
 - **PolygonInstance** — filled PBR surface (tessellated from B-Rep)
 - **WireFrameInstance** — edge wireframe overlay
 - **Gizmo arrows** — colored WireFrameInstance lines for selected object
+
+## Pick Mesh
+
+A secondary CPU-side mesh is maintained for ray-cast picking:
+- AABB (axis-aligned bounding box) per object — tighter than bounding spheres
+- Used for click-to-select and gizmo arrow picking
+- Separate from GPU render mesh

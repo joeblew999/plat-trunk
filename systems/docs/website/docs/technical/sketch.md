@@ -5,10 +5,10 @@ Technical documentation for the parametric modeling system: 2D constrained sketc
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌───────────────┐     ┌──────────┐
-│ sketch-ui.js│────▶│ SceneController│────▶│ sketch.rs     │────▶│ truck    │
-│  (JS UI)    │     │  (WASM API)  │     │  (solve+loop) │     │ (B-Rep)  │
-└─────────────┘     └──────────────┘     └───────────────┘     └──────────┘
+┌──────────────┐     ┌──────────────┐     ┌───────────────┐     ┌──────────┐
+│ sketch.ts    │────▶│ moduleRouter │────▶│ sketch.rs     │────▶│ truck    │
+│  (browser UI)│     │  (WASM API)  │     │  (solve+loop) │     │ (B-Rep)  │
+└──────────────┘     └──────────────┘     └───────────────┘     └──────────┘
        │                                        │
        │                                        ▼
        │                                 ┌──────────────┐
@@ -20,7 +20,7 @@ Technical documentation for the parametric modeling system: 2D constrained sketc
 
 ## Rust Layer
 
-### Types (`crates/truck-webgpu-gui/src/sketch.rs`)
+### Types (`systems/truck/crate/src/sketch.rs`)
 
 | Type | Purpose |
 |---|---|
@@ -57,11 +57,9 @@ Key detail: `Fixed { point_id, x, y }` expands to **two** ezpz constraints — `
 5. **Face** — `builder::try_attach_plane(&[wire])` creates a planar face
 6. **Extrude** — `builder::tsweep(&face, normal * height)` sweeps along plane normal
 
-This is the same pattern as `make_cube()` in lib.rs — vertex → line → wire → face → tsweep.
+## WASM API (`systems/truck/crate/src/wasm_app.rs`)
 
-## WASM API (`crates/truck-webgpu-gui/src/wasm_app.rs`)
-
-12 methods on `SceneController`:
+Methods on the WASM controller:
 
 | Method | Returns | Description |
 |---|---|---|
@@ -73,30 +71,23 @@ This is the same pattern as `make_cube()` in lib.rs — vertex → line → wire
 | `sketch_extrude(height)` | object UUID | Extrude → solid, add to scene |
 | `sketch_cancel()` | — | Discard active sketch |
 | `sketch_export()` | JSON string | Serialize sketch for Automerge |
-| `sketch_import(json)` | bool | Restore sketch from JSON |
-| `has_active_sketch()` | bool | Check if sketch is active |
+| `quick_rect_extrude(w, h, depth, plane)` | object UUID | One-step rectangle extrusion |
 
-The active sketch is stored in `SharedState.active_sketch: Option<Sketch>`. Extrude consumes it (takes ownership via `.take()`). On extrude failure, the sketch is put back so the user can fix it.
+## Browser Layer
 
-## JavaScript Layer
+### `systems/truck/web/sketch.ts`
 
-### `web/gui/sketch-ui.js`
-
-IIFE that manages sketch state client-side:
-
-- Tracks `sketchPoints`, `sketchEdges`, `sketchConstraints` arrays
-- Populates point/edge dropdowns for constraint UI
+Manages sketch UI state:
+- Tracks points, edges, constraints arrays
+- Populates dropdowns for constraint UI
 - Shows/hides constraint fields based on selected type
 - Quick rectangle helper: 4 points + 4 edges + 7 constraints in one click
-- Exposes `window.sketchUI = { isActive, cancel() }` for keyboard shortcuts
+- Keyboard shortcut: **S** to switch to Sketch tab
 
-### `web/gui/cad-document.js`
+### Automerge Integration (`history-domain.ts`)
 
-Automerge integration:
-
-- `sketch_extrude` operation type stores `{ sketchJson, height }` in op log
-- On replay: `ctrl.sketch_import(sketchJson)` then `ctrl.sketch_extrude(height)`
-- Enables collaborative sketch → extrude across peers
+- `sketch_extrude` operation stores `{ sketchJson, height }` in op log
+- On replay: imports sketch JSON then extrudes — collaborative across peers
 
 ## Constraint Types
 
@@ -116,34 +107,23 @@ Automerge integration:
 
 ## Tests
 
-### Rust Unit Tests (9)
+### Rust Unit Tests
 
-In `crates/truck-webgpu-gui/src/sketch.rs`:
+In `systems/truck/crate/src/sketch.rs`:
+- Empty/unconstrained sketch, fixed point, rectangle, triangle
+- Serialization round-trip, extrude rectangle/triangle, plane mapping
 
-- `test_empty_sketch` — empty sketch solves to empty result
-- `test_unconstrained_sketch` — points keep initial positions
-- `test_fixed_point` — fixed constraint pins a point
-- `test_solve_rectangle` — 4 points + constraints → correct solved positions
-- `test_solve_triangle_with_distances` — triangle with distance constraints
-- `test_sketch_serialization_roundtrip` — JSON round-trip preserves sketch
-- `test_extrude_rectangle` — rectangle → box with 6 faces
-- `test_extrude_triangle` — triangle → prism with 5 faces
-- `test_sketch_plane_to_3d` — XY/XZ/YZ coordinate mapping
+### Playwright E2E Tests
 
-### Playwright E2E Tests (11)
-
-In `tests/e2e/sketch.spec.ts`:
-
-- WASM API tests: begin_sketch, add_point, add_edge, add_constraint, solve, extrude (rectangle + triangle)
+In `systems/truck/tests/e2e/`:
+- WASM API: begin_sketch, add_point, add_edge, add_constraint, solve, extrude
 - Round-trip: export/import preserves sketch
-- Edge cases: < 3 edges fails gracefully, has_active_sketch tracks state
-- Cancel: sketch_cancel clears active sketch
+- Edge cases: < 3 edges fails, has_active_sketch tracks state
 - Multi-plane: XZ plane extrude produces solid
 
 ### Running Tests
 
 ```sh
-task truck:test:crate    # Rust unit tests (sketch + golden)
-task truck:test:sketch   # Playwright E2E sketch tests (needs gui:serve)
-task truck:ci            # Full CI: check + test + WASM build
+bun run test:crate    # Rust unit tests
+bun run test:e2e      # Playwright E2E tests (needs dev server)
 ```

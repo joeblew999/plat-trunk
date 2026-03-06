@@ -6,17 +6,18 @@
 # Usage:
 #   bun run truck:update             # full update + build + test
 #   bun run truck:update:quick       # git operations only, skip build/test
+#   bun run truck:update:monster     # full update from monstertruck base
 #   bun run truck:status             # review all forks, branches, links (read-only)
 #
-# What this does:
-#   Tracks virtualritz/truck as our upstream base (instead of the unmaintained
-#   ricosjp/truck). Creates a "composite" branch for our fork with the latest
-#   virtualritz work. Re-run whenever virtualritz pushes updates.
+# Three repos we track:
+#   1. ricosjp/truck        — original upstream (reference only, unmaintained)
+#   2. virtualritz/monstertruck — next-gen fork (active development, all the good stuff)
+#   3. joeblew999/truck     — our fork (composite branch built by this script)
 #
-# Why virtualritz?
-#   Upstream ricosjp/truck is unmaintained (only automated cargo-upgrade commits).
-#   virtualritz is 58+ commits ahead with fillet, T-splines, parallel mesh.
-#   That's where all the real development is happening.
+# Current state:
+#   Our code (systems/truck/crate/) uses truck-* crate names from ricosjp/truck.
+#   monstertruck renames everything to monstertruck-* — switching requires a
+#   code migration (automated by this script's --base=monstertruck mode).
 #
 # Boolean coplanar fix:
 #   truck-shapeops has a fundamental bug with axis-aligned/coplanar faces
@@ -40,44 +41,63 @@
 #
 # OUR FORK — joeblew999/truck (push target for composite branch)
 #   Repo:    https://github.com/joeblew999/truck
-#   Status:  Tracks virtualritz/master. Composite branch built by this script.
+#   Status:  Composite branch built by this script.
 #
 # ============================================================================
-# FEATURE FORK: virtualritz (Moritz Mœller) — OUR BASE
+# virtualritz/monstertruck — THE ACTIVE FORK (by Moritz Moeller)
 # ============================================================================
-#   Repo:    https://github.com/virtualritz/truck
-#   Contact: virtualritz@protonmail.com
+#   Repo:    https://github.com/virtualritz/monstertruck
+#   Author:  Moritz Moeller (virtualritz@protonmail.com)
 #   LinkedIn: https://linkedin.com/in/moritzmoeller
-#   Ahead:   ~58 commits (diverged from upstream, actively developed)
+#   Status:  Ground-up restructure of truck. All active development happens here.
+#            virtualritz/truck is dead — superseded by monstertruck.
 #
 #   What it brings:
 #     - Fillet engine: multi-chain, chamfer, per-edge radius, variable-radius
 #       → Addresses upstream issue #53: https://github.com/ricosjp/truck/issues/53
-#     - T-spline support (Phase 7): performance, BSpline conversion, adaptive refinement
+#     - T-spline support: performance, BSpline conversion, adaptive refinement
 #       → Addresses upstream issue #13: https://github.com/ricosjp/truck/issues/13
 #     - Parallel tessellation: StructuredMesh::from_surface_par
-#     - Tessellation performance: AABB early reject, untrimmed face fast path,
-#       configurable projection search trials
+#     - Tessellation performance: AABB early reject, untrimmed face fast path
 #     - Non-clamped B-spline parameter_range() fix
-#       → PR #105: https://github.com/ricosjp/truck/pull/105 (+16K/-2K lines)
-#     - Various: renamed Config→Options, removed builder methods, clippy lints
+#     - New boolean ops: difference() and symmetric_difference()
+#     - Modular crate split: 16+ crates (core, derive, traits, geometry,
+#       topology, modeling, solid, assembly, mesh, meshing, gpu, render, step, wasm)
+#     - Idiomatic Rust naming (CAD industry terminology)
+#     - Improved build times via smaller crates
 #
-#   Branches:
-#     master                       — main development (our base)
-#     parking-lot-and-rclite-arc   — performance experiment (parking_lot mutex)
+#   BREAKING: All crate names change (truck-* -> monstertruck-*)
+#     truck-modeling   -> monstertruck-modeling
+#     truck-shapeops   -> monstertruck-solid (+ difference, symmetric_difference)
+#     truck-meshalgo   -> monstertruck-meshing
+#     truck-rendimpl   -> monstertruck-render
+#     truck-platform   -> monstertruck-gpu
+#     truck-base       -> monstertruck-core
+#     truck-stepio     -> monstertruck-step
+#     truck-polymesh   -> monstertruck-mesh
+#     truck-topology   -> monstertruck-topology
+#     truck-assembly   -> monstertruck-assembly
+#     (new)            -> monstertruck-traits, monstertruck-derive
 #
-#   Key files changed (vs upstream):
-#     truck-meshalgo/   — parallel mesh, AABB, tessellation config
-#     truck-modeling/   — fillet engine, T-spline API
-#     truck-geometry/   — B-spline parameter_range fix
-#     Cargo.toml        — workspace refactoring
+#   API changes (types SAME, functions renamed):
+#     builder::tsweep()     -> builder::extrude()     (~5 call sites in our code)
+#     builder::rsweep()     -> builder::revolve()      (~2 call sites in our code)
+#     Curve::BSplineCurve   -> Curve::BsplineCurve     (lowercase 's', 1 pattern match)
+#     Core types unchanged: Solid, Wire, Face, Edge, Vertex, Point3, Vector3
+#
+#   Migration impact:
+#     Mechanical but pervasive - find-and-replace crate names + 3 API renames.
+#     Our systems/truck/crate/ has 9 truck-* deps in Cargo.toml.
+#     This script auto-patches our code when --base=monstertruck is used.
 #
 # ============================================================================
 # OTHER FORKS & PRs (not currently used, available for future cherry-picks)
 # ============================================================================
 #
 #   ovo-Tim — coplanar boolean fixes (partial — only fixes partial-face overlap)
-#     Repo:    https://github.com/ovo-Tim/truck
+#     Repo:    https://github.com/ovo-Tim/truck (7 branches)
+#     Also:    FoxCAD (Rust+WASM browser CAD): https://github.com/ovo-Tim/FoxCAD
+#     Also:    truck-skill (Claude Code): https://github.com/ovo-Tim/truck-skill
 #     PR #110 (coplanar fix):  https://github.com/ricosjp/truck/pull/110
 #     PR #111 (STEP fix):      https://github.com/ricosjp/truck/pull/111
 #     NOTE: These only fix partial-face coplanar cases. Full-face coplanar,
@@ -115,18 +135,22 @@ CRATE_DIR="$PROJECT_ROOT/systems/truck/crate"
 
 COMPOSITE_BRANCH="composite"
 
-# Git remote URLs
+# Git remote URLs — three repos only (virtualritz/truck is dead)
 REMOTE_ORIGIN="https://github.com/joeblew999/truck.git"
 REMOTE_UPSTREAM="https://github.com/ricosjp/truck.git"
-REMOTE_VIRTUALRITZ="https://github.com/virtualritz/truck.git"
+REMOTE_MONSTERTRUCK="https://github.com/virtualritz/monstertruck.git"
 
 # Parse flags
 NO_BUILD=false
 STATUS_ONLY=false
+BASE="upstream"  # default base: ricosjp/truck (our current crate code matches this)
 for arg in "$@"; do
   case "$arg" in
-    --no-build) NO_BUILD=true ;;
-    --status)   STATUS_ONLY=true ;;
+    --no-build)        NO_BUILD=true ;;
+    --status)          STATUS_ONLY=true ;;
+    --base=monster*)   BASE="monstertruck" ;;
+    --base=upstream|--base=truck) BASE="upstream" ;;
+    --base=*)          echo "Unknown base: $arg (use --base=upstream or --base=monstertruck)"; exit 1 ;;
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
@@ -144,6 +168,94 @@ info()  { echo -e "${CYAN}[truck-update]${NC} $*"; }
 ok()    { echo -e "${GREEN}[truck-update]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[truck-update]${NC} WARN: $*"; }
 fail()  { echo -e "${RED}[truck-update]${NC} FAIL: $*"; exit 1; }
+
+# --- Code patching functions (truck-* <-> monstertruck-*) --------------------
+
+patch_truck_to_monster() {
+  local dir="$CRATE_DIR/src"
+
+  # Only patch if truck names are present
+  if ! grep -q 'truck-modeling' "$CRATE_DIR/Cargo.toml" 2>/dev/null; then
+    ok "Already using monstertruck-* crate names"
+    return
+  fi
+
+  # Cargo.toml — crate names and paths
+  sed -i '' \
+    -e 's|truck-modeling|monstertruck-modeling|g' \
+    -e 's|truck-shapeops|monstertruck-solid|g' \
+    -e 's|truck-meshalgo|monstertruck-meshing|g' \
+    -e 's|truck-rendimpl|monstertruck-render|g' \
+    -e 's|truck-platform|monstertruck-gpu|g' \
+    -e 's|truck-base|monstertruck-core|g' \
+    -e 's|truck-stepio|monstertruck-step|g' \
+    -e 's|truck-polymesh|monstertruck-mesh|g' \
+    -e 's|truck-topology|monstertruck-topology|g' \
+    -e 's|truck-assembly|monstertruck-assembly|g' \
+    "$CRATE_DIR/Cargo.toml"
+
+  # Rust source — use statements (underscore names) + API renames
+  find "$dir" -name '*.rs' -exec sed -i '' \
+    -e 's|truck_modeling|monstertruck_modeling|g' \
+    -e 's|truck_shapeops|monstertruck_solid|g' \
+    -e 's|truck_meshalgo|monstertruck_meshing|g' \
+    -e 's|truck_rendimpl|monstertruck_render|g' \
+    -e 's|truck_platform|monstertruck_gpu|g' \
+    -e 's|truck_base|monstertruck_core|g' \
+    -e 's|truck_stepio|monstertruck_step|g' \
+    -e 's|truck_polymesh|monstertruck_mesh|g' \
+    -e 's|truck_topology|monstertruck_topology|g' \
+    -e 's|truck_assembly|monstertruck_assembly|g' \
+    -e 's|builder::tsweep|builder::extrude|g' \
+    -e 's|builder::rsweep|builder::revolve|g' \
+    -e 's|BSplineCurve|BsplineCurve|g' \
+    {} +
+
+  ok "Patched to monstertruck-* crate names"
+}
+
+patch_monster_to_truck() {
+  local dir="$CRATE_DIR/src"
+
+  # Only patch if monstertruck names are present
+  if ! grep -q 'monstertruck' "$CRATE_DIR/Cargo.toml" 2>/dev/null; then
+    ok "Already using truck-* crate names"
+    return
+  fi
+
+  # Cargo.toml — reverse
+  sed -i '' \
+    -e 's|monstertruck-modeling|truck-modeling|g' \
+    -e 's|monstertruck-solid|truck-shapeops|g' \
+    -e 's|monstertruck-meshing|truck-meshalgo|g' \
+    -e 's|monstertruck-render|truck-rendimpl|g' \
+    -e 's|monstertruck-gpu|truck-platform|g' \
+    -e 's|monstertruck-core|truck-base|g' \
+    -e 's|monstertruck-step|truck-stepio|g' \
+    -e 's|monstertruck-mesh|truck-polymesh|g' \
+    -e 's|monstertruck-topology|truck-topology|g' \
+    -e 's|monstertruck-assembly|truck-assembly|g' \
+    "$CRATE_DIR/Cargo.toml"
+
+  # Rust source — reverse
+  find "$dir" -name '*.rs' -exec sed -i '' \
+    -e 's|monstertruck_modeling|truck_modeling|g' \
+    -e 's|monstertruck_solid|truck_shapeops|g' \
+    -e 's|monstertruck_meshing|truck_meshalgo|g' \
+    -e 's|monstertruck_render|truck_rendimpl|g' \
+    -e 's|monstertruck_gpu|truck_platform|g' \
+    -e 's|monstertruck_core|truck_base|g' \
+    -e 's|monstertruck_step|truck_stepio|g' \
+    -e 's|monstertruck_mesh|truck_polymesh|g' \
+    -e 's|monstertruck_topology|truck_topology|g' \
+    -e 's|monstertruck_assembly|truck_assembly|g' \
+    -e 's|builder::extrude|builder::tsweep|g' \
+    -e 's|builder::revolve|builder::rsweep|g' \
+    -e 's|BsplineCurve|BSplineCurve|g' \
+    {} +
+
+  ok "Patched back to truck-* crate names"
+}
 
 # --- Pre-checks --------------------------------------------------------------
 
@@ -171,6 +283,15 @@ if [ "$STATUS_ONLY" = true ]; then
   CURRENT=$(git branch --show-current 2>/dev/null || echo "detached")
   CURRENT_HEAD=$(git log -1 --format='%h %s' 2>/dev/null)
   info "Current branch: ${BOLD}$CURRENT${NC} → $CURRENT_HEAD"
+
+  # Detect active base
+  if [ "$CURRENT" = "composite-monstertruck" ]; then
+    info "Active base: ${BOLD}${YELLOW}monstertruck${NC}"
+  elif [ "$CURRENT" = "composite" ]; then
+    info "Active base: ${BOLD}${GREEN}ricosjp/truck (upstream)${NC}"
+  else
+    info "Active base: ${YELLOW}unknown (branch=$CURRENT)${NC}"
+  fi
   echo ""
 
   # All remotes
@@ -180,28 +301,53 @@ if [ "$STATUS_ONLY" = true ]; then
   done
   echo ""
 
-  # Fork comparison
-  info "${BOLD}Fork comparison (vs upstream/master):${NC}"
-  for remote in virtualritz origin; do
-    if git rev-parse "$remote/master" >/dev/null 2>&1; then
-      ahead=$(git rev-list "upstream/master..$remote/master" --count 2>/dev/null || echo "?")
-      behind=$(git rev-list "$remote/master..upstream/master" --count 2>/dev/null || echo "?")
-      head=$(git log "$remote/master" -1 --format='%h %as' 2>/dev/null || echo "?")
-      printf "  %-14s +%-4s -%s  (%s)\n" "$remote" "$ahead" "$behind" "$head"
+  # Upstream status
+  info "${BOLD}Upstream (ricosjp/truck):${NC}"
+  if git rev-parse "upstream/master" >/dev/null 2>&1; then
+    UP_HEAD=$(git log "upstream/master" -1 --format='%h %as %s' 2>/dev/null || echo "?")
+    info "  upstream/master → $UP_HEAD"
+  fi
+
+  # Our fork status
+  if git rev-parse "origin/master" >/dev/null 2>&1; then
+    ORIGIN_HEAD=$(git log "origin/master" -1 --format='%h %as %s' 2>/dev/null || echo "?")
+    info "  origin/master   → $ORIGIN_HEAD"
+    if git rev-parse "upstream/master" >/dev/null 2>&1; then
+      ahead=$(git rev-list "upstream/master..origin/master" --count 2>/dev/null || echo "?")
+      behind=$(git rev-list "origin/master..upstream/master" --count 2>/dev/null || echo "?")
+      info "  origin vs upstream: +$ahead -$behind"
+    fi
+  fi
+  echo ""
+
+  # Monstertruck status
+  info "${BOLD}Monstertruck (active development):${NC}"
+  MT_FOUND=false
+  for mt_branch in monstertruck/main monstertruck/master; do
+    if git rev-parse "$mt_branch" >/dev/null 2>&1; then
+      MT_HEAD=$(git log "$mt_branch" -1 --format='%h %as %s' 2>/dev/null || echo "?")
+      info "  $mt_branch → $MT_HEAD"
+      MT_CRATES=$(git ls-tree --name-only "$mt_branch" 2>/dev/null | grep "^monstertruck-" | wc -l | tr -d ' ')
+      info "  Crates: ${MT_CRATES} monstertruck-* modules"
+      MT_FOUND=true
+      break
     fi
   done
+  if [ "$MT_FOUND" = false ]; then
+    warn "  monstertruck remote not fetched or no main/master branch"
+  fi
   echo ""
 
   # Key links
   info "${BOLD}Key links:${NC}"
-  echo "  Upstream:      https://github.com/ricosjp/truck"
-  echo "  Our fork:      https://github.com/joeblew999/truck"
-  echo "  virtualritz:   https://github.com/virtualritz/truck"
+  echo "  Upstream:       https://github.com/ricosjp/truck"
+  echo "  Our fork:       https://github.com/joeblew999/truck"
+  echo "  monstertruck:   https://github.com/virtualritz/monstertruck"
   echo ""
-  echo "  PR #105 (B-spline fix):  https://github.com/ricosjp/truck/pull/105"
   echo "  Issue #57 (coplanar):    https://github.com/ricosjp/truck/issues/57"
   echo "  Issue #53 (fillet):      https://github.com/ricosjp/truck/issues/53"
   echo "  Issue #13 (T-splines):   https://github.com/ricosjp/truck/issues/13"
+  echo "  Issue #85 (difference):  https://github.com/ricosjp/truck/issues/85"
   echo ""
   echo "  All open PRs:  https://github.com/ricosjp/truck/pulls"
   echo "  All issues:    https://github.com/ricosjp/truck/issues"
@@ -223,45 +369,129 @@ ensure_remote() {
   fi
 }
 
-ensure_remote "origin"      "$REMOTE_ORIGIN"
-ensure_remote "upstream"    "$REMOTE_UPSTREAM"
-ensure_remote "virtualritz" "$REMOTE_VIRTUALRITZ"
+ensure_remote "origin"        "$REMOTE_ORIGIN"
+ensure_remote "upstream"      "$REMOTE_UPSTREAM"
+ensure_remote "monstertruck"  "$REMOTE_MONSTERTRUCK"
+
+# Clean up dead virtualritz/truck remote if it exists
+if git remote get-url "virtualritz" >/dev/null 2>&1; then
+  info "Removing dead virtualritz/truck remote..."
+  git remote remove "virtualritz"
+fi
 
 # --- Step 2: Fetch all remotes -----------------------------------------------
 
-info "Fetching all remotes (upstream, virtualritz, origin)..."
+info "Fetching all remotes (upstream, monstertruck, origin)..."
 git fetch --all --prune --quiet
 
 # Show what we're working with
 UPSTREAM_HEAD=$(git log upstream/master -1 --format='%h %s' 2>/dev/null || echo "?")
-VIRTUALRITZ_HEAD=$(git log virtualritz/master -1 --format='%h %s' 2>/dev/null || echo "?")
 
 echo ""
 info "${BOLD}Source branches:${NC}"
-info "  upstream/master    → $UPSTREAM_HEAD"
-info "  virtualritz/master → $VIRTUALRITZ_HEAD"
+info "  upstream/master → $UPSTREAM_HEAD"
+
+for mt_branch in monstertruck/main monstertruck/master; do
+  if git rev-parse "$mt_branch" >/dev/null 2>&1; then
+    MT_HEAD=$(git log "$mt_branch" -1 --format='%h %s' 2>/dev/null || echo "?")
+    info "  $mt_branch  → $MT_HEAD"
+    break
+  fi
+done
 echo ""
 
-# --- Step 3: Build composite from virtualritz base ---------------------------
+# --- Step 3: Build composite from selected base ------------------------------
 
-info "Creating ${BOLD}$COMPOSITE_BRANCH${NC} branch from virtualritz/master..."
+# Stash any local patches (e.g. boolean fixes in truck-shapeops)
+STASH_MSG="truck-update-auto-stash"
+if ! git diff --quiet 2>/dev/null; then
+  info "Stashing local patches in .src/truck/..."
+  git stash push -m "$STASH_MSG" --quiet
+  STASHED=true
+else
+  STASHED=false
+  # Check for orphaned auto-stash from a previous monstertruck flip
+  if git stash list | grep -q "truck-update-auto-stash" 2>/dev/null; then
+    HAS_PRIOR_STASH=true
+  else
+    HAS_PRIOR_STASH=false
+  fi
+fi
 
-# Discard any local changes (this is an automated rebuild, not manual work)
-git checkout -q master 2>/dev/null || true
-git branch -D "$COMPOSITE_BRANCH" 2>/dev/null || true
-git checkout -B "$COMPOSITE_BRANCH" virtualritz/master --quiet
+if [ "$BASE" = "monstertruck" ]; then
+  # Determine monstertruck branch (main or master)
+  MT_BRANCH=""
+  for candidate in monstertruck/main monstertruck/master; do
+    if git rev-parse "$candidate" >/dev/null 2>&1; then
+      MT_BRANCH="$candidate"
+      break
+    fi
+  done
+  if [ -z "$MT_BRANCH" ]; then
+    fail "monstertruck remote has no main or master branch"
+  fi
 
-VIRTUALRITZ_COUNT=$(git rev-list upstream/master..virtualritz/master --count 2>/dev/null || echo "?")
-ok "Composite: virtualritz/master ($VIRTUALRITZ_COUNT commits ahead of upstream)"
+  COMPOSITE_BRANCH="composite-monstertruck"
+  info "Creating ${BOLD}$COMPOSITE_BRANCH${NC} branch from $MT_BRANCH..."
+
+  git checkout -q master 2>/dev/null || true
+  git branch -D "$COMPOSITE_BRANCH" 2>/dev/null || true
+  git checkout -B "$COMPOSITE_BRANCH" "$MT_BRANCH" --quiet
+
+  ok "Composite: $MT_BRANCH (monstertruck)"
+
+  # For monstertruck base, local truck patches don't apply (different code).
+  # Keep them stashed — they'll be restored when switching back to truck base.
+  if [ "$STASHED" = true ]; then
+    warn "Local patches stashed (truck-specific, not applicable to monstertruck)"
+    warn "They will be restored automatically when you switch back: bun run truck:update:quick"
+  fi
+
+  # Auto-patch our crate code for monstertruck crate names
+  info "Patching systems/truck/crate/ for monstertruck imports..."
+  patch_truck_to_monster
+
+else
+  info "Creating ${BOLD}$COMPOSITE_BRANCH${NC} branch from origin/master..."
+
+  git checkout -q master 2>/dev/null || true
+  git branch -D "$COMPOSITE_BRANCH" 2>/dev/null || true
+  git checkout -B "$COMPOSITE_BRANCH" origin/master --quiet
+
+  ok "Composite: origin/master (joeblew999/truck)"
+
+  # Restore stashed local patches (boolean fixes etc.)
+  SHOULD_POP=false
+  if [ "$STASHED" = true ]; then
+    SHOULD_POP=true
+  elif [ "${HAS_PRIOR_STASH:-false}" = true ]; then
+    SHOULD_POP=true
+    info "Found prior auto-stash from monstertruck flip"
+  fi
+  if [ "$SHOULD_POP" = true ]; then
+    info "Restoring local patches..."
+    if git stash pop --quiet 2>/dev/null; then
+      ok "Local patches restored"
+    else
+      warn "Stash pop had conflicts — resolve manually with: cd .src/truck && git stash show && git stash pop"
+    fi
+  fi
+
+  # Auto-patch our crate code back to truck crate names (in case we were on monstertruck)
+  info "Ensuring systems/truck/crate/ uses truck imports..."
+  patch_monster_to_truck
+fi
 
 # --- Step 4: Summary ---------------------------------------------------------
 
 echo ""
-TOTAL_AHEAD=$(git rev-list upstream/master..HEAD --count 2>/dev/null || echo "?")
 info "${BOLD}=== Composite Branch Built ===${NC}"
 info "Branch: $COMPOSITE_BRANCH"
-info "Total: $TOTAL_AHEAD commits ahead of upstream/master"
-info "Base: virtualritz/master (fillet, T-splines, parallel mesh)"
+if [ "$BASE" = "monstertruck" ]; then
+  info "Base: monstertruck (crate names auto-patched to monstertruck-*)"
+else
+  info "Base: joeblew999/truck (truck-* crate names)"
+fi
 info "Boolean fix: wasm_app.rs try_bool_with_fallback() (not in truck source)"
 echo ""
 
@@ -277,7 +507,7 @@ info "Building and testing the composite..."
 echo ""
 
 # 5a. Cargo check — fast type-check
-info "[1/5] cargo check (type-check against composite truck)..."
+info "[1/5] cargo check (type-check against composite)..."
 cd "$CRATE_DIR"
 if cargo check 2>&1; then
   ok "[1/5] cargo check passed"
@@ -285,13 +515,23 @@ else
   fail "[1/5] cargo check failed — composite has type errors"
 fi
 
-# 5b. Truck's own tests — must run from .src/truck/ workspace (not our crate)
-info "[2/5] cargo test (truck-shapeops, truck-modeling, truck-meshalgo)..."
-cd "$TRUCK_DIR"
-if cargo test -p truck-shapeops -p truck-modeling -p truck-meshalgo 2>&1; then
-  ok "[2/5] cargo test passed"
+# 5b. Kernel's own tests
+if [ "$BASE" = "monstertruck" ]; then
+  info "[2/5] cargo test (monstertruck-solid, monstertruck-modeling, monstertruck-meshing)..."
+  cd "$TRUCK_DIR"
+  if cargo test -p monstertruck-solid -p monstertruck-modeling -p monstertruck-meshing 2>&1; then
+    ok "[2/5] cargo test passed"
+  else
+    warn "[2/5] Some tests failed (may be pre-existing)"
+  fi
 else
-  warn "[2/5] Some truck tests failed (may be pre-existing)"
+  info "[2/5] cargo test (truck-shapeops, truck-modeling, truck-meshalgo)..."
+  cd "$TRUCK_DIR"
+  if cargo test -p truck-shapeops -p truck-modeling -p truck-meshalgo 2>&1; then
+    ok "[2/5] cargo test passed"
+  else
+    warn "[2/5] Some truck tests failed (may be pre-existing)"
+  fi
 fi
 cd "$CRATE_DIR"
 
@@ -327,3 +567,4 @@ ok "${BOLD}=== All checks passed ===${NC}"
 ok "Composite branch is ready. To push to origin:"
 echo "  cd .src/truck && git push origin $COMPOSITE_BRANCH --force-with-lease"
 echo ""
+

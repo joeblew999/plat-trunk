@@ -6,12 +6,6 @@ A parametric 3D modeler running entirely in your browser using WebGPU.
 
 When the app loads you see a default cube in a 3D viewport. The cube is automatically selected (highlighted with a gizmo).
 
-![Initial scene with default cube](/screenshots/01-initial-scene.png)
-
-<video controls width="100%">
-  <source src="/videos/getting-started.webm" type="video/webm">
-</video>
-
 ## Camera Controls
 
 | Input | Action |
@@ -42,11 +36,15 @@ When the app loads you see a default cube in a 3D viewport. The cube is automati
 | Delete | Delete selected object |
 | S | Switch to Sketch tab |
 
-## UI Overview
+## UI Layout
 
-![Full UI with multiple objects](/screenshots/09-ui-overview.png)
+- **Left panel** — Control Plane: mode/status, scene outliner, file operations, gallery, AI/MCP
+- **Right panel** — Data Plane: transforms, style/materials, BIM metadata, sketch
+- **Center** — 3D viewport with WebGPU rendering
+- **Bottom** — Timeline strip showing undo/redo history
 
 ## Requirements
 
 - Chrome 113+ or any browser with WebGPU support
 - Desktop or tablet (mobile works with touch controls)
+- ~20% of Android devices (primarily Samsung) lack WebGPU — no fallback available yet

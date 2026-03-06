@@ -36,7 +36,7 @@ function tomlName(content) {
 }
 
 function outDirs(str) {
-  return [...str.matchAll(/--out-dir\s+(\S+)/g)].map(m => m[1]);
+  return [...str.matchAll(/--out-dir\s+(\S+)/g)].map(m => m[1].replace(/[()]/g, ''));
 }
 
 const systemsDir = resolve(ROOT, 'systems');

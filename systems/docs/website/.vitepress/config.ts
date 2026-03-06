@@ -18,9 +18,8 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
       { text: 'Styling', link: '/user/styling' },
       { text: 'Sketch & Extrude', link: '/user/sketch-and-extrude' },
       { text: 'Boolean Operations', link: '/user/boolean-operations' },
-      { text: 'Export & Import', link: '/user/export-import' },
       { text: 'Scene Management', link: '/user/scene-management' },
-      { text: 'Save & Load', link: '/user/save-load' },
+      { text: 'Files & Storage', link: '/user/files-and-storage' },
       { text: 'AI / MCP Guide', link: '/user/mcp-guide' },
       { text: 'Known Issues', link: '/user/known-issues' },
     ],
@@ -30,6 +29,7 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
     collapsed: true,
     items: [
       { text: 'Architecture', link: '/technical/architecture' },
+      { text: 'Developer Guide', link: '/technical/developer-guide' },
       { text: 'Truck (CAD Kernel)', link: '/technical/truck' },
       { text: 'WebGPU', link: '/technical/webgpu' },
       { text: 'Sketch System', link: '/technical/sketch' },
@@ -38,8 +38,11 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
       { text: 'Automerge (CRDT)', link: '/technical/automerge' },
       { text: 'kkrpc', link: '/technical/kkrpc' },
       { text: 'MCP Integration', link: '/technical/mcp' },
-      { text: 'Direct vs Parametric', link: '/technical/direct-vs-parametric' },
     ],
+  },
+  {
+    text: 'Comparison',
+    link: '/comparison',
   },
   {
     text: 'Roadmap',
