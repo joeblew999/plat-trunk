@@ -510,6 +510,37 @@ mod tests {
         assert!(!result[3].enabled);
     }
 
+    /// Cross-tab sync: Tab B starts from the shared IDB base, merges Tab A's full state.
+    ///
+    /// Browser reality: when Tab A calls create_doc(), those bytes are written to IDB.
+    /// Tab B reads the same bytes from IDB (NOT a fresh create_doc()) so both peers
+    /// share the same Automerge ObjId for the "operations" list. Merge then works correctly.
+    ///
+    /// Two separate create_doc() calls produce different ObjIds → Automerge LWW silently
+    /// discards one peer's ops on merge. This test models the real IDB-sharing scenario.
+    #[test]
+    fn cross_tab_sync_from_shared_base_doc() {
+        // Tab A creates the model (writes these bytes to IDB)
+        let shared_base = core::create_doc();
+
+        // Tab A records add_sphere — this is what IDB+BroadcastChannel will deliver to Tab B
+        let tab_a = core::apply_op(&shared_base, &op("add_sphere", json!({"radius": 1.0}))).unwrap();
+        let tab_a_replay = core::get_replay_ops(&tab_a).unwrap();
+        assert_eq!(tab_a_replay.len(), 1, "Tab A should have 1 op");
+
+        // Tab B opens: reads the shared base bytes from IDB (clone = same ObjId)
+        let tab_b = shared_base.clone();
+        assert_eq!(core::get_replay_ops(&tab_b).unwrap().len(), 0, "Tab B base has 0 ops");
+
+        // BroadcastChannel delivers Tab A's bytes → Tab B merges (same ObjId → no op loss)
+        let tab_b_merged = core::merge_docs(&tab_b, &tab_a).unwrap();
+
+        let tab_b_replay = core::get_replay_ops(&tab_b_merged).unwrap();
+        assert_eq!(tab_b_replay.len(), 1, "Tab B must see Tab A's sphere after merge");
+        assert_eq!(tab_b_replay[0].op_type, "add_sphere");
+        assert_eq!(tab_b_replay[0].params["radius"], 1.0);
+    }
+
     /// validate_op rejects malformed JSON.
     #[test]
     fn validate_op_rejects_malformed_json() {

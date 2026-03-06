@@ -4,8 +4,11 @@ import initSyncWasm, {
 } from './pkg-sync/truck_sync.js';
 import { saveDoc, loadDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
-import { cadCommand, reconcile, moduleRouter } from './state';
+import { cadCommand } from './dispatch';
+import { reconcile } from './reconcile';
+import { moduleRouter } from './core/module-router';
 import { resetTierState, registerWarmObjects } from './tier-manager';
+import type { CadOptions, SceneEntry } from './types';
 
 // CadDocumentManager — truck-sync WASM-backed operation log for collaborative CAD.
 // Replaces @automerge/automerge-repo + IndexedDBStorageAdapter + BroadcastChannelNetworkAdapter.
@@ -24,6 +27,16 @@ function ensureWasm(): Promise<void> {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/** Formal contract for BroadcastChannel messages between tabs.
+ *  TypeScript enforces this shape — missing modelId is now a compile error.
+ *  Maps to truck-sync Op bytes: apply_op returns bytes, merge_docs takes bytes. */
+export interface SyncMessage {
+    type: 'doc_update';
+    modelId: string;      // Scope: only merge when this matches local model
+    bytes: number[];      // Uint8Array serialised as Array (structured clone compatible)
+    actorId: string;      // Filter: skip own messages
+}
 
 export interface CadOperation {
     id: string;
@@ -55,9 +68,6 @@ export class CadDocumentManagerBase {
         this.enabled = !window.__cadSyncDisabled;
     }
 
-    /** Backwards compat: truthy when doc is loaded (callers check `?.handle`). */
-    get handle() { return this._docBytes ? this : null; }
-
     _getOrCreateActorId(): string {
         let id = localStorage.getItem('cad-actor-id');
         if (!id) {
@@ -74,28 +84,37 @@ export class CadDocumentManagerBase {
         await ensureWasm();
     }
 
-    /** Try to load a doc from IDB. Returns true if scene was successfully replayed. */
+    /** Try to load a doc from IDB. Returns true if scene was successfully replayed.
+     *  Dispatches cad:idb-restore-done or cad:idb-restore-failed for observability. */
     async tryRestoreFromIdb(modelId: string): Promise<boolean> {
+        console.log(`[Sync] IDB restore: modelId=${modelId}`);
         try {
             const bytes = await loadDoc(modelId);
-            if (!bytes) return false;
+            if (!bytes) {
+                window.dispatchEvent(new CustomEvent('cad:idb-restore-failed', { detail: { modelId, reason: 'no-bytes' } }));
+                return false;
+            }
             this._docBytes = bytes;
             this._modelId = modelId;
             this._meta = await loadMeta(modelId);
             await this._replayScene();
-            const ids = moduleRouter.query('objectIds');
+            const ids = moduleRouter.query('objectIds') as string[] | null;
             const ops = this._getOps();
             const hasContent = ops.length > 0 || this._meta.snapshots.length > 0;
+            console.log(`[Sync] IDB restore: ops=${ops.length} ids=${ids?.length ?? 0} hasContent=${hasContent}`);
             if (hasContent && (!ids || ids.length === 0)) {
                 console.warn('[loadModel] Sync cache invalid (blobs missing?) — falling through to cloud');
                 this._docBytes = null;
+                window.dispatchEvent(new CustomEvent('cad:idb-restore-failed', { detail: { modelId, reason: 'empty-scene' } }));
                 return false;
             }
             console.log(`[loadModel] Restored from WASM sync cache (${ops.length} ops)`);
+            window.dispatchEvent(new CustomEvent('cad:idb-restore-done', { detail: { modelId, ops: ops.length } }));
             return true;
         } catch (e) {
             console.warn('[loadModel] Sync restore failed:', e);
             this._docBytes = null;
+            window.dispatchEvent(new CustomEvent('cad:idb-restore-failed', { detail: { modelId, reason: String(e) } }));
             return false;
         }
     }
@@ -283,11 +302,13 @@ export class CadDocumentManagerBase {
         await saveMeta(this._modelId, this._meta);
         if (this._bc) {
             try {
-                this._bc.postMessage({
+                const msg: SyncMessage = {
                     type: 'doc_update',
+                    modelId: this._modelId,
                     bytes: Array.from(this._docBytes),
                     actorId: this.actorId,
-                });
+                };
+                this._bc.postMessage(msg);
             } catch { /* BroadcastChannel may be closed */ }
         }
     }
@@ -296,10 +317,13 @@ export class CadDocumentManagerBase {
         this._bc = new BroadcastChannel('cad-sync');
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         this._bc.onmessage = (event) => {
-            const { type, bytes, actorId } = event.data || {};
+            const msg = event.data as Partial<SyncMessage>;
+            const { type, bytes, actorId, modelId } = msg;
             if (type !== 'doc_update' || actorId === this.actorId) return;
+            if (modelId !== this._modelId) return;  // ignore other models
             if (!this._docBytes) return;
             try {
+                if (!bytes) return;
                 this._docBytes = merge_docs(this._docBytes, new Uint8Array(bytes));
                 saveDoc(this._modelId!, this._docBytes).catch(() => {});
             } catch (e) {
@@ -346,7 +370,7 @@ export class CadDocumentManagerBase {
             }
 
             const PROGRESSIVE_THRESHOLD = 50;
-            let entries: any[] | null = null;
+            let entries: SceneEntry[] | null = null;
             if (snapshotJson) {
                 try { entries = JSON.parse(snapshotJson); } catch { entries = null; }
             }
@@ -363,7 +387,7 @@ export class CadDocumentManagerBase {
                 await this._replayRemainingOps(ops, startIndex, REPLAY);
             }
 
-            const ids = moduleRouter.query('objectIds');
+            const ids = (moduleRouter.query('objectIds') as string[] | null) ?? [];
             const ds = window._ds;
             let newSel: string | null = null;
             if (prevSelectedId && ids.includes(prevSelectedId)) {
@@ -380,7 +404,7 @@ export class CadDocumentManagerBase {
         }
     }
 
-    async _replayRemainingOps(ops: CadOperation[], startIndex: number, REPLAY: any): Promise<void> {
+    async _replayRemainingOps(ops: CadOperation[], startIndex: number, REPLAY: CadOptions): Promise<void> {
         for (let i = startIndex; i < ops.length; i++) {
             if (ops[i].enabled) {
                 const op = ops[i];
@@ -395,7 +419,7 @@ export class CadDocumentManagerBase {
         }
     }
 
-    async _progressiveLoad(entries: any[], ops: CadOperation[], startIndex: number, REPLAY: any): Promise<void> {
+    async _progressiveLoad(entries: SceneEntry[], ops: CadOperation[], startIndex: number, REPLAY: CadOptions): Promise<void> {
         const ctrl = this._ctrl();
         if (!ctrl) return;
         const modelId = window.__modelId;
@@ -426,8 +450,8 @@ export class CadDocumentManagerBase {
         }
         const THREE = frustum ? await import('three') : null;
 
-        const hotEntries: any[] = [];
-        const warmEntries: any[] = [];
+        const hotEntries: SceneEntry[] = [];
+        const warmEntries: SceneEntry[] = [];
         for (const entry of entries) {
             const isNeeded = neededIds.has(entry.id);
             let isVisible = true;

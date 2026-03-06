@@ -146,22 +146,16 @@ export async function waitForWasmState(
   await page.waitForFunction(new Function('return ' + checkFn) as () => boolean, { timeout: timeoutMs });
 }
 
-/** Wait for Automerge CadDocumentManager to fully initialize */
+/** Wait for CadDocumentManager doc to be loaded and ready. */
 export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
   await page.waitForFunction(
     () => {
       const mgr = (window as any).cadDocManager;
-      if (!mgr?.handle) return false;
-      const doc = mgr.handle.docSync?.();
-      return doc && doc.operations && doc.operations.length > 0;
+      // Doc is loaded when _docBytes is set (non-null) and modelId is known
+      return !!(mgr?._docBytes && mgr?._modelId);
     },
     { timeout: timeoutMs },
   );
-}
-
-/** Get the Automerge document URL for sharing */
-export async function getAutomergeUrl(page: Page): Promise<string> {
-  return await page.evaluate(() => (window as any).cadDocManager.documentUrl);
 }
 
 // ─── Doc/screenshot helpers ────────────────────────────────────

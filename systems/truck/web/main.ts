@@ -6,6 +6,6 @@ window._ds = { root, mergePatch, beginBatch, endBatch };
 import { boot } from './boot';
 try {
     await boot();
-} catch (e: any) {
-    if (e?.message !== 'redirect') console.error('Boot failed:', e);
+} catch (e: unknown) {
+    if (!(e instanceof Error && e.message === 'redirect')) console.error('Boot failed:', e);
 }

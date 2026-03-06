@@ -1,12 +1,12 @@
-// thumbnail.js — Canvas capture + upload for gallery thumbnails.
+// thumbnail.ts — Canvas capture + upload for gallery thumbnails.
 // Captures the WebGPU canvas via a 2D canvas intermediary (drawImage),
 // which reliably reads the composited frame. Debounced to avoid flooding
 // on rapid edits.
 
 const THUMB_W = 320;
 const THUMB_H = 180;
-let latestThumbnail = null;
-let debounceTimer = null;
+let latestThumbnail: Blob | null = null;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Capture the WebGPU canvas as a small PNG Blob (320×180). */
 export async function captureCanvasThumbnail(canvasId = 'cad-canvas') {
@@ -21,7 +21,7 @@ export async function captureCanvasThumbnail(canvasId = 'cad-canvas') {
 }
 
 /** Upload a PNG Blob to the thumbnail API (raw fetch, not hono client). */
-export async function uploadThumbnail(modelId, blob) {
+export async function uploadThumbnail(modelId: string, blob: Blob): Promise<boolean> {
     const res = await fetch(`/api/models/${modelId}/thumbnail`, {
         method: 'PUT',
         body: blob,
@@ -36,10 +36,10 @@ export function getLatestThumbnail() {
 }
 
 /** Schedule a debounced thumbnail capture (1s). Call after scene mutations. */
-export function scheduleThumbnailCapture() {
-    clearTimeout(debounceTimer);
+export function scheduleThumbnailCapture(): void {
+    clearTimeout(debounceTimer ?? undefined);
     debounceTimer = setTimeout(async () => {
         const blob = await captureCanvasThumbnail();
-        if (blob && (blob as Blob).size > 0) latestThumbnail = blob;
+        if (blob && blob.size > 0) latestThumbnail = blob;
     }, 1000);
 }

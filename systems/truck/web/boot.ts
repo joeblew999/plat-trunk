@@ -1,4 +1,4 @@
-// boot.js — App initialization sequence.
+// boot.ts — App initialization sequence.
 // Extracted from index.html to make the boot logic readable and testable.
 //
 // Sequence:
@@ -74,15 +74,15 @@ export async function boot() {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function deleteDb(name) {
+function deleteDb(name: string): Promise<void> {
     return new Promise(resolve => {
         const req = indexedDB.deleteDatabase(name);
-        req.onsuccess = resolve;
-        req.onerror = resolve;
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
     });
 }
 
-async function waitFor(fn, timeoutMs, label) {
+async function waitFor(fn: () => unknown, timeoutMs: number, label: string): Promise<void> {
     const interval = 100;
     const maxRetries = Math.ceil(timeoutMs / interval);
     for (let i = 0; i < maxRetries; i++) {

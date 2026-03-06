@@ -31,13 +31,13 @@ const _lastInteraction = new Map();
 // ── Camera helpers ──────────────────────────────────────────────────────────
 
 /** Extract camera position from a Three.js matrixWorld (column-major 16 elements). */
-function cameraPositionFromMatrix(matrixWorld) {
+function cameraPositionFromMatrix(matrixWorld: number[]): [number, number, number] {
     // Translation is in elements [12, 13, 14] (column-major)
     return [matrixWorld[12], matrixWorld[13], matrixWorld[14]];
 }
 
 /** Euclidean distance from camera to the surface of a bounding sphere. */
-function cameraDistToSphere(camPos, center, radius) {
+function cameraDistToSphere(camPos: number[], center: number[], radius: number): number {
     const dx = camPos[0] - center[0];
     const dy = camPos[1] - center[1];
     const dz = camPos[2] - center[2];
@@ -169,7 +169,7 @@ export async function resetTierState() {
 }
 
 /** Notify the tier manager that an object was interacted with (resets idle timer). */
-export function touchObject(objectId) {
+export function touchObject(objectId: string): void {
     _lastInteraction.set(objectId, Date.now());
 }
 
@@ -182,7 +182,7 @@ export function warmCount() {
  *  These objects were never Hot — they went straight from snapshot → IDB → LOD proxy.
  *  The tier manager needs to know about them to promote when camera gets close.
  *  @param {Map<string, { center: [x,y,z], radius: number, color: [r,g,b,a] }>} sphereMap */
-export function registerWarmObjects(sphereMap) {
+export function registerWarmObjects(sphereMap: Map<string, { center: number[]; radius: number; color: number[] }>): void {
     for (const [objectId, sphere] of sphereMap) {
         _warmSpheres.set(objectId, sphere);
     }

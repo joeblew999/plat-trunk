@@ -68,7 +68,7 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
   - Dev: `localhost:5173` (Vite with HMR) — proxies `/api` + `/mcp` to truck-cad (8789)
   - Prod: `vite build` → `dist/` → served by wrangler ASSETS binding
 - **Sync**: Automerge CRDT for local-first op log + undo/redo
-- **Camera**: Three.js OrbitControls → pushes 4x4 matrix to WASM each frame (Passive WASM, ADR-0013)
+- **Camera**: Three.js OrbitControls → pushes 4x4 matrix to WASM each frame (Passive WASM)
 - **BIM**: `ifc-lite` source in `.src/ifc-lite` for semantic building data
 
 ## Folder Layout
@@ -101,7 +101,7 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 └── docs/adr/              Architecture Decision Records
 ```
 
-## Schema-Driven Architecture (ADR-005)
+## Schema-Driven Architecture
 
 ```
 Rust structs (#[derive(Deserialize, JsonSchema)])
@@ -188,7 +188,7 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 - `cadUI` — UI state helpers
 - `showFeedbackSignal` — Toast feedback display
 
-## ADR-0036: Isomorphic WASM Core + D1 Op-Log (COMPLETE)
+## Isomorphic WASM Core + D1 Op-Log (COMPLETE)
 
 **truck-sync crate** (`systems/sync/crate/`) — Automerge-backed op log, no geometry knowledge.
 - Op schema: `{id, type, params, enabled, timestamp, actorId, groupId?}` — matches JS `CadOperation` exactly
@@ -217,7 +217,8 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 
 ## ADRs
 
-See `docs/adr/README.md`. Key: ADR-001 (3-layer arch), ADR-004 (hybrid BIM), ADR-005 (schema-driven), ADR-008 (undo/redo), ADR-010 (MCP+OpenAPI), ADR-013 (Lit+Three+Passive WASM), ADR-017 (versioned deploy), ADR-0035 (Vite+TS browser), ADR-0036 (isomorphic WASM core + D1 op-log).
+Active plans live in `docs/adr/`. Currently: `0001-multi-actor-sync.md` (snapshot + multi-actor sync).
+Historical ADRs were removed — their decisions are baked into the codebase and documented in this file.
 
 ## AI Agent Rules
 
@@ -231,7 +232,8 @@ See `docs/adr/README.md`. Key: ADR-001 (3-layer arch), ADR-004 (hybrid BIM), ADR
 7. **No hand-writing** — Zod enums, MCP tools, OpenAPI paths are all auto-generated from schema
 8. **data-testid** — all interactive HTML elements need them for testing
 9. **No legacy/compat** — no existing users, no migration paths, clean code only
-10. **ADR context** — read `docs/adr/README.md` before proposing architectural changes
+10. **ADR context** — read `docs/adr/` before proposing architectural changes
+11. **Plans live in `docs/adr/`** — all implementation plans go in `docs/adr/` as numbered ADRs, never in agent-private folders (`.claude/plans/`, `.cursor/`, etc.). The ADR is the single source of truth shared by all agents and humans
 
 ## Library Reference
 - Automerge: `systems/docs/website/public/llms/automerge-llms-full.txt`

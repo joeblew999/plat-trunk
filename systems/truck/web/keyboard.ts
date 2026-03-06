@@ -1,9 +1,9 @@
-// keyboard.js — Global keyboard shortcuts (ADR-0019 Phase 6).
-// Extracted from ui.js to separate concerns.
+// keyboard.ts — Global keyboard shortcuts (ADR-0019 Phase 6).
+// Extracted from ui.ts to separate concerns.
 
-import { cadCommand } from './state';
+import { cadCommand } from './dispatch';
 
-function docMgr() { return window.cadDocManager?.handle ? window.cadDocManager : null; }
+function docMgr() { return window.cadDocManager?._docBytes ? window.cadDocManager : null; }
 
 document.addEventListener('keydown', (e) => {
     // 's' — open sketch tab (unmodified, not in input)

@@ -11,6 +11,9 @@ type Bindings = {
   DOCS_ASSETS: Fetcher;
   TRUCK: Fetcher;
   TEST: Fetcher;
+  // Future systems — add binding here + [[services]] in wrangler.toml when worker is deployed:
+  // MVT: Fetcher;
+  // IFC: Fetcher;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -72,7 +75,23 @@ app.all('/test/*', async (c) => {
   return c.env.TEST.fetch(new Request(stripped.toString(), c.req.raw));
 });
 
-// ── Everything else → truck-cad ─────────────────────────
+// ── System API routes ────────────────────────────────────
+//
+// Convention: each system owns /api/{system}/* and /mcp (or a namespaced /mcp/{system}).
+// Add new system routes HERE, above the truck-cad catch-all.
+//
+// To add a system (e.g. MVT):
+//   1. Add `MVT: Fetcher` to Bindings above
+//   2. Add `[[services]] binding = "MVT" service = "mvt-worker"` in wrangler.toml
+//   3. Uncomment the route below (or add a new one)
+//   4. Register in workers.mjs + systems/mvt/system.mjs
+//
+// app.all('/api/mvt/*', async (c) => c.env.MVT.fetch(c.req.raw));
+// app.all('/api/ifc/*', async (c) => c.env.IFC.fetch(c.req.raw));
+
+// ── truck-cad (catch-all) ────────────────────────────────
+// Handles: /api/* REST, /mcp MCP endpoint, /* web app static assets.
+// Must stay last — new system routes go above this line.
 
 app.all('*', async (c) => {
   return c.env.TRUCK.fetch(c.req.raw);

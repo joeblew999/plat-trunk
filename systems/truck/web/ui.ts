@@ -1,8 +1,8 @@
-// ui.js — Thin event bindings for model lifecycle + file I/O + responsive layout.
-// All model operations go through cadCommand() — see state.js handleJsCommand().
-// Keyboard shortcuts → keyboard.js. Gizmo interaction → cad-viewport.js (ADR-0013).
+// ui.ts — Thin event bindings for model lifecycle + file I/O + responsive layout.
+// All model operations go through cadCommand() — see dispatch.ts handleJsCommand().
+// Keyboard shortcuts → keyboard.ts. Gizmo interaction → cad-viewport.ts (ADR-0013).
 
-import { cadCommand, cadQuery, showFeedback } from './state';
+import { cadCommand, cadQuery, showFeedback } from './dispatch';
 
 function ctrl() { return window.sceneController; }
 
@@ -49,7 +49,7 @@ document.getElementById('saveCloudBtn')?.addEventListener('click', async () => {
         if (result?.success) showFeedback(`Saved "${name}" to cloud`, false);
         else showFeedback(result?.error || 'Cloud save failed', true);
     } catch (err) {
-        showFeedback(`Cloud save failed: ${err.message}`, true);
+        showFeedback(`Cloud save failed: ${err instanceof Error ? err.message : String(err)}`, true);
     } finally {
         btn.disabled = false;
         btn.textContent = 'Cloud';
@@ -103,11 +103,11 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
 const DATA_PLANE_TABS = new Set(['transform', 'sketch']);
 
 const cadUI = {
-    activeTab: null,
-    setTab(name) {
+    activeTab: null as string | null,
+    setTab(name: string | null) {
         const outliner = document.querySelector('.app-outliner');
         const props = document.querySelector('.app-props');
-        const isDataPlane = DATA_PLANE_TABS.has(name);
+        const isDataPlane = name !== null && DATA_PLANE_TABS.has(name);
         const panel = isDataPlane ? props : outliner;
         const otherPanel = isDataPlane ? outliner : props;
         if (!panel) return;
@@ -138,7 +138,7 @@ const cadUI = {
         this.activeTab = null;
         this._updateDock(null);
     },
-    _updateDock(name) {
+    _updateDock(name: string | null) {
         document.querySelectorAll<HTMLElement>('.app-dock button[data-tab]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === name);
         });

@@ -17,7 +17,7 @@ export interface SnapshotRef {
 export interface DocMeta {
     name: string;
     snapshots: SnapshotRef[];
-    bimHierarchy?: any;
+    bimHierarchy?: unknown;
 }
 
 function openDb(): Promise<IDBDatabase> {

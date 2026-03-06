@@ -1,4 +1,4 @@
-import { getSchema } from './state';
+import { getSchema } from './schema';
 import { CadDocumentManagerBase } from './history-domain';
 
 // UI layer for CadDocumentManager.
@@ -23,12 +23,12 @@ class CadDocumentManager extends CadDocumentManagerBase {
             return;
         }
 
-        const DOMAIN_COLORS = {
+        const DOMAIN_COLORS: Record<string, string> = {
             geometry: 'btn-primary', booleans: 'btn-success',
             scene: 'btn-ghost',     style: 'btn-ghost',
             sketch: 'btn-primary',
         };
-        const COLOR_OVERRIDES = {
+        const COLOR_OVERRIDES: Record<string, string> = {
             boolean_subtract: 'btn-warning', boolean_intersect: 'btn-error',
             clash_detect: 'btn-info', delete: 'btn-error', duplicate: 'btn-info',
         };
@@ -50,7 +50,7 @@ class CadDocumentManager extends CadDocumentManagerBase {
                 const w = words[words.length - 1];
                 return w[0].toUpperCase() + w.slice(1);
             }
-            const ABBR = { Delete: 'Del', Subtract: 'Sub', Duplicate: 'Dup', Intersect: 'Inter', Rotate: 'Rot' };
+            const ABBR: Record<string, string> = { Delete: 'Del', Subtract: 'Sub', Duplicate: 'Dup', Intersect: 'Inter', Rotate: 'Rot' };
             return ABBR[words[0]] || words[0];
         };
 

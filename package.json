@@ -17,6 +17,7 @@
     "test:api": "cd systems/truck/worker && bun x vitest run",
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
     "test:e2e": "cd systems/truck/tests && bun x playwright test",
+    "test:all": "bun run test && bun run test:e2e",
     "seed:gallery": "bun scripts/seed-gallery.ts --clean",
     "deploy": "node run.mjs deploy",
     "deploy:upload": "bun scripts/cf-deploy.ts upload",

@@ -176,7 +176,7 @@ export class LiveSignals extends LitElement {
   `;
 
   // TypeScript property declarations
-  declare _signals: Record<string, any>;
+  declare _signals: Record<string, unknown>;
   declare _previousSignals: string;
   declare _expandedPaths: Set<string>;
   declare _changedPaths: Map<string, number>;
@@ -239,12 +239,12 @@ export class LiveSignals extends LitElement {
     }
   }
 
-  _detectChanges(oldObj, newObj, path) {
+  _detectChanges(oldObj: unknown, newObj: unknown, path: string) {
     const timestamp = Date.now();
-    const newChanges = new Map();
-    const changedRoots = new Set();
+    const newChanges = new Map<string, number>();
+    const changedRoots = new Set<string>();
 
-    const check = (oldVal, newVal, currentPath) => {
+    const check = (oldVal: unknown, newVal: unknown, currentPath: string) => {
       if (typeof newVal !== 'object' || newVal === null) {
         if (oldVal !== newVal) {
           newChanges.set(currentPath, timestamp);
@@ -261,12 +261,12 @@ export class LiveSignals extends LitElement {
           changedRoots.add(root);
         }
         newVal.forEach((item, i) => {
-          check(oldVal?.[i], item, `${currentPath}[${i}]`);
+          check((oldVal as unknown[])?.[i], item, `${currentPath}[${i}]`);
         });
       } else {
-        const allKeys = new Set([...Object.keys(oldVal || {}), ...Object.keys(newVal)]);
+        const allKeys = new Set([...Object.keys((oldVal as Record<string, unknown>) || {}), ...Object.keys(newVal as Record<string, unknown>)]);
         allKeys.forEach(key => {
-          check(oldVal?.[key], newVal[key], currentPath ? `${currentPath}.${key}` : key);
+          check((oldVal as Record<string, unknown>)?.[key], (newVal as Record<string, unknown>)[key], currentPath ? `${currentPath}.${key}` : key);
         });
       }
     };
@@ -276,7 +276,7 @@ export class LiveSignals extends LitElement {
     return changedRoots;
   }
 
-  _getParentPaths(path) {
+  _getParentPaths(path: string) {
     const parents = [];
     let current = '';
     let i = 0;
@@ -297,7 +297,7 @@ export class LiveSignals extends LitElement {
     return parents;
   }
 
-  _autoExpandChanged(changedRoots) {
+  _autoExpandChanged(changedRoots: Set<string>) {
     const newExpanded = new Set<string>();
     for (const root of Object.keys(this._signals)) {
       if (changedRoots.has(root)) {
@@ -314,7 +314,7 @@ export class LiveSignals extends LitElement {
     this._expandedPaths = newExpanded;
   }
 
-  _toggleExpand(path) {
+  _toggleExpand(path: string) {
     const newExpanded = new Set(this._expandedPaths);
     if (newExpanded.has(path)) { newExpanded.delete(path); }
     else { newExpanded.add(path); }
@@ -327,15 +327,15 @@ export class LiveSignals extends LitElement {
     else { this.removeAttribute('collapsed'); }
   }
 
-  _getType(value) {
+  _getType(value: unknown) {
     if (value === null) return 'null';
     if (Array.isArray(value)) return 'array';
     return typeof value;
   }
 
-  _buildTree(obj, parentPath = '') {
+  _buildTree(obj: unknown, parentPath = '') {
     if (typeof obj !== 'object' || obj === null) return [];
-    return Object.entries(obj)
+    return Object.entries(obj as Record<string, unknown>)
       .filter(([key]) => !key.startsWith('$'))
       .map(([key, value]) => {
         const path = parentPath ? `${parentPath}.${key}` : key;
@@ -344,7 +344,7 @@ export class LiveSignals extends LitElement {
 
         if (type === 'object') {
           node.children = this._buildTree(value, path);
-          node.count = Object.keys(value).length;
+          node.count = Object.keys(value as Record<string, unknown>).length;
         } else if (type === 'array') {
           node.children = (value as any[]).map((item, i) => {
             const itemPath = `${path}[${i}]`;
@@ -352,7 +352,7 @@ export class LiveSignals extends LitElement {
             const child: any = { key: String(i), value: item, type: itemType, path: itemPath };
             if (itemType === 'object') {
               child.children = this._buildTree(item, itemPath);
-              child.count = Object.keys(item).length;
+              child.count = Object.keys(item as Record<string, unknown>).length;
             } else if (itemType === 'array') {
               child.count = item.length;
             }
@@ -364,16 +364,16 @@ export class LiveSignals extends LitElement {
       });
   }
 
-  _formatValue(value, type) {
+  _formatValue(value: unknown, type: string) {
     if (type === 'string') return `"${value}"`;
     if (type === 'null') return 'null';
     if (type === 'boolean') return value ? 'true' : 'false';
     return String(value);
   }
 
-  _getPreview(node) {
+  _getPreview(node: any) {
     if (node.type === 'array' && node.children) {
-      const items = node.children.slice(0, 3).map(c => {
+      const items = node.children.slice(0, 3).map((c: any) => {
         if (c.type === 'object') return '{...}';
         if (c.type === 'array') return '[...]';
         return this._formatValue(c.value, c.type);
@@ -381,13 +381,13 @@ export class LiveSignals extends LitElement {
       return `[${items.join(', ')}${node.children.length > 3 ? ', ...' : ''}]`;
     }
     if (node.type === 'object' && node.children) {
-      const keys = node.children.slice(0, 3).map(c => c.key);
+      const keys = node.children.slice(0, 3).map((c: any) => c.key);
       return `{ ${keys.join(', ')}${node.children.length > 3 ? ', ...' : ''} }`;
     }
     return '';
   }
 
-  _renderIndent(depth) {
+  _renderIndent(depth: number) {
     if (depth === 0) return html`<span style="width: 8px"></span>`;
     const guides = [];
     for (let i = 0; i < depth; i++) {
@@ -396,7 +396,7 @@ export class LiveSignals extends LitElement {
     return html`<span class="indent">${guides}</span>`;
   }
 
-  _renderTypeIcon(type) {
+  _renderTypeIcon(type: string) {
     if (type === 'object') {
       return html`<svg class="type-icon object" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
@@ -412,7 +412,7 @@ export class LiveSignals extends LitElement {
     return '';
   }
 
-  _renderNode(node, depth) {
+  _renderNode(node: any, depth: number) {
     const isExpandable = node.type === 'object' || node.type === 'array';
     const isExpanded = this._expandedPaths.has(node.path);
     const isChanged = this._changedPaths.has(node.path);
@@ -441,7 +441,7 @@ export class LiveSignals extends LitElement {
         </div>
         ${isExpandable && node.children ? html`
           <div class="children ${isExpanded ? '' : 'collapsed'}">
-            ${node.children.map(child => this._renderNode(child, depth + 1))}
+            ${node.children.map((child: any) => this._renderNode(child, depth + 1))}
           </div>
         ` : ''}
       </div>

@@ -1,5 +1,9 @@
 // globals.d.ts — Declares custom window properties set by inline scripts and modules.
 
+import type { WasmResult, CadOptions } from './types';
+import type { CadDocumentManagerBase } from './history-domain';
+import type { sketch } from './sketch';
+
 declare global {
   interface Window {
     // Set by inline script in index.html before modules load
@@ -10,30 +14,29 @@ declare global {
     __cadSyncDisabled: boolean;
 
     // Set by boot.ts
-    __wasmInit: any;
-    __SceneController: any;
+    __wasmInit: any;         // dynamic WASM module import, no TS bindings
+    __SceneController: any;  // WASM class constructor, no TS bindings
     __appReady: boolean;
 
     // Set by WASM / cad-viewport.ts
-    sceneController: any;
+    sceneController: any;  // WASM instance, no TS bindings
 
-    // Set by history.ts (Automerge)
-    cadDocManager: any;
+    // Set by history-domain.ts
+    cadDocManager: CadDocumentManagerBase;
     resetTierState: (() => void) | undefined;
 
-    // Set by core/module-router.ts
+    // Set by core/module-router.ts (internal — prefer cadCommand/cadQuery)
     moduleRouter: any;
     __moduleRouter: any;
 
-    // Set by state.ts
-    cadCommand: (type: string, params?: any, opts?: any) => Promise<any>;
-    cadQuery: (method: string, ...args: any[]) => any;
-    reconcile: (data: any, mgr?: any) => void;
+    // Set by state.ts (window globals for inline HTML handlers + E2E tests)
+    cadCommand: (type: string, params?: Record<string, unknown>, opts?: CadOptions) => Promise<WasmResult>;
+    cadQuery: (type: string, params?: Record<string, unknown>, opts?: CadOptions) => WasmResult;
+    reconcile: (result: WasmResult) => WasmResult;
+    addShape: (type: string, params?: Record<string, unknown>) => Promise<WasmResult>;
+    showFeedbackSignal: (msg: string, isError?: boolean) => void;
+    __loadStyle: (objectId: string) => void;
     cadUI: any;
-    showFeedbackSignal: any;
-    addShape: (type: string, params?: any) => void;
-    setSelection: (id: string) => void;
-    __loadStyle: any;
 
     // Set by tier-manager.ts
     __warmCount: number;
@@ -45,7 +48,7 @@ declare global {
     _ds: { root: any; mergePatch: any; beginBatch: any; endBatch: any };
 
     // Set by sketch.ts
-    __sketch: any;
+    __sketch: typeof sketch;
 
     // Set by ui.ts
     __applyStyle: (commit: boolean) => void;

@@ -6,9 +6,9 @@ const DB_NAME = 'cad-blobs';
 const DB_VERSION = 1;
 const STORE_NAME = 'blobs';
 
-let _db = null;
+let _db: IDBDatabase | null = null;
 
-function openBlobDb() {
+function openBlobDb(): Promise<IDBDatabase> {
     if (_db) return Promise.resolve(_db);
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -20,7 +20,7 @@ function openBlobDb() {
     });
 }
 
-async function computeHash(data) {
+async function computeHash(data: string): Promise<string> {
     const encoded = new TextEncoder().encode(data);
     const hash = await crypto.subtle.digest('SHA-256', encoded);
     return 'sha256-' + [...new Uint8Array(hash)]
@@ -28,7 +28,7 @@ async function computeHash(data) {
 }
 
 /** Store data by content hash. Returns the key (sha256-...). Deduplicates automatically. */
-export async function storeBlob(data) {
+export async function storeBlob(data: string): Promise<string> {
     const key = await computeHash(data);
     const db = await openBlobDb();
     return new Promise((resolve, reject) => {
@@ -45,7 +45,7 @@ export async function storeBlob(data) {
 }
 
 /** Retrieve blob data by key. Returns null if not found. */
-export async function getBlob(key) {
+export async function getBlob(key: string): Promise<string | null> {
     const db = await openBlobDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');

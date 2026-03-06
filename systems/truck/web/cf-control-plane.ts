@@ -21,13 +21,41 @@
  * See ADR-0022 (v2) for design rationale.
  */
 
+interface WorkerPlatform {
+  id?: string;
+  url?: string;
+  immutableUrl?: string;
+}
+
+interface WorkerVersion {
+  version: string;
+  date?: string;
+  commandCount?: number;
+  platforms?: Record<string, WorkerPlatform | null>;
+  git?: { branch?: string; commitSha?: string; commitUrl?: string; commitMessage?: string };
+}
+
+interface WorkerPreview {
+  label: string;
+  url: string;
+  platform: string;
+}
+
+interface WorkerManifest {
+  versions?: WorkerVersion[];
+  previews?: WorkerPreview[];
+  production?: Record<string, string | null>;
+  endpoints?: Record<string, string>;
+  github?: string;
+}
+
 class CfControlPlane extends HTMLElement {
   declare _isLocal: boolean;
   declare _workerUrl: string;
   declare _manifestUrl: string;
   declare _healthUrl: string;
   declare _version: string;
-  declare _manifest: any;
+  declare _manifest: WorkerManifest;
 
   connectedCallback() {
     this._isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -47,7 +75,7 @@ class CfControlPlane extends HTMLElement {
         fetch(this._manifestUrl).then(r => r.json()).catch(() => ({ versions: [], previews: [] })),
       ]);
 
-      this._version = (health as any).version || '?';
+      this._version = (health as Record<string, unknown>).version as string || '?';
       this._manifest = manifest;
       this._render();
     } catch {
@@ -58,7 +86,7 @@ class CfControlPlane extends HTMLElement {
   _render() {
     const m = this._manifest;
     const v = this._version;
-    const current = m.versions?.find(ver => ver.version === v);
+    const current = m.versions?.find((ver: WorkerVersion) => ver.version === v);
 
     // Per-worker indicators from platforms map
     const platforms = current?.platforms || {};
@@ -82,13 +110,13 @@ class CfControlPlane extends HTMLElement {
     `;
   }
 
-  _renderDropdown(m, currentVersion) {
+  _renderDropdown(m: WorkerManifest, currentVersion: string) {
     const production = m.production || {};
     const github = m.github || '';
     const platformNames = Object.keys(production);
 
     // --- Versions section ---
-    const versionItems = (m.versions || []).map(v => {
+    const versionItems = (m.versions || []).map((v: WorkerVersion) => {
       const isCurrent = v.version === currentVersion;
       const platforms = v.platforms || {};
 
@@ -107,11 +135,11 @@ class CfControlPlane extends HTMLElement {
 
       // Primary link: first platform with a URL
       const firstPlatformWithUrl = platformNames.find(n => platforms[n]?.url);
-      const href = firstPlatformWithUrl ? platforms[firstPlatformWithUrl].url : '#';
+      const href = firstPlatformWithUrl ? (platforms[firstPlatformWithUrl]?.url ?? '#') : '#';
 
       // Immutable link: first platform with an immutable URL
       const firstWithImmutable = platformNames.find(n => platforms[n]?.immutableUrl);
-      const immutableUrl = firstWithImmutable ? platforms[firstWithImmutable].immutableUrl : null;
+      const immutableUrl = firstWithImmutable ? (platforms[firstWithImmutable]?.immutableUrl ?? null) : null;
 
       return `<li>
         <a href="${href}" ${isCurrent ? '' : 'target="_blank"'}
@@ -126,7 +154,7 @@ class CfControlPlane extends HTMLElement {
     }).join('');
 
     // --- Previews section ---
-    const previewItems = (m.previews || []).map(p =>
+    const previewItems = (m.previews || []).map((p: WorkerPreview) =>
       `<li><a href="${p.url}" target="_blank">${p.label} <span class="opacity-40" style="font-size:0.6rem">${p.platform}</span></a></li>`
     ).join('');
 
@@ -161,11 +189,11 @@ class CfControlPlane extends HTMLElement {
     `;
   }
 
-  _renderBadge(label, title) {
+  _renderBadge(label: string, title: string) {
     return `<div class="badge badge-sm badge-outline opacity-40 font-mono" title="${title}">${label}</div>`;
   }
 
-  _esc(s) {
+  _esc(s: string) {
     return s.replace(/"/g, '&quot;').replace(/</g, '&lt;');
   }
 }

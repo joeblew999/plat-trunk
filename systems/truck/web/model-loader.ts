@@ -11,9 +11,11 @@
 // If sync cache replay produces empty scene (e.g. blob-store wiped),
 // it's treated as cache-invalid and falls through to cloud.
 
-export async function loadModel(modelId: string, mgr: any) {
-    const params = new URLSearchParams(window.location.search);
-    const exampleParam = params.get('example');
+import type { CadDocumentManagerBase } from './history-domain';
+import { parseUrlParams } from './url-params';
+
+export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {
+    const { example: exampleParam } = parseUrlParams();
 
     // ── Phase 1: Pre-fetch scene from source of truth ────────────
     let sceneJson: string | null = null;

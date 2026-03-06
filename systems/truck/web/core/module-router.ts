@@ -1,3 +1,5 @@
+import type { WasmResult } from '../types';
+
 /**
  * Module Router — routes commands to WASM modules by schema domain (ADR-0019).
  *
@@ -24,7 +26,7 @@ export class BrowserModuleRouter {
    * @param {object} wasmInstance - WASM instance with execute(type, paramsJson)
    * @param {Set<string>} [commands] - Command names this module handles (optional)
    */
-  register(name, wasmInstance, commands?) {
+  register(name: string, wasmInstance: { execute(type: string, params: string): string | null | undefined; schema?(): string; object_ids?(): string[]; get_interaction_mode?(): string; select?(id: string): void }, commands?: Set<string> | null): void {
     this.modules.set(name, {
       instance: wasmInstance,
       commands: commands || null, // null = accepts all (Phase 1 pass-through)
@@ -40,10 +42,10 @@ export class BrowserModuleRouter {
    * Tier 1: Dispatch mutation to the module that owns this command.
    * Today: everything goes to 'core'. Tomorrow: routes by command set.
    */
-  execute(type, params) {
+  execute(type: string, params: unknown): WasmResult {
     // Phase 1: single module fast path
     if (this.modules.size === 1) {
-      const mod = this.modules.values().next().value;
+      const mod = this.modules.values().next().value!;
       return this._call(mod.instance, type, params);
     }
 
@@ -58,11 +60,11 @@ export class BrowserModuleRouter {
   }
 
   /** Internal: call WASM execute() with error handling. */
-  _call(instance, type, params) {
+  _call(instance: { execute(type: string, params: string): string | null | undefined }, type: string, params: unknown): WasmResult {
     try {
       const res = instance.execute(type, JSON.stringify(params || {}));
       if (!res) return { error: 'Empty response' };
-      return JSON.parse(res);
+      return JSON.parse(res) as WasmResult;
     } catch (err) {
       console.error(`WASM execute(${type}) failed:`, err);
       return { error: String(err) };
@@ -73,7 +75,7 @@ export class BrowserModuleRouter {
    * Tier 2: Read-only queries (always core module).
    * These don't mutate state — no Automerge, no broadcast.
    */
-  query(method, ...args) {
+  query(method: string, ...args: unknown[]): unknown {
     const inst = this.core();
     if (!inst) return null;
 

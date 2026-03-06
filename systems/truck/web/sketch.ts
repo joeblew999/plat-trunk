@@ -1,16 +1,18 @@
-// sketch.js — Sketch controller: points, edges, constraints, extrude.
+// sketch.ts — Sketch controller: points, edges, constraints, extrude.
 // ALL sketch operations go through cadCommand (ADR-0019 Phase 4).
 // ES module (ADR-0019 Phase 5).
 
-import { cadCommand, cadQuery, reconcile, showFeedback } from './state';
+import { cadCommand, cadQuery, showFeedback } from './dispatch';
+import { reconcile } from './reconcile';
 
-const cmd = (type, params = {}) => cadQuery(type, params);
+// cmd wraps cadQuery which is synchronous — no await needed.
+const cmd = (type: string, params: Record<string, unknown> = {}) => cadQuery(type, params);
 const ds = () => window._ds;
-const fb = (msg, err) => showFeedback(msg, err);
+const fb = (msg: string, err: boolean) => showFeedback(msg, err);
 
-let points = [];
-let edges = [];
-let constraints = [];
+let points: Array<{id: string, x: number, y: number}> = [];
+let edges: Array<{id: string, p0Id: string, p1Id: string}> = [];
+let constraints: Array<{id?: string, type: string, params?: unknown}> = [];
 
 function syncInfo() {
     const d = ds();
@@ -64,10 +66,10 @@ function reset() {
 const sketch = {
     get isActive() { return ds()?.root?.sketchActive ?? false; },
 
-    async begin() {
+    begin() {
         const d = ds();
         const plane = d?.root?.sketchPlane || 'xy';
-        const result = await cmd('begin_sketch', { plane });
+        const result = cmd('begin_sketch', { plane });
         if (result?.sketchId) {
             points = []; edges = []; constraints = [];
             d.beginBatch(); d.root.sketchActive = true; d.endBatch();
@@ -76,12 +78,12 @@ const sketch = {
         }
     },
 
-    async addPoint() {
+    addPoint() {
         if (!this.isActive) return;
         const d = ds();
         const x = parseFloat(d.root.sketchPtX) || 0;
         const y = parseFloat(d.root.sketchPtY) || 0;
-        const result = await cmd('sketch_add_point', { x, y });
+        const result = cmd('sketch_add_point', { x, y });
         if (result?.pointId) {
             points.push({ id: result.pointId, x, y });
             syncInfo(); rebuildSelects();
@@ -89,12 +91,12 @@ const sketch = {
         }
     },
 
-    async addEdge() {
+    addEdge() {
         if (!this.isActive) return;
         const p0Id = (document.getElementById('sketchEdgeP0') as HTMLInputElement | null)?.value;
         const p1Id = (document.getElementById('sketchEdgeP1') as HTMLInputElement | null)?.value;
         if (!p0Id || !p1Id || p0Id === p1Id) { fb('Select two different points', true); return; }
-        const result = await cmd('sketch_add_edge', { p0Id, p1Id });
+        const result = cmd('sketch_add_edge', { p0Id, p1Id });
         if (result?.edgeId) {
             edges.push({ id: result.edgeId, p0Id, p1Id });
             syncInfo(); rebuildSelects();
@@ -102,7 +104,7 @@ const sketch = {
         }
     },
 
-    async addConstraint() {
+    addConstraint() {
         if (!this.isActive) return;
         const d = ds();
         const type = d.root.sketchConType;
@@ -135,7 +137,7 @@ const sketch = {
                 params = { edge_id: e0, point_id: p0 }; break;
             default: fb('Unknown constraint', true); return;
         }
-        const result = await cmd('sketch_add_constraint', { constraintType: type, params: JSON.stringify(params) });
+        const result = cmd('sketch_add_constraint', { constraintType: type, params: JSON.stringify(params) });
         if (result?.constraintId) {
             constraints.push({ id: result.constraintId, type, params });
             syncInfo();
@@ -143,15 +145,15 @@ const sketch = {
         }
     },
 
-    async solve() {
+    solve() {
         if (!this.isActive) return;
-        const result = await cmd('sketch_solve');
+        const result = cmd('sketch_solve');
         if (result?.solved) {
             try {
                 const solved = result.solved;
-                solved.forEach(sp => { const local = points.find(p => p.id === sp.id); if (local) { local.x = sp.x; local.y = sp.y; } });
+                solved.forEach((sp: {id: string, x: number, y: number}) => { const local = points.find(p => p.id === sp.id); if (local) { local.x = sp.x; local.y = sp.y; } });
                 rebuildSelects();
-                fb(`Solved: ${solved.map((p, i) => `P${i}(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(' ')}`, false);
+                fb(`Solved: ${solved.map((p: {x: number, y: number}, i: number) => `P${i}(${p.x.toFixed(2)},${p.y.toFixed(2)})`).join(' ')}`, false);
             } catch { fb('Solve parse error', true); }
         } else { fb(result?.error || 'Solve failed', true); }
     },
@@ -160,7 +162,7 @@ const sketch = {
         if (!this.isActive) return;
         if (edges.length < 3) { fb('Need at least 3 edges for closed loop', true); return; }
         const height = parseFloat(ds().root.sketchExtH) || 1;
-        const exportResult = await cmd('sketch_export');
+        const exportResult = cmd('sketch_export');
         if (!exportResult?.sketchJson) { fb('Failed to export sketch', true); return; }
         // sketch_extrude is the final commit — uses default options (record: true, broadcast: true)
         const result = await cadCommand('sketch_extrude', { sketchJson: exportResult.sketchJson, height });
@@ -171,17 +173,17 @@ const sketch = {
         } else { fb(result?.error || 'Extrude failed (ensure edges form closed loop)', true); }
     },
 
-    async cancel() {
-        await cmd('sketch_cancel');
+    cancel() {
+        cmd('sketch_cancel');
         reset();
         fb('Sketch cancelled', false);
     },
 
-    async quickRect() {
+    quickRect() {
         if (!this.isActive) {
             const d = ds();
             const plane = d?.root?.sketchPlane || 'xy';
-            const r = await cmd('begin_sketch', { plane });
+            const r = cmd('begin_sketch', { plane });
             if (!r?.sketchId) return;
             d.beginBatch(); d.root.sketchActive = true; d.endBatch();
         }
@@ -189,28 +191,29 @@ const sketch = {
         const w = parseFloat(d.root.sketchRectW) || 2;
         const h = parseFloat(d.root.sketchRectH) || 1;
         const ids = [
-            (await cmd('sketch_add_point', { x: 0, y: 0 }))?.pointId,
-            (await cmd('sketch_add_point', { x: w, y: 0 }))?.pointId,
-            (await cmd('sketch_add_point', { x: w, y: h }))?.pointId,
-            (await cmd('sketch_add_point', { x: 0, y: h }))?.pointId,
+            cmd('sketch_add_point', { x: 0, y: 0 })?.pointId,
+            cmd('sketch_add_point', { x: w, y: 0 })?.pointId,
+            cmd('sketch_add_point', { x: w, y: h })?.pointId,
+            cmd('sketch_add_point', { x: 0, y: h })?.pointId,
         ];
         if (ids.some(id => !id)) { fb('Failed to add points', true); return; }
-        points.push({ id: ids[0], x: 0, y: 0 }, { id: ids[1], x: w, y: 0 },
-            { id: ids[2], x: w, y: h }, { id: ids[3], x: 0, y: h });
-        const edgeIds = [];
+        const sIds = ids as string[];
+        points.push({ id: sIds[0], x: 0, y: 0 }, { id: sIds[1], x: w, y: 0 },
+            { id: sIds[2], x: w, y: h }, { id: sIds[3], x: 0, y: h });
+        const edgeIds: string[] = [];
         for (let i = 0; i < 4; i++) {
-            const r = await cmd('sketch_add_edge', { p0Id: ids[i], p1Id: ids[(i + 1) % 4] });
+            const r = cmd('sketch_add_edge', { p0Id: sIds[i], p1Id: sIds[(i + 1) % 4] });
             if (!r?.edgeId) { fb('Failed to add edge', true); return; }
             edgeIds.push(r.edgeId);
-            edges.push({ id: r.edgeId, p0Id: ids[i], p1Id: ids[(i + 1) % 4] });
+            edges.push({ id: r.edgeId, p0Id: sIds[i], p1Id: sIds[(i + 1) % 4] });
         }
-        await cmd('sketch_add_constraint', { constraintType: 'fixed', params: JSON.stringify({ point_id: ids[0], x: 0, y: 0 }) });
-        await cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[0] }) });
-        await cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[2] }) });
-        await cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[1] }) });
-        await cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[3] }) });
-        await cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[1], value: w }) });
-        await cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[3], value: h }) });
+        cmd('sketch_add_constraint', { constraintType: 'fixed', params: JSON.stringify({ point_id: ids[0], x: 0, y: 0 }) });
+        cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[0] }) });
+        cmd('sketch_add_constraint', { constraintType: 'horizontal', params: JSON.stringify({ edge_id: edgeIds[2] }) });
+        cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[1] }) });
+        cmd('sketch_add_constraint', { constraintType: 'vertical', params: JSON.stringify({ edge_id: edgeIds[3] }) });
+        cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[1], value: w }) });
+        cmd('sketch_add_constraint', { constraintType: 'distance', params: JSON.stringify({ p0_id: ids[0], p1_id: ids[3], value: h }) });
         constraints.push({ type: 'fixed' }, { type: 'horizontal' }, { type: 'horizontal' },
             { type: 'vertical' }, { type: 'vertical' }, { type: 'distance' }, { type: 'distance' });
         syncInfo(); rebuildSelects();

@@ -40,7 +40,7 @@ export class CadOutliner extends LitElement {
     this._names = {};
   }
 
-  willUpdate(changed) {
+  willUpdate(changed: Map<PropertyKey, unknown>) {
     if (changed.has('objectIds')) {
       // Refresh object names from WASM when list changes
       try {
@@ -71,18 +71,18 @@ export class CadOutliner extends LitElement {
             ${i}: ${name}${label ? html` <b>${label}</b>` : ''}
           </button>
           <button class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-50 hover:!opacity-100 p-0.5 h-auto min-h-0"
-                  title="Focus object" @click=${(e) => { e.stopPropagation(); this._focus(id); }}>
+                  title="Focus object" @click=${(e: Event) => { e.stopPropagation(); this._focus(id); }}>
             <svg xmlns="http://www.w3.org/2000/svg" class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
           </button>
         </div>`;
     })}`;
   }
 
-  _select(id) {
+  _select(id: string): void {
     window.cadCommand?.('select', { id });
   }
 
-  _focus(id) {
+  _focus(id: string): void {
     (document.getElementById('viewport') as any)?.zoomTo(id);
   }
 }

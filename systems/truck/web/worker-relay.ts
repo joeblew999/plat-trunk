@@ -1,12 +1,13 @@
 // worker-relay.js — Handles non-signal SSE events (commands) from Worker.
-import { cadCommand, reconcile } from './state';
+import { cadCommand } from './dispatch';
+import { reconcile } from './reconcile';
 import { client } from './api-client';
 
 const modelId = window.__modelId || 'default';
 
-let eventSource = null;
+let eventSource: EventSource | null = null;
 
-async function handleCommand(id, command) {
+async function handleCommand(id: string, command: { type: string; params?: Record<string, unknown> }): Promise<void> {
   console.log(`[worker-relay] Executing command: ${command.type}`, command.params);
   const result = await cadCommand(command.type, command.params || {}, { source: 'api' });
   try {

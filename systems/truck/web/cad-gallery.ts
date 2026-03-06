@@ -7,6 +7,9 @@
  */
 import { LitElement, html } from 'lit';
 import { client } from './api-client';
+import type { components } from './api-types';
+
+type ModelManifest = components['schemas']['ModelManifest'];
 
 export class CadGallery extends LitElement {
   static properties = {
@@ -16,7 +19,7 @@ export class CadGallery extends LitElement {
   };
 
   // TypeScript property declarations (Lit manages reactivity via static properties above)
-  declare models: any[];
+  declare models: ModelManifest[];
   declare loading: boolean;
   declare error: string;
   declare _deletingId: string | null;
@@ -50,7 +53,7 @@ export class CadGallery extends LitElement {
     this.loading = false;
   }
 
-  async _delete(id, name) {
+  async _delete(id: string, name: string): Promise<void> {
     if (!confirm(`Delete "${name}"?`)) return;
     this._deletingId = id;
     this.requestUpdate();
@@ -63,7 +66,7 @@ export class CadGallery extends LitElement {
     this.requestUpdate();
   }
 
-  _open(id) {
+  _open(id: string): void {
     // Skip if already on this model
     if (id === window.__modelId) return;
     // Dirty check: warn if there are ops recorded since last cloud save
@@ -72,7 +75,7 @@ export class CadGallery extends LitElement {
     window.location.href = `/model/${id}`;
   }
 
-  _thumbnailUrl(model) {
+  _thumbnailUrl(model: ModelManifest): string | null {
     return model.hasThumbnail ? `/api/models/${model.id}/thumbnail` : null;
   }
 
@@ -107,7 +110,7 @@ export class CadGallery extends LitElement {
                 ${this._deletingId === m.id
                   ? html`<span class="loading loading-spinner loading-xs"></span>`
                   : html`<button class="btn btn-xs btn-ghost btn-square opacity-40 hover:opacity-100 hover:text-error"
-                        title="Delete" @click=${(e) => { e.stopPropagation(); this._delete(m.id, m.name); }}>
+                        title="Delete" @click=${(e: Event) => { e.stopPropagation(); this._delete(m.id, m.name); }}>
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
                   </svg>

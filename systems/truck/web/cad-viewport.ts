@@ -96,7 +96,7 @@ export class CadViewport extends LitElement {
    * This is the Datastar → Lit → WASM bridge: when a Datastar signal mutates,
    * data-attr sets the attribute, Lit parses it, and updated() fires.
    */
-  updated(changedProperties) {
+  updated(changedProperties: Map<PropertyKey, unknown>) {
     if (changedProperties.has('selectedId')) {
       // Tell WASM which object is selected (for highlight rendering)
       if (window.sceneController) {
@@ -145,7 +145,7 @@ export class CadViewport extends LitElement {
     this.controls.dampingFactor = 0.1;
 
     // Gizmo + pick interaction
-    this._setupInteraction(canvas);
+    this._setupInteraction(canvas as HTMLElement);
 
     // Resize observer — update camera aspect ratio
     this._resizeObserver = new ResizeObserver(entries => {
@@ -174,7 +174,7 @@ export class CadViewport extends LitElement {
   // ── Helpers ──────────────────────────────────────────────────────
 
   /** Convert mouse event to NDC [-1,1] coordinates */
-  _toNdc(e, canvas) {
+  _toNdc(e: MouseEvent, canvas: HTMLElement): [number, number] {
     const rect = canvas.getBoundingClientRect();
     const x = (2 * (e.clientX - rect.left) / rect.width) - 1;
     const y = 1 - (2 * (e.clientY - rect.top) / rect.height);
@@ -183,8 +183,8 @@ export class CadViewport extends LitElement {
 
   // ── Gizmo Traffic Controller ─────────────────────────────────────
 
-  _setupInteraction(canvas) {
-    canvas.addEventListener('pointerdown', (e) => {
+  _setupInteraction(canvas: HTMLElement): void {
+    canvas.addEventListener('pointerdown', (e: PointerEvent) => {
       if (e.button !== 0 || !window.sceneController) return;
       const [ndcX, ndcY] = this._toNdc(e, canvas);
 
@@ -197,7 +197,7 @@ export class CadViewport extends LitElement {
         const axis = window.sceneController.begin_gizmo_drag(ndcX, ndcY);
         if (axis) {
           this._isDraggingGizmo = true;
-          this.controls.enabled = false; // LOCK orbit during gizmo drag
+          this.controls!.enabled = false; // LOCK orbit during gizmo drag
           this._prevNdc = [ndcX, ndcY];
           canvas.style.cursor = 'grabbing';
           canvas.setPointerCapture(e.pointerId);
@@ -213,7 +213,7 @@ export class CadViewport extends LitElement {
       window.cadQuery('select', { id: pickedId });
     });
 
-    canvas.addEventListener('pointermove', (e) => {
+    canvas.addEventListener('pointermove', (e: PointerEvent) => {
       if (!this._isDraggingGizmo || !window.sceneController) return;
       const [ndcX, ndcY] = this._toNdc(e, canvas);
 
@@ -225,15 +225,15 @@ export class CadViewport extends LitElement {
       e.stopPropagation();
     });
 
-    canvas.addEventListener('pointerup', (e) => {
+    canvas.addEventListener('pointerup', (e: PointerEvent) => {
       if (!this._isDraggingGizmo || !window.sceneController) return;
       this._isDraggingGizmo = false;
-      this.controls.enabled = true; // UNLOCK orbit
+      this.controls!.enabled = true; // UNLOCK orbit
       canvas.style.cursor = '';
       canvas.releasePointerCapture(e.pointerId);
 
       const result = window.sceneController.end_gizmo_drag();
-      if (result && result.objectId && window.cadDocManager?.handle) {
+      if (result && result.objectId && window.cadDocManager?._docBytes) {
         window.cadDocManager.record('translate', {
           objectId: result.objectId,
           dx: result.dx, dy: result.dy, dz: result.dz,
@@ -248,7 +248,7 @@ export class CadViewport extends LitElement {
       if (e.key === 'Escape') {
         if (this._isDraggingGizmo && window.sceneController) {
           this._isDraggingGizmo = false;
-          this.controls.enabled = true;
+          this.controls!.enabled = true;
           canvas.style.cursor = '';
           window.sceneController.cancel_gizmo_drag();
         } else if (window.sceneController) {
@@ -319,9 +319,9 @@ export class CadViewport extends LitElement {
       if (this._isAnimating) {
         const t = 0.1;
         this.camera.position.lerp(this._targetCamPos, t);
-        this.controls.target.lerp(this._targetLookAt, t);
+        this.controls!.target.lerp(this._targetLookAt, t);
         if (this.camera.position.distanceTo(this._targetCamPos) < 0.01 &&
-            this.controls.target.distanceTo(this._targetLookAt) < 0.01) {
+            this.controls!.target.distanceTo(this._targetLookAt) < 0.01) {
           this._isAnimating = false;
         }
       }
@@ -353,7 +353,7 @@ export class CadViewport extends LitElement {
     // For now, zoom to scene center with a reasonable distance
     const targetLookAt = new THREE.Vector3(0, 0, 0);
     const currentDir = new THREE.Vector3()
-      .subVectors(this.camera.position, this.controls.target)
+      .subVectors(this.camera.position, this.controls!.target)
       .normalize();
     if (currentDir.lengthSq() < 0.01) currentDir.set(1, 1, 1).normalize();
 
