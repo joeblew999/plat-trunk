@@ -69,7 +69,8 @@
     sketchPlane: 'xy', sketchPtX: 0, sketchPtY: 0,
     sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
     sketchConType: '', sketchConVal: 1, sketchConVal2: 0,
-    statusMode: ''
+    statusMode: '',
+    storagePct: 0, presenceCount: 0
 }"
 data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
@@ -163,8 +164,12 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 <button data-testid="get-status" class="btn btn-xs btn-ghost opacity-50" title="Get system status"
                         data-on:click="window.cadCommand('get_status').then(r => alert(JSON.stringify(r, null, 2)))">Status</button>
             </div>
-            <button data-testid="clear-data" class="btn btn-xs btn-ghost text-error opacity-60 hover:opacity-100 w-full" title="Wipe all local data"
-                    data-on:click="window.cadCommand('clear_data')">Wipe Local Data</button>
+            <div class="flex gap-1 w-full">
+                <button data-testid="clear-data" class="btn btn-xs btn-ghost text-warning opacity-60 hover:opacity-100 flex-1" title="Reset local data (server keeps state)"
+                        data-on:click="window.cadCommand('clear_data', {mode: 'local'})">Reset Local</button>
+                <button data-testid="delete-model" class="btn btn-xs btn-ghost text-error opacity-60 hover:opacity-100 flex-1" title="Delete model everywhere"
+                        data-on:click="window.cadCommand('clear_data', {mode: 'full'})">Delete Model</button>
+            </div>
         </div>
 
         <!-- ── Scene ── -->
@@ -443,6 +448,10 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
         <span data-show="$warmCount > 0" data-text="'(' + ($objectCount - $warmCount) + ' hot, ' + $warmCount + ' warm)'" class="opacity-60"></span>
         <span data-show="$selectedId" data-text="'Selected: ' + ($selectedId ? $selectedId.slice(0,8) : '')"></span>
         <span class="flex-1"></span>
+        <span data-show="$presenceCount > 0" data-text="'Editors: ' + $presenceCount" class="opacity-60 text-xs"></span>
+        <span data-show="$storagePct > 0" data-text="'Storage: ' + $storagePct + '%'"
+              data-class="{'text-warning': $storagePct > 80 && $storagePct <= 90, 'text-error': $storagePct > 90}"
+              class="opacity-60 text-xs"></span>
         <span id="status-mode" class="opacity-50"></span>
     </footer>
 

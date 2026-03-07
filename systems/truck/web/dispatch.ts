@@ -164,18 +164,26 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
       return { url: shareUrl };
     }
 
-    case 'clear_data':
-      if (confirm('WIPE ALL LOCAL DATA? This cannot be undone.')) {
+    case 'clear_data': {
+      const wipeMode = (params.mode as string) || 'local';
+      const msg = wipeMode === 'full'
+        ? 'DELETE MODEL? This removes local AND server data permanently.'
+        : 'RESET LOCAL DATA? Server state will repopulate on next connect.';
+      if (confirm(msg)) {
         localStorage.clear();
-        // Clear all IndexedDB stores (blobs, objects, Automerge docs)
         indexedDB.deleteDatabase('cad-blobs');
         indexedDB.deleteDatabase('cad-objects');
         indexedDB.deleteDatabase('cad-docs');
         indexedDB.deleteDatabase('cad-sync');
+        if (wipeMode === 'full') {
+          const mid = window.__modelId;
+          if (mid) await fetch(`/api/models/${mid}`, { method: 'DELETE' }).catch(() => {});
+        }
         location.reload();
         return { success: true };
       }
       return { success: false };
+    }
 
     default:
       return { error: `Unknown JS command: ${type}` };

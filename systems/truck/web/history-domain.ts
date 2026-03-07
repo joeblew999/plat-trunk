@@ -4,11 +4,12 @@ import initSyncWasm, {
 } from './pkg-sync/truck_sync.js';
 import { saveDoc, loadDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
+import { refreshBudget } from './storage-budget';
 import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { moduleRouter } from './core/module-router';
-import { resetTierState, registerWarmObjects } from './tier-manager';
-import type { CadOptions, SceneEntry } from './types';
+import { executeReplayPlan, type ReplayPlan } from './replay-executor';
+import type { CadOptions } from './types';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
 
 // CadDocumentManager — truck-sync WASM-backed operation log for collaborative CAD.
@@ -162,6 +163,11 @@ export class CadDocumentManagerBase {
             while (this._meta.snapshots.length > 3) this._meta.snapshots.splice(0, 1);
         }
 
+        // Refresh storage budget at snapshot intervals
+        if (nextOpCount % SNAPSHOT_INTERVAL === 0) {
+            refreshBudget().catch(() => {});
+        }
+
         await this._saveAndBroadcast();
         this._localOpCount = this._getDocOpCount();
         reconcile({});
@@ -179,6 +185,7 @@ export class CadDocumentManagerBase {
                 } else {
                     this._docBytes = set_op_enabled(this._docBytes, ops[i].id, false);
                 }
+                this._meta.snapshotValidFrom = undefined; // invalidate cache
                 await this._saveAndBroadcast();
                 await this._replayScene();
                 this._localOpCount = this._getDocOpCount();
@@ -207,6 +214,7 @@ export class CadDocumentManagerBase {
         } else {
             this._docBytes = set_op_enabled(this._docBytes, ops[target].id, true);
         }
+        this._meta.snapshotValidFrom = undefined; // invalidate cache
         await this._saveAndBroadcast();
         await this._replayScene();
         this._localOpCount = this._getDocOpCount();
@@ -219,6 +227,7 @@ export class CadDocumentManagerBase {
         const ops = this._getOps();
         if (toOpIndex < 0 || toOpIndex >= ops.length) return false;
         this._docBytes = rollback_to(this._docBytes, this.actorId, toOpIndex);
+        this._meta.snapshotValidFrom = undefined; // invalidate cache
         await this._saveAndBroadcast();
         await this._replayScene();
         this._localOpCount = this._getDocOpCount();
@@ -234,6 +243,7 @@ export class CadDocumentManagerBase {
             const opId = this._getOps()[opIndex]?.id;
             if (opId) this._docBytes = set_op_enabled(this._docBytes, opId, !currentEnabled);
         }
+        this._meta.snapshotValidFrom = undefined; // invalidate cache
         await this._saveAndBroadcast();
         await this._replayScene();
         this._localOpCount = this._getDocOpCount();
@@ -313,12 +323,11 @@ export class CadDocumentManagerBase {
 
     _listenForChanges(): void {
         this._bc = new BroadcastChannel('cad-sync');
-        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         this._bc.onmessage = (event) => {
             const msg = event.data as Partial<SyncMessage>;
             const { type, bytes, actorId, modelId } = msg;
             if (type !== 'doc_update' || actorId === this.actorId) return;
-            if (modelId !== this._modelId) return;  // ignore other models
+            if (modelId !== this._modelId) return;
             if (!this._docBytes) return;
             try {
                 if (!bytes) return;
@@ -328,63 +337,72 @@ export class CadDocumentManagerBase {
                 console.warn('[Sync] CRDT merge failed:', e);
                 return;
             }
-            if (this._replayInProgress) return;
-            clearTimeout(debounceTimer!);
-            debounceTimer = setTimeout(() => {
-                console.log('[Sync] Remote change detected, replaying scene...');
-                this._replayScene();
-                this._localOpCount = this._getDocOpCount();
-            }, 100);
+            this._scheduleRemoteReplay();
         };
     }
 
-    async _replayScene(): Promise<void> {
+    private _remoteReplayTimer: ReturnType<typeof setTimeout> | null = null;
+
+    _scheduleRemoteReplay(): void {
+        if (this._replayInProgress) return;
+        if (this._remoteReplayTimer) clearTimeout(this._remoteReplayTimer);
+        this._remoteReplayTimer = setTimeout(() => {
+            this._remoteReplayTimer = null;
+            console.log('[Sync] Remote change detected, replaying scene...');
+            this._replayScene('remote');
+            this._localOpCount = this._getDocOpCount();
+        }, 500);
+    }
+
+    /** Sync-layer: highest op index where all prior ops are enabled. */
+    _computeSnapshotValidFrom(ops: CadOperation[]): number {
+        let validFrom = 0;
+        for (let i = 0; i < ops.length; i++) {
+            if (!ops[i].enabled) break;
+            validFrom = i + 1;
+        }
+        return validFrom;
+    }
+
+    /** Sync-layer: compute a ReplayPlan (best snapshot + remaining ops). */
+    async _computeReplayPlan(source: 'local' | 'remote' | 'server' = 'local'): Promise<ReplayPlan> {
+        const ops = this._getOps();
+        let startIndex = 0;
+        let snapshotJson: string | null = null;
+        // Use cached validFrom if available, otherwise compute + cache
+        const validFrom = this._meta.snapshotValidFrom ?? this._computeSnapshotValidFrom(ops);
+        if (this._meta.snapshotValidFrom === undefined) {
+            this._meta.snapshotValidFrom = validFrom;
+        }
+        const snaps = this._meta.snapshots || [];
+        for (let s = snaps.length - 1; s >= 0; s--) {
+            const snap = snaps[s];
+            if (snap.atOpIndex == null || snap.atOpIndex > validFrom) continue;
+            let json: string | null = null;
+            if (snap.blobRef) {
+                try { json = await getBlob(snap.blobRef) as string | null; }
+                catch { /* snapshot unavailable */ }
+            }
+            if (json) { snapshotJson = json; startIndex = snap.atOpIndex; break; }
+        }
+        return {
+            snapshotJson,
+            startIndex,
+            ops,
+            totalEnabledOps: ops.filter(o => o.enabled).length,
+            source,
+        };
+    }
+
+    async _replayScene(source: 'local' | 'remote' | 'server' = 'local'): Promise<void> {
         if (!moduleRouter.ready || this._replayInProgress) return;
         this._replayInProgress = true;
         try {
-            const ops = this._getOps();
-            const REPLAY = { record: false, reconcile: false, source: 'replay' };
             const prevSelectedId = window._ds?.root?.selectedId ?? null;
+            const plan = await this._computeReplayPlan(source);
+            await executeReplayPlan(plan);
 
-            await resetTierState();
-
-            let startIndex = 0;
-            let snapshotJson: string | null = null;
-            const snaps = this._meta.snapshots || [];
-            for (let s = snaps.length - 1; s >= 0; s--) {
-                const snap = snaps[s];
-                if (snap.atOpIndex == null) continue;
-                let json: string | null = null;
-                if (snap.blobRef) {
-                    try { json = await getBlob(snap.blobRef) as string | null; }
-                    catch (err) { console.warn('[BlobStore] Snapshot fetch failed:', err); }
-                }
-                if (!json) continue;
-                let valid = true;
-                for (let i = 0; i < snap.atOpIndex && i < ops.length; i++) {
-                    if (!ops[i].enabled) { valid = false; break; }
-                }
-                if (valid) { snapshotJson = json; startIndex = snap.atOpIndex; break; }
-            }
-
-            const PROGRESSIVE_THRESHOLD = 50;
-            let entries: SceneEntry[] | null = null;
-            if (snapshotJson) {
-                try { entries = JSON.parse(snapshotJson); } catch { entries = null; }
-            }
-            const useProgressive = entries && Array.isArray(entries) && entries.length >= PROGRESSIVE_THRESHOLD;
-
-            if (useProgressive) {
-                await this._progressiveLoad(entries!, ops, startIndex, REPLAY);
-            } else {
-                if (snapshotJson) {
-                    cadCommand('import_scene', { json: snapshotJson }, REPLAY);
-                } else {
-                    cadCommand('clear', {}, REPLAY);
-                }
-                await this._replayRemainingOps(ops, startIndex, REPLAY);
-            }
-
+            // Restore selection (UI concern)
             const ids = (moduleRouter.query('objectIds') as string[] | null) ?? [];
             const ds = window._ds;
             let newSel: string | null = null;
@@ -397,87 +415,16 @@ export class CadDocumentManagerBase {
             if (ds?.root) ds.root.selectedId = newSel;
             reconcile({ selectedId: newSel });
             this._renderTimeline();
+            this._emitSceneChanged(plan);
         } finally {
             this._replayInProgress = false;
         }
     }
 
-    async _replayRemainingOps(ops: CadOperation[], startIndex: number, REPLAY: CadOptions): Promise<void> {
-        for (let i = startIndex; i < ops.length; i++) {
-            if (ops[i].enabled) {
-                const op = ops[i];
-                let replayParams = op.params;
-                if (op.params.blobRef) {
-                    const blob = await getBlob(op.params.blobRef);
-                    const dataKey = op.type === 'import_scene' ? 'json' : 'data';
-                    replayParams = { ...op.params, [dataKey]: blob };
-                }
-                cadCommand(op.type, replayParams, REPLAY);
-            }
-        }
-    }
-
-    async _progressiveLoad(entries: SceneEntry[], ops: CadOperation[], startIndex: number, REPLAY: CadOptions): Promise<void> {
-        const ctrl = this._ctrl();
-        if (!ctrl) return;
-        const modelId = window.__modelId;
-        cadCommand('clear', {}, REPLAY);
-
-        const neededIds = new Set<string>();
-        for (let i = startIndex; i < ops.length; i++) {
-            if (!ops[i].enabled) continue;
-            const p = ops[i].params;
-            if (p.id) neededIds.add(p.id);
-            if (p.objectId) neededIds.add(p.objectId);
-            if (p._replayId) neededIds.add(p._replayId);
-            if (p.selA) neededIds.add(p.selA);
-            if (p.selB) neededIds.add(p.selB);
-        }
-
-        let frustum: any = null;
-        const viewport = document.querySelector('cad-viewport') as any;
-        if (viewport?.camera) {
-            const THREE = await import('three');
-            const cam = viewport.camera;
-            cam.updateMatrixWorld();
-            cam.updateProjectionMatrix();
-            frustum = new THREE.Frustum();
-            const vp = new THREE.Matrix4();
-            vp.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-            frustum.setFromProjectionMatrix(vp);
-        }
-        const THREE = frustum ? await import('three') : null;
-
-        const hotEntries: SceneEntry[] = [];
-        const warmEntries: SceneEntry[] = [];
-        for (const entry of entries) {
-            const isNeeded = neededIds.has(entry.id);
-            let isVisible = true;
-            if (frustum && THREE && entry.bounding_sphere) {
-                const [cx, cy, cz, r] = entry.bounding_sphere;
-                isVisible = frustum.intersectsSphere(new THREE.Sphere(new THREE.Vector3(cx, cy, cz), r));
-            }
-            (isNeeded || isVisible ? hotEntries : warmEntries).push(entry);
-        }
-
-        for (const entry of hotEntries) ctrl.import_entry(JSON.stringify(entry));
-        if (warmEntries.length > 0) {
-            const { bulkPutObjects } = await import('./object-store');
-            await bulkPutObjects(modelId, warmEntries.map(e => ({ objectId: e.id, entryJson: JSON.stringify(e) })));
-            const warmSphereMap = new Map();
-            for (const entry of warmEntries) {
-                if (entry.bounding_sphere) {
-                    const [cx, cy, cz, r] = entry.bounding_sphere;
-                    const color = entry.style?.albedo || [0.5, 0.5, 0.5, 1.0];
-                    ctrl.add_lod_proxy(JSON.stringify({ objectId: entry.id, center: [cx, cy, cz], radius: r, color }));
-                    warmSphereMap.set(entry.id, { center: [cx, cy, cz], radius: r, color });
-                }
-            }
-            registerWarmObjects(warmSphereMap);
-        }
-
-        console.log(`[Progressive] ${hotEntries.length} Hot, ${warmEntries.length} Warm, ${ops.length - startIndex} remaining ops`);
-        await this._replayRemainingOps(ops, startIndex, REPLAY);
+    _emitSceneChanged(plan: ReplayPlan): void {
+        window.dispatchEvent(new CustomEvent('cad-scene-changed', {
+            detail: { source: plan.source, opCount: plan.totalEnabledOps }
+        }));
     }
 
     // ── Server sync (ADR-0001 Part B) ─────────────────────────────────────────

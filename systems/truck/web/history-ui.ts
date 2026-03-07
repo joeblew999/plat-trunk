@@ -54,7 +54,12 @@ class CadDocumentManager extends CadDocumentManagerBase {
             return ABBR[words[0]] || words[0];
         };
 
-        const chips: Array<{label: string; color: string; enabled: boolean; own: boolean; groupId: string | null | undefined; opIndex: number}> = [];
+        // Assign stable colors to actors
+        const ACTOR_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+        const actorIds = [...new Set(ops.map(o => o.actorId))];
+        const actorColorMap = new Map(actorIds.map((id, i) => [id, ACTOR_COLORS[i % ACTOR_COLORS.length]]));
+
+        const chips: Array<{label: string; color: string; enabled: boolean; own: boolean; groupId: string | null | undefined; opIndex: number; actorId: string; actorColor: string}> = [];
         let i = 0;
         while (i < ops.length) {
             const op = ops[i];
@@ -69,6 +74,8 @@ class CadDocumentManager extends CadDocumentManagerBase {
                     own: primary.actorId === this.actorId,
                     groupId: gid,
                     opIndex: i,
+                    actorId: primary.actorId,
+                    actorColor: actorColorMap.get(primary.actorId) || ACTOR_COLORS[0],
                 });
                 i += group.length;
             } else {
@@ -79,15 +86,21 @@ class CadDocumentManager extends CadDocumentManagerBase {
                     own: op.actorId === this.actorId,
                     groupId: null,
                     opIndex: i,
+                    actorId: op.actorId,
+                    actorColor: actorColorMap.get(op.actorId) || ACTOR_COLORS[0],
                 });
                 i++;
             }
         }
 
+        const actorName = (id: string) => id === 'mcp-server' ? 'MCP Agent' : (id === this.actorId ? 'You' : id.slice(0, 8));
         strip.innerHTML = chips.map((chip, ci) => {
             const disabled = chip.enabled ? '' : 'timeline-chip-disabled';
             const own = chip.own ? 'timeline-chip-own' : 'timeline-chip-remote';
-            return `<button class="btn btn-xs ${chip.color} ${disabled} ${own}" data-chip="${ci}" title="${chip.enabled ? 'Click to disable' : 'Click to re-enable'}">${chip.label}</button>`;
+            const action = chip.enabled ? 'Click to disable' : 'Click to re-enable';
+            const title = `${actorName(chip.actorId)} — ${action}`;
+            const dot = actorIds.length > 1 ? `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${chip.actorColor};margin-right:3px;vertical-align:middle"></span>` : '';
+            return `<button class="btn btn-xs ${chip.color} ${disabled} ${own}" data-chip="${ci}" title="${title}">${dot}${chip.label}</button>`;
         }).join('');
 
         strip.querySelectorAll('[data-chip]').forEach((btn) => {

@@ -2,6 +2,8 @@
 // Large data (IFC files, STEP files, scene snapshots) stored here by SHA-256 hash.
 // Only lightweight refs (blobRef: "sha256-...") go into the Automerge CRDT document.
 
+import { currentBudget } from './storage-budget';
+
 const DB_NAME = 'cad-blobs';
 const DB_VERSION = 1;
 const STORE_NAME = 'blobs';
@@ -29,6 +31,11 @@ async function computeHash(data: string): Promise<string> {
 
 /** Store data by content hash. Returns the key (sha256-...). Deduplicates automatically. */
 export async function storeBlob(data: string): Promise<string> {
+    const budget = currentBudget();
+    if (budget && !budget.canStoreSnapshot) {
+        console.warn('[blob-store] Storage > 90%, skipping blob write');
+        return 'budget-exceeded';
+    }
     const key = await computeHash(data);
     const db = await openBlobDb();
     return new Promise((resolve, reject) => {

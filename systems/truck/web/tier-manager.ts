@@ -2,7 +2,8 @@
 // Automatically evicts distant/idle Hot objects to Warm (IndexedDB + LOD proxy)
 // and promotes nearby Warm objects back to Hot (full WASM + GPU).
 
-import { evictObject, promoteObject, clearObjects } from './object-store';
+import { evictObject, promoteObject, clearObjects, listObjectsWithSpheres } from './object-store';
+import { currentBudget } from './storage-budget';
 
 // ── Thresholds (tunable via setThresholds) ──────────────────────────────────
 
@@ -73,6 +74,8 @@ async function _tickInner() {
     const now = Date.now();
 
     // ── Evict: Hot → Warm ───────────────────────────────────────────────
+    const budget = currentBudget();
+    if (budget && !budget.canEvictToWarm) return; // Storage > 95%, skip evictions
     let evictions = 0;
     for (const sphere of hotSpheres) {
         if (evictions >= MAX_EVICTIONS_PER_TICK) break;
@@ -144,19 +147,32 @@ function _publishWarmCount() {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /** Start the tier manager. Call once after WASM is initialized. */
-export function startTierManager(modelId = 'default') {
+export async function startTierManager(modelId = 'default') {
     if (_enabled) return;
     _modelId = modelId;
     _enabled = true;
+
+    // Restore warm spheres from IDB (H7a: survive page reload)
+    try {
+        const warmList = await listObjectsWithSpheres(modelId);
+        for (const { objectId, boundingSphere, style } of warmList) {
+            if (boundingSphere) {
+                const [cx, cy, cz, r] = boundingSphere;
+                const color = style?.albedo ?? [0.5, 0.5, 0.5, 1.0];
+                _warmSpheres.set(objectId, { center: [cx, cy, cz], radius: r, color });
+            }
+        }
+        if (_warmSpheres.size > 0) _publishWarmCount();
+    } catch (e) { console.warn('[TierManager] warm sphere restore failed:', e); }
+
     _tickTimer = setInterval(() => {
-        // Use requestIdleCallback if available for lower priority
         if (window.requestIdleCallback) {
             window.requestIdleCallback(() => tick(), { timeout: TICK_INTERVAL * 2 });
         } else {
             tick();
         }
     }, TICK_INTERVAL);
-    console.log('[TierManager] started, model=', modelId);
+    console.log('[TierManager] started, model=', modelId, 'restored', _warmSpheres.size, 'warm');
 }
 
 /** Reset tier state (call on scene clear/replay to avoid stale warm refs).
@@ -188,6 +204,40 @@ export function registerWarmObjects(sphereMap: Map<string, { center: number[]; r
     }
     _publishWarmCount();
 }
+
+/** Aggressive pass — same as tick but no idle-time requirement, higher eviction limit.
+ *  Triggered by cad-scene-changed from remote/server replays. */
+async function aggressivePass() {
+    const ctrl = window.sceneController;
+    if (!ctrl || !window.cadQuery) return;
+    const state = window.cadQuery('get_state', {}, { reconcile: false });
+    if (!state?.camera?.matrixWorld) return;
+    const camPos = cameraPositionFromMatrix(state.camera.matrixWorld);
+    let hotSpheres;
+    try { hotSpheres = JSON.parse(ctrl.get_bounding_spheres()); } catch { return; }
+    const budget = currentBudget();
+    if (budget && !budget.canEvictToWarm) return;
+    let evictions = 0;
+    for (const sphere of hotSpheres) {
+        if (evictions >= 10) break;
+        const { objectId, center, radius, color } = sphere;
+        if (objectId === (state.selectedId || '')) continue;
+        const dist = cameraDistToSphere(camPos, center, radius);
+        if (dist <= FAR_THRESHOLD) continue;
+        _warmSpheres.set(objectId, { center, radius, color });
+        const ok = await evictObject(_modelId, objectId);
+        if (ok) { ctrl.add_lod_proxy(JSON.stringify({ objectId, center, radius, color })); evictions++; }
+        else { _warmSpheres.delete(objectId); }
+    }
+    if (evictions > 0) _publishWarmCount();
+}
+
+// Listen for scene changes from remote/server replays
+window.addEventListener('cad-scene-changed', ((e: CustomEvent) => {
+    if (e.detail.source === 'remote' || e.detail.source === 'server') {
+        requestAnimationFrame(() => aggressivePass());
+    }
+}) as EventListener);
 
 /** Update thresholds at runtime (for UI slider or tests). */
 export function setThresholds({ near, far, idle }: { near?: number; far?: number; idle?: number } = {}) {

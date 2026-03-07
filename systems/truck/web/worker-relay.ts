@@ -7,6 +7,16 @@ const modelId = window.__modelId || 'default';
 
 let eventSource: EventSource | null = null;
 
+function getActorId(): string {
+  let id = localStorage.getItem('cad-actor-id');
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem('cad-actor-id', id); }
+  return id;
+}
+
+function getActorName(): string {
+  return localStorage.getItem('cad-actor-name') || 'User';
+}
+
 async function handleCommand(id: string, command: { type: string; params?: Record<string, unknown> }): Promise<void> {
   console.log(`[worker-relay] Executing command: ${command.type}`, command.params);
   const result = await cadCommand(command.type, command.params || {}, { source: 'api' });
@@ -24,8 +34,9 @@ const relay = {
   connect() {
     if (eventSource) return;
     console.log('[worker-relay] Connecting...');
-    // SSE stays as EventSource — not a JSON API call
-    eventSource = new EventSource(`/api/cad/${modelId}/events`);
+    const actorId = getActorId();
+    const name = encodeURIComponent(getActorName());
+    eventSource = new EventSource(`/api/cad/${modelId}/events?actorId=${actorId}&name=${name}`);
 
     eventSource.addEventListener('cad-command', (e) => {
       try {
@@ -46,6 +57,18 @@ const relay = {
         }
       } catch (err) {
         console.warn('[worker-relay] sync-op parse error:', err);
+      }
+    });
+
+    // Handle presence updates
+    eventSource.addEventListener('presence', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        (window as any).__presenceActors = data.actors;
+        (window as any).__presenceCount = data.actors?.length ?? 0;
+        reconcile({});
+      } catch (err) {
+        console.warn('[worker-relay] presence parse error:', err);
       }
     });
 

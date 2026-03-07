@@ -17,7 +17,6 @@ export const workers = [
     port: 8789,
     inspectorPort: 9230,
     build: DEV_BUILD,
-    migrate: 'bunx wrangler d1 migrations apply cad-op-log --local',
     healthUrl: 'http://localhost:8789/api/health',
     watch: {
       name: 'watch-wasm',

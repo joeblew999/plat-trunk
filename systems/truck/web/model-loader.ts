@@ -26,8 +26,15 @@ export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {
         if (sceneJson) sceneSource = 'example';
     }
     if (!sceneJson) {
-        sceneJson = await fetchCloud(modelId);
-        if (sceneJson) sceneSource = 'cloud';
+        // Try server snapshot cache first (faster than full cloud scene fetch)
+        const serverSnapshot = await fetchServerSnapshot(modelId);
+        if (serverSnapshot) {
+            sceneJson = serverSnapshot;
+            sceneSource = 'server-snapshot';
+        } else {
+            sceneJson = await fetchCloud(modelId);
+            if (sceneJson) sceneSource = 'cloud';
+        }
     }
 
     // ── Phase 2: Try WASM sync cache (local acceleration) ────────
@@ -48,6 +55,19 @@ export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {
     mgr._listenForChanges();
     mgr._updateDocInfo();
     mgr._renderTimeline();
+}
+
+async function fetchServerSnapshot(modelId: string): Promise<string | null> {
+    try {
+        const metaRes = await fetch(`/api/models/${modelId}/scene-meta`);
+        if (!metaRes.ok) return null;
+        const meta = await metaRes.json();
+        if (!meta?.replayOpsHash) return null;
+        const sceneRes = await fetch(`/api/models/${modelId}/scene`);
+        if (!sceneRes.ok) return null;
+        console.log(`[loadModel] Using server snapshot (hash=${meta.replayOpsHash}, ops=${meta.atOpIndex})`);
+        return await sceneRes.text();
+    } catch { return null; }
 }
 
 async function fetchCloud(modelId: string): Promise<string | null> {

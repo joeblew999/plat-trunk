@@ -9,6 +9,7 @@
 //   5. Signal readiness
 
 import { loadModel } from './model-loader';
+import { refreshBudget } from './storage-budget';
 
 export async function boot() {
     // Bail out if redirecting — prevent stale Automerge doc from loading
@@ -66,7 +67,14 @@ export async function boot() {
         import('./worker-relay');
     }
 
-    // ── 6. Ready ────────────────────────────────────────────────────
+    // ── 6. Actor ID + storage persistence + budget ─────────────────
+    if (!localStorage.getItem('cad-actor-id')) {
+        localStorage.setItem('cad-actor-id', crypto.randomUUID());
+    }
+    navigator.storage?.persist?.().catch(() => {});
+    await refreshBudget();
+
+    // ── 7. Ready ────────────────────────────────────────────────────
     window.__appReady = true;
     document.getElementById('loading-overlay')?.remove();
     console.log('App ready.');

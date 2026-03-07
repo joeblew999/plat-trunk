@@ -10,6 +10,7 @@ export interface ModelManifest {
   createdAt: string;
   updatedAt: string;
   hasThumbnail: boolean;
+  actors?: Record<string, string>;  // actorId → displayName
 }
 
 const PREFIX = 'models/';

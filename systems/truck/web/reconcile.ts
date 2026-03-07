@@ -54,6 +54,8 @@ function reconcileMetadata(r: any, ids: string[], mgr: DocManagerMeta | null) {
   r.canRedo = mgr?.canRedo ?? false;
   r.statusMode = window.__cadLocalMode ? 'Local' : 'Online';
   r.automergeEnabled = mgr?.enabled ?? true;
+  r.storagePct = (window as any).__storagePct ?? 0;
+  r.presenceCount = (window as any).__presenceCount ?? 0;
 
   // Update reactive Lit state object
   r.litState = {

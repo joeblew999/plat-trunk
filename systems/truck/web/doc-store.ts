@@ -18,6 +18,7 @@ export interface DocMeta {
     name: string;
     snapshots: SnapshotRef[];
     bimHierarchy?: unknown;
+    snapshotValidFrom?: number;  // Cached — recomputed on undo/redo/toggle
 }
 
 function openDb(): Promise<IDBDatabase> {

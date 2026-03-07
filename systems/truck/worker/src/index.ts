@@ -10,6 +10,7 @@ import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStorage } from './doc-storage';
 import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
+import { replayModel } from './replay';
 
 type Bindings = {
   ASSETS: Fetcher;
@@ -145,7 +146,8 @@ interface QueuedCommand {
 type SSEEvent =
   | { type: 'cad-command'; data: { id: string; command: any } }
   | { type: 'datastar-patch-signals'; data: any }
-  | { type: 'sync-op'; data: any };
+  | { type: 'sync-op'; data: any }
+  | { type: 'presence'; data: { actors: [string, { name: string; connectedAt: number }][] } };
 
 interface ModelSession {
   commandQueue: Map<string, QueuedCommand>;
@@ -154,6 +156,7 @@ interface ModelSession {
   sseClientCount: number;
   lastActivity: number;
   listeners: Set<(ev: SSEEvent) => void>;
+  actors: Map<string, { name: string; connectedAt: number }>;
 }
 
 const models = new Map<string, ModelSession>();
@@ -162,12 +165,17 @@ let lastActiveModelId = 'default';
 function getModel(modelId: string): ModelSession {
   let m = models.get(modelId);
   if (!m) {
-    m = { commandQueue: new Map(), sceneState: {}, sceneStateAt: 0, sseClientCount: 0, lastActivity: Date.now(), listeners: new Set() };
+    m = { commandQueue: new Map(), sceneState: {}, sceneStateAt: 0, sseClientCount: 0, lastActivity: Date.now(), listeners: new Set(), actors: new Map() };
     models.set(modelId, m);
   }
   m.lastActivity = Date.now();
   lastActiveModelId = modelId;
   return m;
+}
+
+function broadcastPresence(modelId: string) {
+  const model = getModel(modelId);
+  broadcast(modelId, { type: 'presence', data: { actors: [...model.actors.entries()] } });
 }
 
 function broadcast(modelId: string, ev: SSEEvent) {
@@ -294,14 +302,18 @@ function mountModule(hono: OpenAPIHono<{ Bindings: Bindings }>, prefix: string, 
     request: { params: ModelIdParam }, responses: { 200: { description: 'Event stream' } }
   }), (c) => {
     const modelId = c.req.param('modelId');
+    const actorId = c.req.query('actorId') || crypto.randomUUID();
+    const actorName = c.req.query('name') || 'User';
     return streamSSE(c, async (stream) => {
       const model = getModel(modelId);
       model.sseClientCount++;
+      model.actors.set(actorId, { name: actorName, connectedAt: Date.now() });
+      broadcastPresence(modelId);
       await stream.writeSSE({ event: 'datastar-patch-signals', data: `signals ${JSON.stringify({ cadConnected: true, cadObjects: model.sceneState.objectCount ?? 0 })}` });
       const q: SSEEvent[] = [];
       const l = (ev: SSEEvent) => q.push(ev);
       model.listeners.add(l);
-      stream.onAbort(() => { model.listeners.delete(l); model.sseClientCount--; });
+      stream.onAbort(() => { model.listeners.delete(l); model.sseClientCount--; model.actors.delete(actorId); broadcastPresence(modelId); });
       for (const cmd of model.commandQueue.values()) if (cmd.status === 'pending') { cmd.status = 'running'; await stream.writeSSE({ event: 'cad-command', data: JSON.stringify({ id: cmd.id, command: cmd.command }) }); }
       let hb = 0;
       while (true) {
@@ -530,6 +542,7 @@ const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', 
 const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Apply op to automerge doc', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
 const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
 const syncDocRoute = createRoute({ method: 'post', path: '/models/{modelId}/sync', tags: ['sync'], summary: 'Merge browser doc with server doc (CRDT sync)', request: { params: OpLogModelParam }, responses: { 200: { description: 'Merged doc bytes (application/octet-stream)' } } });
+const historyRoute = createRoute({ method: 'get', path: '/models/{modelId}/history', tags: ['sync'], summary: 'Edit history grouped by actor', request: { params: OpLogModelParam }, responses: { 200: { description: 'Actor summaries' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
 
 const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(getOpsRoute, async (c) => {
@@ -555,27 +568,39 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   })
   .openapi(replayRoute, async (c) => {
     const { modelId } = c.req.valid('param');
-    const storage = new R2DocStorage(c.env.MODELS);
-    const docBytes = await storage.load(modelId);
-    if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
-
-    // Get ordered, enabled-only ops from automerge doc
-    const replayOpsJson = await syncGetReplayOps(docBytes);
-    const replayOps: Array<{ type: string; params: Record<string, unknown> }> = JSON.parse(replayOpsJson);
-    if (replayOps.length === 0) return c.json({ error: 'No enabled ops' }, 404);
-
-    // Replay in headless WASM → export scene
+    const forceRefresh = c.req.query('refresh') === '1';
     try {
-      const wasm = await initHeadlessWasm();
-      const ctrl = new wasm.HeadlessController();
-      for (const op of replayOps) {
-        ctrl.execute(op.type, JSON.stringify(op.params));
-      }
-      const sceneJson = JSON.parse(ctrl.execute('export_scene', '{}')).scene as string;
-      return new Response(sceneJson, { headers: { 'content-type': 'application/json' } }) as any;
+      const result = await replayModel(modelId, c.env.MODELS, { forceRefresh });
+      if (!result) return c.json({ error: 'No doc or no enabled ops' }, 404);
+      return new Response(result.sceneJson, { headers: { 'content-type': 'application/json' } }) as any;
     } catch (err: any) {
       return c.json({ error: `Replay failed: ${err.message}` }, 500);
     }
+  })
+  .openapi(historyRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const storage = new R2DocStorage(c.env.MODELS);
+    const docBytes = await storage.load(modelId);
+    if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
+    const opsJson = await syncGetOps(docBytes);
+    const ops: Array<{ actorId: string; timestamp: number; type: string }> = JSON.parse(opsJson);
+    // Load manifest for actor name lookup
+    const store = new ModelStore(c.env.MODELS);
+    const manifest = await store.getManifest(modelId);
+    const actorNames = manifest?.actors ?? {};
+    const actors = new Map<string, { actorId: string; name: string; opCount: number; firstAt: number; lastAt: number }>();
+    for (const op of ops) {
+      const existing = actors.get(op.actorId);
+      if (existing) {
+        existing.opCount++;
+        if (op.timestamp < existing.firstAt) existing.firstAt = op.timestamp;
+        if (op.timestamp > existing.lastAt) existing.lastAt = op.timestamp;
+      } else {
+        const name = actorNames[op.actorId] || (op.actorId === 'mcp-server' ? 'MCP Agent' : 'User');
+        actors.set(op.actorId, { actorId: op.actorId, name, opCount: 1, firstAt: op.timestamp, lastAt: op.timestamp });
+      }
+    }
+    return c.json([...actors.values()]);
   })
   .openapi(syncDocRoute, async (c) => {
     const { modelId } = c.req.valid('param');
@@ -598,9 +623,67 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
       await storage.save(modelId, merged);
     }
 
+    // Update manifest actor names from merged doc ops
+    try {
+      const opsJson = await syncGetOps(merged);
+      const ops: Array<{ actorId: string }> = JSON.parse(opsJson);
+      const store = new ModelStore(c.env.MODELS);
+      const manifest = await store.getManifest(modelId);
+      if (manifest) {
+        const actors = manifest.actors ?? {};
+        let changed = false;
+        for (const op of ops) {
+          if (op.actorId && !actors[op.actorId]) {
+            actors[op.actorId] = op.actorId === 'mcp-server' ? 'MCP Agent' : `User ${Object.keys(actors).length + 1}`;
+            changed = true;
+          }
+        }
+        // Also check SSE presence for richer names
+        const model = models.get(modelId);
+        if (model) {
+          for (const [aid, info] of model.actors) {
+            if (info.name && info.name !== aid) actors[aid] = info.name;
+          }
+          changed = true;
+        }
+        if (changed) {
+          manifest.actors = actors;
+          manifest.updatedAt = new Date().toISOString();
+          await c.env.MODELS.put(`models/${modelId}/manifest.json`, JSON.stringify(manifest), {
+            httpMetadata: { contentType: 'application/json' },
+          });
+        }
+      }
+    } catch { /* best-effort actor tracking */ }
+
     return new Response(merged, {
       headers: { 'content-type': 'application/octet-stream' },
     }) as any;
+  });
+
+// Scene cache routes (H4 — scene.json + scene-meta.json from R2)
+const sceneRoute = createRoute({ method: 'get', path: '/models/{modelId}/scene', tags: ['sync'], summary: 'Get cached scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON' }, 404: { description: 'Not cached' } } });
+const sceneMetaRoute = createRoute({ method: 'get', path: '/models/{modelId}/scene-meta', tags: ['sync'], summary: 'Get scene cache metadata', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene meta' }, 404: { description: 'Not cached' } } });
+const snapshotRoute = createRoute({ method: 'post', path: '/models/{modelId}/snapshot', tags: ['sync'], summary: 'Force-refresh scene cache', request: { params: OpLogModelParam }, responses: { 200: { description: 'Snapshot result' }, 404: { description: 'No doc' } } });
+
+const sceneRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(sceneRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const obj = await c.env.MODELS.get(`models/${modelId}/scene.json`);
+    if (!obj) return c.json({ error: 'No cached scene' }, 404);
+    return new Response(await obj.text(), { headers: { 'content-type': 'application/json' } }) as any;
+  })
+  .openapi(sceneMetaRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const obj = await c.env.MODELS.get(`models/${modelId}/scene-meta.json`);
+    if (!obj) return c.json({ error: 'No cached meta' }, 404);
+    return c.json(await obj.json());
+  })
+  .openapi(snapshotRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const result = await replayModel(modelId, c.env.MODELS, { forceRefresh: true });
+    if (!result) return c.json({ error: 'No doc or no enabled ops' }, 404);
+    return c.json({ atOpIndex: result.opCount, objectCount: JSON.parse(result.sceneJson).length, replayOpsHash: result.replayOpsHash });
   });
 
 // Health + WASM test (chained for type export)
@@ -628,6 +711,7 @@ const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', platformRoutes)
   .route('/', modelRoutes)
   .route('/', opLogRoutes)
+  .route('/', sceneRoutes)
   .route('/', syncRoutes)
   .route('/', cadRoutes);
 
