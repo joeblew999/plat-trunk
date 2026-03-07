@@ -2,8 +2,9 @@
 
 - **Status:** Phase 0 Implemented
 - **Date:** 2026-03-07
-- **Supersedes:** None
-- **Related:** ADR-0002 (Headless as Core Engine), ADR-0003 (Format Workers)
+- **Supersedes:** ADR-0003 (Format Workers)
+- **Related:** ADR-0001 (Multi-Actor Sync), ADR-0002 (GeometryStore)
+- **Blocked by:** ADR-0002 for browser Web Workers (geometry/rendering separation); not blocked for CF Worker split
 
 ## Context
 
