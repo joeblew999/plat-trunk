@@ -562,11 +562,46 @@ The annotation vocabulary is intentionally aligned with WIT concepts (`module` �
 
 ## Implementation Plan
 
-1. **Prototype:** Annotate Truck geometry exports (`add_cube`) with `#[cad_boundary]`. Extend `generate-schema` to emit a minimal `boundaries` section. Hand-write one browser adapter, one CF adapter, and one native dispatcher to validate the codegen shape.
-1. **Macro:** Implement `#[cad_boundary]` as a proc macro crate. Inert on `wasm32` targets, emits metadata on native.
-1. **Codegen:** Add boundary adapter generation to truck `system.mjs`. Browser adapter + CF adapter + native dispatcher + shared types from one pass.
-1. **Native dispatcher binary:** Create a thin CLI binary that links the pure logic crates and uses the generated dispatcher. Validate that `add_cube` works identically via browser WASM, CF Worker WASM, and native function call.
-1. **Alignment:** Extend `check-alignment.mjs` with boundary verification rules across all three targets.
-1. **Scale:** Annotate remaining boundary-crossing functions (Automerge sync, coordinate transforms). Add inter-module topology.
-1. **Native MCP server:** Use the generated dispatcher to serve MCP tools over stdio — full Truck kernel at native speed, no WASM.
-1. **Document:** Update `llms.txt` and `llms-full.txt` with boundary contract documentation for AI agent consumption.
+### Phase 0: Minimum viable proof (all 3 targets)
+
+Prove the codegen chain works end-to-end before building the proc macro or Web Workers. No new abstractions — just replace hand-written code with generated equivalents and verify nothing breaks.
+
+**Step 1 — Extend schema with `boundaries`.**
+Hardcode boundary metadata directly in `build_schema()` (`commands/mod.rs`). No proc macro needed — just a static `"boundaries"` key listing each WASM module and the functions it exports. This is enough for the codegen to work.
+
+**Step 2 — Write `scripts/gen-adapters.ts`.**
+One script, reads `cad-schema.json`, emits 3 files:
+
+| Target | Generated file | Replaces |
+|--------|---------------|----------|
+| CF Worker | `worker/src/truck-wasm.generated.ts` | hand-written `truck-wasm.ts` (identical lazy-init pattern) |
+| Browser | `web/cad-dispatch.generated.ts` | nothing yet (new typed dispatcher, still main thread) |
+| Native | `crate/src/dispatch_generated.rs` | hand-written dispatch chain in `headless.rs` |
+
+**Step 3 — Swap in and verify each target.**
+- **CF Worker**: Import from `.generated.ts`. Run `bun run dev`, call MCP `add_cube` — same result as before.
+- **Browser**: Import generated dispatcher. Load page, add a cube — same result.
+- **Native**: `include!()` the generated Rust. Run `cargo test` — same result.
+
+**What Phase 0 deliberately skips:**
+- No `#[cad_boundary]` proc macro — boundaries are hardcoded in `build_schema()`
+- No Web Workers in browser — dispatcher still runs on main thread
+- No topology / cross-worker routing — single module per target
+- No `check-alignment.mjs` boundary checks
+
+**What Phase 0 proves:**
+- The schema carries enough information to generate correct loader code
+- The codegen chain (`cad-schema.json` → `gen-adapters.ts` → per-target files) works
+- Adding a new crate = add its exports to `boundaries` → regenerate → done
+
+### Phase 1+: Incremental additions
+
+Once Phase 0 is verified, each of these can land independently:
+
+1. **Proc macro:** `#[cad_boundary]` replaces the hardcoded boundaries in `build_schema()`. Inert on `wasm32`, emits metadata on native.
+1. **Browser Web Workers:** `gen-adapters.ts` gains a Web Worker codegen path — `geometry-worker.ts`, `sync-worker.ts`, `browser-dispatcher.ts` with `postMessage` routing.
+1. **Native dispatcher binary:** Thin CLI that links pure logic crates, uses the generated dispatcher. Validates `add_cube` works identically via browser WASM, CF Worker WASM, and native function call.
+1. **Alignment checks:** `check-alignment.mjs` gains boundary verification — exported functions match schema, generated files aren't stale.
+1. **Topology:** `workers` and `topology` sections in schema, cross-worker `postMessage` bridges.
+1. **Native MCP server:** Generated dispatcher serves MCP tools over stdio — full Truck kernel at native speed, no WASM.
+1. **Documentation:** `llms.txt` and `llms-full.txt` updated with boundary contract docs for AI agent consumption.
