@@ -33,12 +33,13 @@
 use automerge::{AutoCommit, ObjType, ReadDoc, Value};
 use automerge::transaction::Transactable;
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Public types — field names match the JS CadOperation schema exactly
 // ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Op {
     pub id: String,
     /// Command name, e.g. "add_cube" (serialised as "type" to match JS)

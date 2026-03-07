@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPTransport } from '@hono/mcp';
 import cadSchema from '../../cad-schema.json';
+import syncSchema from '../../../sync/sync-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
@@ -532,6 +533,11 @@ const platformRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     catch (err: any) { return c.json({ ok: false, error: err.message, stack: err.stack }, 500); }
   });
 
+// Sync schema endpoint (ADR-0001 Part E — runtime discovery of Op format)
+const syncSchemaRoute = createRoute({ method: 'get', path: '/sync/schema', tags: ['sync'], summary: 'Get sync Op schema', responses: { 200: { description: 'Schema' } } });
+const syncRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(syncSchemaRoute, (c) => c.json(syncSchema));
+
 // Dynamic schema-driven routes (type-opaque — consumed via cadCommand/MCP, not hc)
 const cadRoutes = new OpenAPIHono<{ Bindings: Bindings }>();
 mountModule(cadRoutes, 'cad', cadSchema as ModuleSchema);
@@ -541,6 +547,7 @@ const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', platformRoutes)
   .route('/', modelRoutes)
   .route('/', opLogRoutes)
+  .route('/', syncRoutes)
   .route('/', cadRoutes);
 
 // Middleware applied at app level so .use() doesn't break the hc<AppType> chain

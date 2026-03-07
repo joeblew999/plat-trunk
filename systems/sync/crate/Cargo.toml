@@ -15,6 +15,9 @@ automerge = "0.7.4"
 serde     = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 
+# JSON Schema generation (ADR-0001 Part E — Op type codegen)
+schemars = { version = "0.8", features = ["derive"] }
+
 # Unique op IDs
 uuid = { version = "1", features = ["v4", "js", "serde"] }
 
@@ -31,6 +34,10 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 # Nothing browser-specific — all tests are native Rust
+
+[[bin]]
+name = "generate-sync-schema"
+path = "src/bin/generate_sync_schema.rs"
 
 [features]
 default = []

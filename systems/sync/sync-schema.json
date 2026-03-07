@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Op",
+  "type": "object",
+  "required": [
+    "actorId",
+    "enabled",
+    "id",
+    "params",
+    "timestamp",
+    "type"
+  ],
+  "properties": {
+    "actorId": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "groupId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "params": {
+      "description": "Params serialised to/from JSON string in Automerge storage"
+    },
+    "timestamp": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "type": {
+      "description": "Command name, e.g. \"add_cube\" (serialised as \"type\" to match JS)",
+      "type": "string"
+    }
+  }
+}

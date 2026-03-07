@@ -9,6 +9,7 @@ import { reconcile } from './reconcile';
 import { moduleRouter } from './core/module-router';
 import { resetTierState, registerWarmObjects } from './tier-manager';
 import type { CadOptions, SceneEntry } from './types';
+import type { CadOperation } from '../../sync/ts/sync-types.generated';
 
 // CadDocumentManager — truck-sync WASM-backed operation log for collaborative CAD.
 // Replaces @automerge/automerge-repo + IndexedDBStorageAdapter + BroadcastChannelNetworkAdapter.
@@ -38,15 +39,8 @@ export interface SyncMessage {
     actorId: string;      // Filter: skip own messages
 }
 
-export interface CadOperation {
-    id: string;
-    type: string;
-    params: Record<string, any>;
-    enabled: boolean;
-    timestamp: number;
-    actorId: string;
-    groupId?: string | null;
-}
+// CadOperation is now generated from Rust Op struct — imported above, re-exported here.
+export type { CadOperation } from '../../sync/ts/sync-types.generated';
 
 export const SNAPSHOT_INTERVAL = 10;
 
