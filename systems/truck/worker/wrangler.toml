@@ -33,13 +33,6 @@ not_found_handling = "none"
 binding = "MODELS"
 bucket_name = "cad-documents"
 
-# D1 database for truck-sync op log (ADR-0036 Step 8)
-[[d1_databases]]
-binding = "OP_LOG_DB"
-database_name = "cad-op-log"
-database_id = "616ba28e-c967-4d34-95cd-fa3fe6d141a8"
-migrations_dir = "migrations"
-
 [dev]
 ip = "0.0.0.0"
 port = 8789

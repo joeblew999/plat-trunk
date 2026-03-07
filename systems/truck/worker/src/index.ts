@@ -8,13 +8,12 @@ import syncSchema from '../../../sync/sync-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
-import { appendOp, getOpsSince, countOps } from './op-log';
-import { syncApplyOp, syncGetReplayOps } from './sync-wasm.generated';
+import { R2DocStorage } from './doc-storage';
+import { syncCreate, syncApplyOp, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
 
 type Bindings = {
   ASSETS: Fetcher;
   MODELS: R2Bucket;
-  OP_LOG_DB: D1Database;
 };
 
 // app and api are created later via chained .openapi() calls for type export
@@ -143,9 +142,10 @@ interface QueuedCommand {
   completedAt?: number;
 }
 
-type SSEEvent = 
+type SSEEvent =
   | { type: 'cad-command'; data: { id: string; command: any } }
-  | { type: 'datastar-patch-signals'; data: any };
+  | { type: 'datastar-patch-signals'; data: any }
+  | { type: 'sync-op'; data: any };
 
 interface ModelSession {
   commandQueue: Map<string, QueuedCommand>;
@@ -224,6 +224,62 @@ async function waitForCommand(modelId: string, type: string, params: any) {
     }
   }
   return { id, status: 'timeout' as const, error: 'Browser did not respond within 10s' };
+}
+
+// =========================================================================
+// Server-direct execution (ADR-0001 Part A — data-plane commands)
+// =========================================================================
+
+/**
+ * Execute a data-plane command server-side: record op in R2 automerge doc,
+ * replay in HeadlessController, broadcast via SSE. Works without a browser.
+ */
+async function executeServerDirect(
+  env: Bindings,
+  modelId: string,
+  type: string,
+  params: Record<string, unknown>
+): Promise<{ id: string; status: string; result?: any; error?: string }> {
+  const storage = new R2DocStorage(env.MODELS);
+  const opId = crypto.randomUUID();
+  const op = { id: opId, type, params, enabled: true, timestamp: Date.now(), actorId: 'mcp-server', groupId: null };
+
+  try {
+    // Load or create automerge doc, apply op
+    let docBytes: Uint8Array;
+    const existing = await storage.loadWithEtag(modelId);
+    if (existing) {
+      docBytes = await syncApplyOp(existing.doc, JSON.stringify(op));
+      const saved = await storage.saveConditional(modelId, docBytes, existing.etag);
+      if (!saved) {
+        // Retry once on etag conflict
+        const fresh = await storage.load(modelId);
+        docBytes = await syncApplyOp(fresh ?? await syncCreate(), JSON.stringify(op));
+        await storage.save(modelId, docBytes);
+      }
+    } else {
+      docBytes = await syncApplyOp(await syncCreate(), JSON.stringify(op));
+      await storage.save(modelId, docBytes);
+    }
+
+    // Replay all enabled ops in HeadlessController to get result
+    const replayOpsJson = await syncGetReplayOps(docBytes);
+    const replayOps: Array<{ type: string; params: Record<string, unknown> }> = JSON.parse(replayOpsJson);
+
+    const wasm = await initHeadlessWasm();
+    const ctrl = new wasm.HeadlessController();
+    let lastResult: any = null;
+    for (const rop of replayOps) {
+      lastResult = JSON.parse(ctrl.execute(rop.type, JSON.stringify(rop.params)));
+    }
+
+    // Broadcast op to connected browsers via SSE
+    broadcast(modelId, { type: 'sync-op', data: op });
+
+    return { id: opId, status: 'done', result: lastResult };
+  } catch (err: any) {
+    return { id: opId, status: 'error', error: err.message };
+  }
 }
 
 // =========================================================================
@@ -458,57 +514,56 @@ const OpLogModelParam = z.object({
   modelId: z.string().openapi({ param: { name: 'modelId', in: 'path' }, example: 'default' }),
 });
 const OpLogSinceQuery = z.object({
-  since: z.string().optional().openapi({ param: { name: 'since', in: 'query' }, example: '0', description: 'Return ops with op_index > since' }),
+  since: z.string().optional().openapi({ param: { name: 'since', in: 'query' }, example: '0', description: 'Return ops with index > since (default: all ops)' }),
 });
 const OpLogAppendBody = z.object({
-  op_index: z.number().int(),
-  op_json: z.string(),
-  actor_id: z.string(),
-  ts: z.number().int(),
+  id: z.string().uuid(),
+  type: z.string(),
+  params: z.record(z.string(), z.any()),
+  enabled: z.boolean().default(true),
+  timestamp: z.number().int(),
+  actorId: z.string(),
+  groupId: z.string().nullable().optional(),
 }).openapi('OpLogAppendBody');
-const OpLogRow = z.object({
-  model_id: z.string(),
-  op_index: z.number(),
-  op_json: z.string(),
-  actor_id: z.string(),
-  ts: z.number(),
-}).openapi('OpLogRow');
 
-const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Get ops since index', request: { params: OpLogModelParam, query: OpLogSinceQuery }, responses: { 200: { description: 'Op rows', content: { 'application/json': { schema: z.array(OpLogRow) } } } } });
-const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Append op to log', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
-const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No ops', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
+const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Get ops from automerge doc', request: { params: OpLogModelParam, query: OpLogSinceQuery }, responses: { 200: { description: 'Ops array' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
+const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Apply op to automerge doc', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
+const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
 
 const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(getOpsRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const { since } = c.req.valid('query');
-    const sinceIndex = since ? parseInt(since, 10) : 0;
-    const rows = await getOpsSince(c.env.OP_LOG_DB, modelId, sinceIndex);
-    return c.json(rows);
+    const storage = new R2DocStorage(c.env.MODELS);
+    const docBytes = await storage.load(modelId);
+    if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
+    const sinceIndex = since ? parseInt(since, 10) : -1;
+    const opsJson = sinceIndex >= 0
+      ? await syncExportOpsSince(docBytes, sinceIndex)
+      : await syncGetOps(docBytes);
+    return c.json(JSON.parse(opsJson));
   })
   .openapi(appendOpRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const body = c.req.valid('json');
-    await appendOp(c.env.OP_LOG_DB, { model_id: modelId, ...body });
+    const storage = new R2DocStorage(c.env.MODELS);
+    let docBytes = await storage.load(modelId) ?? await syncCreate();
+    docBytes = await syncApplyOp(docBytes, JSON.stringify(body));
+    await storage.save(modelId, docBytes);
     return c.json({ status: 'ok' as const });
   })
   .openapi(replayRoute, async (c) => {
     const { modelId } = c.req.valid('param');
+    const storage = new R2DocStorage(c.env.MODELS);
+    const docBytes = await storage.load(modelId);
+    if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
 
-    // Step 1 — load all ops from D1 in index order, build Automerge doc
-    const rows = await getOpsSince(c.env.OP_LOG_DB, modelId, -1);
-    if (rows.length === 0) return c.json({ error: 'No ops for model' }, 404);
-
-    let docBytes: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(0));
-    for (const row of rows) {
-      docBytes = await syncApplyOp(docBytes, row.op_json);
-    }
-
-    // Step 2 — sync WASM: get ordered, enabled-only ops
+    // Get ordered, enabled-only ops from automerge doc
     const replayOpsJson = await syncGetReplayOps(docBytes);
     const replayOps: Array<{ type: string; params: Record<string, unknown> }> = JSON.parse(replayOpsJson);
+    if (replayOps.length === 0) return c.json({ error: 'No enabled ops' }, 404);
 
-    // Step 3 — geometry WASM: replay ops → export scene
+    // Replay in headless WASM → export scene
     try {
       const wasm = await initHeadlessWasm();
       const ctrl = new wasm.HeadlessController();
@@ -574,19 +629,22 @@ export type AppType = typeof app;
 const DOCS_URL = cfDeploy.workers.router.production + cfDeploy.endpoints.docs;
 
 /** Register CAD tools from Rust-generated cad-schema.json (commands + control plane) */
-function registerSchemaTools(server: McpServer, schema: ModuleSchema) {
+function registerSchemaTools(server: McpServer, schema: ModuleSchema, env: Bindings) {
+  // Data-plane commands → server-direct execution (R2 + HeadlessController)
   for (const [name, def] of Object.entries(schema.commands)) {
     if (def.ephemeral || def.readonly) continue;
     const shape: Record<string, z.ZodTypeAny> = zodFromJsonSchema(def.params?.properties || {}, def.params?.required || []);
     shape.modelId = z.string().optional().describe("Target model ID (defaults to 'default')");
     server.registerTool(`cad_${name}`, { description: def.description, inputSchema: shape }, async (args: Record<string, any>) => {
       const { modelId, ...params } = args;
-      const result = await waitForCommand(modelId || lastActiveModelId || 'default', name, params);
-      const isError = result.status === 'error' || result.status === 'timeout' || !!(result.result as any)?.error;
+      const mid = modelId || lastActiveModelId || 'default';
+      const result = await executeServerDirect(env, mid, name, params);
+      const isError = result.status === 'error' || !!(result.result as any)?.error;
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError };
     });
   }
 
+  // Control-plane commands → browser-delegated (undo, redo, select need browser context)
   if (schema.controlPlane) {
     for (const [name, def] of Object.entries(schema.controlPlane)) {
       const shape: Record<string, z.ZodTypeAny> = zodFromJsonSchema(def.params?.properties || {}, def.params?.required || []);
@@ -736,7 +794,7 @@ function registerModelTools(server: McpServer, env: Bindings) {
 function createMcpServer(env: Bindings) {
   const s = cadSchema as ModuleSchema;
   const server = new McpServer({ name: cfDeploy.workers.truck.name, version: s.version || '1.0.0' });
-  registerSchemaTools(server, s);
+  registerSchemaTools(server, s, env);
   registerPlatformTools(server);
   registerModelTools(server, env);
   return server;
