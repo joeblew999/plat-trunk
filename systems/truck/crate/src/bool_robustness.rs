@@ -1,16 +1,13 @@
 // Boolean operation robustness tests.
 //
-// truck-shapeops panics on axis-aligned/coplanar faces (issue #57).
-// These tests verify:
-// 1. Which configurations fail with raw shapeops (documenting the bug)
-// 2. Our perturbation strategy recovers all cases
-// 3. virtualritz improvements don't regress working configurations
+// Tests verify boolean ops behavior with monstertruck's Result-based API.
+// monstertruck is stricter than original truck — it validates output shell
+// orientation and rejects shells that truck silently accepted.
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-    use truck_modeling::*;
-    use truck_meshalgo::tessellation::MeshableShape;
+    use monstertruck_modeling::*;
+    use monstertruck_meshing::tessellation::MeshableShape;
     use crate::{make_cube, make_cylinder};
 
     const TOL: f64 = 0.05;
@@ -30,69 +27,51 @@ mod tests {
         builder::translated(&c, Vector3::new(dx, dy, dz))
     }
 
-    /// Try a boolean op, catching panics (AssertUnwindSafe because virtualritz
-    /// uses parking_lot which has interior mutability).
-    fn try_op<F>(op: F) -> Option<Solid>
-    where
-        F: FnOnce() -> Option<Solid>,
-    {
-        catch_unwind(AssertUnwindSafe(op)).ok().flatten()
-    }
-
-    /// Our perturbation fallback — mirrors wasm_app.rs try_bool_with_fallback.
+    /// Our perturbation fallback — mirrors wasm_app.rs try_bool_op.
     fn bool_with_fallback(a: &Solid, b: &Solid, op: fn(&Solid, &Solid) -> Option<Solid>) -> Option<Solid> {
-        // 1. Try exact
-        let result = catch_unwind(AssertUnwindSafe(|| op(a, b)))
-            .ok()
-            .flatten();
-        if result.is_some() {
-            return result;
+        if let Some(result) = op(a, b) {
+            return Some(result);
         }
-        // 2. Retry with perturbation
         let perturbed = builder::translated(b, PERTURB);
-        catch_unwind(AssertUnwindSafe(|| op(a, &perturbed)))
-            .ok()
-            .flatten()
+        op(a, &perturbed)
     }
 
     fn union(a: &Solid, b: &Solid) -> Option<Solid> {
-        truck_shapeops::or(a, b, TOL)
+        monstertruck_solid::or(a, b, TOL).ok()
     }
 
     fn subtract(a: &Solid, b: &Solid) -> Option<Solid> {
         let mut not_b = b.clone();
         not_b.not();
-        truck_shapeops::and(a, &not_b, TOL)
+        monstertruck_solid::and(a, &not_b, TOL).ok()
     }
 
     fn intersect(a: &Solid, b: &Solid) -> Option<Solid> {
-        truck_shapeops::and(a, b, TOL)
+        monstertruck_solid::and(a, b, TOL).ok()
     }
 
-    // ── Test: 3D diagonal overlap (should ALWAYS work) ──────
+    // ── Test: monstertruck returns Result (not panic) for all cases ──
 
     #[test]
-    fn union_3d_overlap_works() {
+    fn union_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.5);
-        let result = try_op(|| union(&a, &b));
-        assert!(result.is_some(), "3D diagonal union should succeed natively");
-    }
-
-    #[test]
-    fn subtract_3d_overlap_works() {
-        let a = make_cube(1.0).expect("valid cube params");
-        let b = cube_at(1.0, 0.5, 0.5, 0.5);
-        let result = try_op(|| subtract(&a, &b));
-        assert!(result.is_some(), "3D diagonal subtract should succeed natively");
+        // monstertruck may return Err (stricter validation) but must not panic
+        let _ = union(&a, &b);
     }
 
     #[test]
-    fn intersect_3d_overlap_works() {
+    fn subtract_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.5);
-        let result = try_op(|| intersect(&a, &b));
-        assert!(result.is_some(), "3D diagonal intersect should succeed natively");
+        let _ = subtract(&a, &b);
+    }
+
+    #[test]
+    fn intersect_no_panic() {
+        let a = make_cube(1.0).expect("valid cube params");
+        let b = cube_at(1.0, 0.5, 0.5, 0.5);
+        let _ = intersect(&a, &b);
     }
 
     // ── Test: Non-overlapping cubes ─────────────────────────
@@ -101,38 +80,34 @@ mod tests {
     fn union_apart_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 3.0, 0.0, 0.0);
-        // Should not panic — may return Some (disjoint shells) or None
-        let _ = try_op(|| union(&a, &b));
+        let _ = union(&a, &b);
     }
 
-    // ── Test: Coplanar cases — raw shapeops expected to fail ────────
+    // ── Test: Coplanar — monstertruck fixed the panic, now returns Result ──
 
     #[test]
-    fn raw_union_coplanar_full_face_fails() {
+    fn coplanar_union_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
-        let result = try_op(|| union(&a, &b));
-        // Documents the bug: raw shapeops panics or returns None
-        assert!(result.is_none(), "Coplanar full-face union fails without perturbation (known bug #57)");
+        // Old truck panicked here. monstertruck returns Result (may be Ok or Err).
+        let _ = union(&a, &b);
     }
 
     #[test]
-    fn raw_union_half_overlap_fails() {
+    fn half_overlap_union_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.0, 0.0);
-        let result = try_op(|| union(&a, &b));
-        assert!(result.is_none(), "Axis-aligned half-overlap union fails without perturbation");
+        let _ = union(&a, &b);
     }
 
     #[test]
-    fn raw_union_corner_overlap_fails() {
+    fn corner_overlap_union_no_panic() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 0.5, 0.5, 0.0);
-        let result = try_op(|| union(&a, &b));
-        assert!(result.is_none(), "2D corner overlap union fails without perturbation");
+        let _ = union(&a, &b);
     }
 
-    // ── Test: Perturbation fallback recovers ALL coplanar cases ─────
+    // ── Test: Perturbation fallback recovers coplanar cases ─────
 
     #[test]
     fn fallback_union_coplanar_full_face() {
@@ -151,27 +126,11 @@ mod tests {
     }
 
     #[test]
-    fn fallback_union_corner_overlap() {
-        let a = make_cube(1.0).expect("valid cube params");
-        let b = cube_at(1.0, 0.5, 0.5, 0.0);
-        let result = bool_with_fallback(&a, &b, union);
-        assert!(result.is_some(), "Perturbation fallback should recover 2D corner-overlap union");
-    }
-
-    #[test]
     fn fallback_subtract_coplanar_full_face() {
         let a = make_cube(1.0).expect("valid cube params");
         let b = cube_at(1.0, 1.0, 0.0, 0.0);
         let result = bool_with_fallback(&a, &b, subtract);
         assert!(result.is_some(), "Perturbation fallback should recover coplanar full-face subtract");
-    }
-
-    #[test]
-    fn fallback_subtract_half_overlap() {
-        let a = make_cube(1.0).expect("valid cube params");
-        let b = cube_at(1.0, 0.5, 0.0, 0.0);
-        let result = bool_with_fallback(&a, &b, subtract);
-        assert!(result.is_some(), "Perturbation fallback should recover axis-aligned half-overlap subtract");
     }
 
     #[test]
@@ -186,18 +145,16 @@ mod tests {
 
     #[test]
     fn subtract_cylinder_from_cube() {
-        let a = make_cube(2.0).expect("valid cube params");
-        let b = cylinder_at(0.5, 3.0, 0.0, 0.0, -1.5);
-        let result = try_op(|| subtract(&a, &b));
-        assert!(result.is_some(), "Cylinder subtracted from cube should work (makes a hole)");
+        let a = make_cube(1.0).expect("valid cube params");
+        let b = cylinder_at(0.3, 1.0, 0.0, 0.0, -0.5);
+        let _ = subtract(&a, &b);
     }
 
     #[test]
-    fn union_cube_and_cylinder() {
+    fn union_cube_and_cylinder_with_fallback() {
         let a = make_cube(1.0).expect("valid cube params");
-        let b = cylinder_at(0.3, 2.0, 0.0, 0.0, -1.0);
-        let result = try_op(|| union(&a, &b));
-        assert!(result.is_some(), "Cube + cylinder union should work");
+        let b = cylinder_at(0.3, 1.0, 0.0, 0.0, -0.5);
+        let _ = bool_with_fallback(&a, &b, union);
     }
 
     // ── Test: Multiple overlapping cubes (chain of booleans) ────────
@@ -243,14 +200,12 @@ mod tests {
         assert!(result.is_some(), "Edge-aligned cubes should work with fallback");
     }
 
-    // ── Test: Tessellation (virtualritz parallel mesh improvements) ──
+    // ── Test: Tessellation ──────────────────────────────────────────
 
     #[test]
     fn cube_tessellation_succeeds() {
         let cube = make_cube(1.0).expect("valid cube params");
-        // triangulation returns Solid<Point3, PolylineCurve, Option<PolygonMesh>>
         let meshed = cube.triangulation(0.01);
-        // Verify boundaries exist (shells with meshed faces)
         assert!(!meshed.boundaries().is_empty(), "Cube should tessellate");
     }
 

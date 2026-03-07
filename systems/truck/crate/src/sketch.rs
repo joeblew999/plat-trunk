@@ -24,19 +24,19 @@ pub enum SketchPlane {
 }
 
 impl SketchPlane {
-    pub fn to_3d(&self, x: f64, y: f64) -> truck_modeling::Point3 {
+    pub fn to_3d(&self, x: f64, y: f64) -> monstertruck_modeling::Point3 {
         match self {
-            SketchPlane::XY => truck_modeling::Point3::new(x, y, 0.0),
-            SketchPlane::XZ => truck_modeling::Point3::new(x, 0.0, y),
-            SketchPlane::YZ => truck_modeling::Point3::new(0.0, x, y),
+            SketchPlane::XY => monstertruck_modeling::Point3::new(x, y, 0.0),
+            SketchPlane::XZ => monstertruck_modeling::Point3::new(x, 0.0, y),
+            SketchPlane::YZ => monstertruck_modeling::Point3::new(0.0, x, y),
         }
     }
 
-    pub fn normal(&self) -> truck_modeling::Vector3 {
+    pub fn normal(&self) -> monstertruck_modeling::Vector3 {
         match self {
-            SketchPlane::XY => truck_modeling::Vector3::unit_z(),
-            SketchPlane::XZ => truck_modeling::Vector3::unit_y(),
-            SketchPlane::YZ => truck_modeling::Vector3::unit_x(),
+            SketchPlane::XY => monstertruck_modeling::Vector3::unit_z(),
+            SketchPlane::XZ => monstertruck_modeling::Vector3::unit_y(),
+            SketchPlane::YZ => monstertruck_modeling::Vector3::unit_x(),
         }
     }
 }
@@ -426,8 +426,8 @@ fn find_closed_loop(edges: &[SketchEdge]) -> std::result::Result<Vec<Uuid>, Stri
 ///
 /// Solves the sketch, builds a closed wire from the edges on the sketch plane,
 /// attaches a planar face, and sweeps it along the plane normal by `height`.
-pub fn sketch_to_solid(sketch: &Sketch, height: f64) -> std::result::Result<truck_modeling::Solid, String> {
-    use truck_modeling::*;
+pub fn sketch_to_solid(sketch: &Sketch, height: f64) -> std::result::Result<monstertruck_modeling::Solid, String> {
+    use monstertruck_modeling::*;
 
     // 1. Solve constraints
     let solved = solve_sketch(sketch)?;
@@ -459,7 +459,7 @@ pub fn sketch_to_solid(sketch: &Sketch, height: f64) -> std::result::Result<truc
         .map_err(|e| format!("Failed to create planar face: {:?}", e))?;
 
     let extrude_vec = sketch.plane.normal() * height;
-    Ok(builder::tsweep(&face, extrude_vec))
+    Ok(builder::extrude(&face, extrude_vec))
 }
 
 // ---------------------------------------------------------------------------

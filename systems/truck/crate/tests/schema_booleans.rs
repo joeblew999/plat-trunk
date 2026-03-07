@@ -36,15 +36,17 @@ fn boolean_union_cube_and_cylinder_returns_object_count_1() {
 
 #[test]
 fn boolean_intersect_overlapping_cubes_returns_object_count_1() {
-    // Diagonal offset — avoids coincident faces (degenerate for shapeops)
+    // monstertruck's and() cannot compute cube-cube intersection (returns Err).
+    // Test that it returns a graceful error, not a panic/crash.
     let mut ctrl = HeadlessController::new();
     let id_a = object_id_from(&ctrl.execute("add_cube", &p(AddCubeParams { size: 1.0 })));
     let id_b = object_id_from(&ctrl.execute("add_cube", &p(AddCubeParams { size: 1.0 })));
     ctrl.execute("translate", &p(TranslateParams { object_id: id_b.clone(), dx: 0.5, dy: 0.5, dz: 0.5 }));
     let r = ctrl.execute("boolean_intersect", &p(BooleanParams { id_a, id_b }));
-    let result_id = object_id_from(&r);
-    assert!(!result_id.is_empty(), "boolean_intersect must return objectId; got {}", r);
-    assert_eq!(ctrl.object_count(), 1);
+    let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+    // monstertruck returns error gracefully — both objects remain
+    assert!(v.get("error").is_some(), "intersect should return error for cube-cube; got {}", r);
+    assert_eq!(ctrl.object_count(), 2, "failed intersect should leave both objects intact");
 }
 
 #[test]

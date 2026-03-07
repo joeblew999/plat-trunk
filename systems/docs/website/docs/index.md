@@ -15,8 +15,8 @@ hero:
       text: Get Started
       link: /user/getting-started
     - theme: alt
-      text: How We Compare
-      link: /comparison
+      text: Use Cases
+      link: /who-is-this-for
 features:
   - icon: "\U0001F3A8"
     title: No Installation

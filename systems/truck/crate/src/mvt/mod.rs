@@ -3,7 +3,7 @@
 
 use geozero::mvt::{Tile, Message};
 use geozero::{GeozeroDatasource, GeomProcessor, PropertyProcessor, ColumnValue};
-use truck_modeling::{Point3, Vector3, Solid, builder};
+use monstertruck_modeling::{Point3, Vector3, Solid, builder};
 use std::io::Cursor;
 
 /// Represents a single tile coordinate (Z/X/Y)
@@ -82,10 +82,10 @@ impl GeomProcessor for MvtBuilder {
             edges.push(builder::line(v0, v1));
         }
         
-        let wire = truck_modeling::Wire::from(edges);
+        let wire = monstertruck_modeling::Wire::from(edges);
         if let Ok(face) = builder::try_attach_plane(&[wire]) {
             // Default extrusion height of 10 units (meters) along the Y axis
-            let solid = builder::tsweep(&face, Vector3::new(0.0, 10.0, 0.0));
+            let solid = builder::extrude(&face, Vector3::new(0.0, 10.0, 0.0));
             self.solids.push(solid);
         }
 

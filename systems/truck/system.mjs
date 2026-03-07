@@ -48,7 +48,8 @@ export const testing = {
     // Phase 3: CRDT math — merge commutativity, replay determinism, model isolation
     crdt: 'cargo test -p truck-sync',
     // Phase 4: geometry domain — HeadlessController, all CAD commands, no GPU
-    domain: 'cargo test -p truck-webgpu-gui --no-default-features --features native',
+    // --release: boolean ops are 10-20x slower in debug (unoptimized BREP math)
+    domain: 'cargo test --release -p truck-webgpu-gui --no-default-features --features native',
   },
   // Phase 5: TypeScript boundary — api-types.ts derived from schema, catches renames
   typecheck: 'cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck',

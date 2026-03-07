@@ -3,8 +3,8 @@
 
 use std::fs;
 use std::path::PathBuf;
-use truck_meshalgo::prelude::*;
-use truck_modeling::*;
+use monstertruck_meshing::prelude::*;
+use monstertruck_modeling::*;
 
 /// Path to truck resource shapes relative to the workspace root.
 fn resources_dir() -> PathBuf {
@@ -17,7 +17,7 @@ fn load_solid(name: &str) -> Solid {
     let path = resources_dir().join(name);
     let json = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
-    serde_json::from_str(&json)
+    serde_json::from_str::<Solid>(&json)
         .unwrap_or_else(|e| panic!("Failed to deserialize {}: {}", name, e))
 }
 
@@ -30,11 +30,11 @@ fn bounding_sphere(solid: &Solid) -> (Point3, f64) {
         .flatten()
         .flat_map(Face::boundaries)
         .flatten()
-        .for_each(|edge| {
+        .for_each(|edge: Edge| {
             let curve = edge.oriented_curve();
             bdd_box += match curve {
                 Curve::Line(line) => vec![line.0, line.1].into_iter().collect(),
-                Curve::BSplineCurve(curve) => {
+                Curve::BsplineCurve(curve) => {
                     let bdb = curve.roughly_bounding_box();
                     vec![bdb.max(), bdb.min()].into_iter().collect()
                 }

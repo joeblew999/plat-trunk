@@ -41,6 +41,10 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
     ],
   },
   {
+    text: 'Use Cases',
+    link: '/who-is-this-for',
+  },
+  {
     text: 'Comparison',
     link: '/comparison',
   },
@@ -100,6 +104,7 @@ export default defineConfig({
     },
     nav: [
       { text: 'Docs', link: '/user/getting-started' },
+      { text: 'Use Cases', link: '/who-is-this-for' },
       { text: 'Technical', link: '/technical/architecture' },
       { text: 'CAD App', link: '../', target: '_self', rel: '' },
     ],

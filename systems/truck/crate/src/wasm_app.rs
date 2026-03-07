@@ -18,10 +18,10 @@ use winit::event_loop::EventLoop;
 use winit::platform::web::WindowAttributesExtWebSys;
 use winit::window::Window;
 
-use truck_meshalgo::prelude::*;
-use truck_modeling::*;
-use truck_platform::*;
-use truck_rendimpl::*;
+use monstertruck_meshing::prelude::*;
+use monstertruck_modeling::*;
+use monstertruck_gpu::*;
+use monstertruck_render::*;
 
 use ifc_lite_core as ifc;
 
@@ -31,7 +31,6 @@ use crate::{make_cube, make_sphere, make_cylinder, make_torus};
 // truck-shapeops panics on axis-aligned/coplanar faces ("This wire is not simple", issue #57).
 // Asymmetric values break axis alignment; magnitude >0.05 ensures the intersection region
 // has non-degenerate edges. Tested exhaustively: coplanar, half-overlap, corner-overlap all pass.
-const BOOL_PERTURBATION: Vector3 = Vector3::new(-0.1, -0.07, -0.03);
 
 #[wasm_bindgen]
 extern "C" {
@@ -518,7 +517,7 @@ fn solid_to_instances(
             let curve = edge.oriented_curve();
             bdd_box += match curve {
                 Curve::Line(line) => vec![line.0, line.1].into_iter().collect(),
-                Curve::BSplineCurve(curve) => {
+                Curve::BsplineCurve(curve) => {
                     let bdb = curve.roughly_bounding_box();
                     vec![bdb.max(), bdb.min()].into_iter().collect()
                 }
@@ -1322,30 +1321,6 @@ impl SceneController {
     // Boolean operations
     // =====================================================================
 
-    /// Try a boolean op: exact geometry first, then perturbed fallback.
-    ///
-    /// truck_shapeops fails on axis-aligned/coplanar faces (returns None or degenerate result).
-    /// BOOL_PERTURBATION breaks the alignment so truck_shapeops can find intersection curves.
-    ///
-    /// Previously, subtract/intersect with perturbation would PANIC inside Solid::new() when
-    /// the result had degenerate topology. That panic is now fixed upstream (Solid::try_new().ok()?
-    /// in truck-shapeops/transversal/integrate/mod.rs), so all failures safely return None.
-    /// We can now safely attempt perturbation as a fallback for all boolean ops.
-    fn try_bool_op<F>(solid_a: &Solid, solid_b: &Solid, op: F) -> Option<Solid>
-    where F: Fn(&Solid, &Solid) -> Option<Solid> + std::panic::RefUnwindSafe
-    {
-        // First try exact geometry
-        let exact = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            op(solid_a, solid_b)
-        })).ok().flatten();
-        if exact.is_some() { return exact; }
-        // Fallback: perturb solid_b to break axis alignment
-        let perturbed = builder::translated(solid_b, BOOL_PERTURBATION);
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            op(solid_a, &perturbed)
-        })).ok().flatten()
-    }
-
     /// AABB containment check: returns (a_contains_b, b_contains_a).
     /// Uses pick mesh vertex AABB for accurate containment detection.
     ///
@@ -1377,7 +1352,7 @@ impl SceneController {
     }
 
     /// Union two objects, replacing them with the result. Returns new UUID (empty on failure).
-    /// Tries truck_shapeops::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B),
+    /// Tries monstertruck_solid::or first, falls back to De Morgan: A ∪ B = ¬(¬A ∧ ¬B),
     /// then retries both with perturbation for coplanar/axis-aligned faces.
     /// Note: booleans work reliably with cubes + cylinders (tsweep geometry).
     /// Spheres/tori (rsweep/NURBS) may fail — truck-shapeops limitation.
@@ -1404,7 +1379,7 @@ impl SceneController {
         }; // borrow dropped here
 
         // Containment short-circuit: avoid WASM trap when one solid is inside the other.
-        // "This shell is not oriented and closed" panic in truck_shapeops cannot be caught.
+        // "This shell is not oriented and closed" panic in monstertruck_solid cannot be caught.
         if a_contains_b {
             log!("WASM: union containment: A⊃B, union=A, removing B");
             let mut s = self.state.borrow_mut();
@@ -1426,14 +1401,7 @@ impl SceneController {
             return id_b.to_string();
         }
 
-        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
-            truck_shapeops::or(a, b, 0.05).or_else(|| {
-                // De Morgan fallback: A ∪ B = ¬(¬A ∧ ¬B)
-                let mut not_a = a.clone(); not_a.not();
-                let mut not_b = b.clone(); not_b.not();
-                truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
-            })
-        });
+        let result = crate::bool_union(&solid_a, &solid_b);
 
         match result {
             Some(solid) => {
@@ -1481,10 +1449,7 @@ impl SceneController {
             return String::new();
         }
 
-        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
-            let mut not_b = b.clone(); not_b.not();
-            truck_shapeops::and(a, &not_b, 0.05)
-        });
+        let result = crate::bool_subtract(&solid_a, &solid_b);
 
         match result {
             Some(solid) => {
@@ -1547,9 +1512,7 @@ impl SceneController {
             return id_a.to_string();
         }
 
-        let result = Self::try_bool_op(&solid_a, &solid_b, |a, b| {
-            truck_shapeops::and(a, b, 0.05)
-        });
+        let result = crate::bool_intersect(&solid_a, &solid_b);
 
         match result {
             Some(solid) => {
@@ -1805,7 +1768,7 @@ impl SceneController {
     /// Export entire scene as STEP string.
     #[wasm_bindgen]
     pub fn export_step(&self) -> String {
-        use truck_stepio::out::*;
+        use monstertruck_step::save::*;
         let s = self.state.borrow();
         log!("WASM: export_step processing {} objects", s.objects.len());
         
@@ -1840,7 +1803,7 @@ impl SceneController {
     /// Export entire scene as OBJ string.
     #[wasm_bindgen]
     pub fn export_obj(&self) -> String {
-        use truck_polymesh::obj;
+        use monstertruck_mesh::obj;
         let s = self.state.borrow();
         let meshes: Vec<_> = s.objects.iter().map(|obj| obj.mesh.clone()).collect();
         
@@ -1855,7 +1818,7 @@ impl SceneController {
     /// Export entire scene as STL string (ASCII).
     #[wasm_bindgen]
     pub fn export_stl(&self) -> String {
-        use truck_polymesh::stl;
+        use monstertruck_mesh::stl;
         let s = self.state.borrow();
         let mut meshes = PolygonMesh::default();
         for obj in &s.objects {
@@ -1876,16 +1839,11 @@ impl SceneController {
         let s = self.state.borrow();
         let idx_a = match s.id_to_index.get(id_a) { Some(&i) => i, None => return false };
         let idx_b = match s.id_to_index.get(id_b) { Some(&i) => i, None => return false };
-        
+
         let solid_a = match &s.objects[idx_a].solid { Some(s) => s, None => return false };
         let solid_b = match &s.objects[idx_b].solid { Some(s) => s, None => return false };
-        
-        // Use a reasonable tolerance for clash detection
-        if let Some(result) = truck_shapeops::and(solid_a, solid_b, 0.05) {
-            !result.boundaries().is_empty()
-        } else {
-            false
-        }
+
+        crate::clash_detect_solids(solid_a, solid_b)
     }
 
     /// Import scene from JSON string. Replaces current scene.
@@ -2795,7 +2753,7 @@ impl SceneController {
                 match serde_json::from_value::<ImportStepParams>(p) {
                     Ok(params) => {
                         log!("WASM: import_step data length={}", params.data.len());
-                        use truck_stepio::r#in::*;
+                        use monstertruck_step::load::*;
                         match Table::from_step(&params.data) {
                             Some(table) => {
                                 let mut count = 0;
@@ -2805,9 +2763,9 @@ impl SceneController {
                                     if let Ok(csolid) = table.to_compressed_solid(step_solid) {
                                         for cshell in csolid.boundaries {
                                             // Triangulate the shell directly
-                                            let pre = cshell.robust_triangulation(0.01).to_polygon();
+                                            let pre = cshell.triangulation(0.01).to_polygon();
                                             let bdd = pre.bounding_box();
-                                            let mesh = cshell.robust_triangulation(bdd.diameter() * 0.001).to_polygon();
+                                            let mesh = cshell.triangulation(bdd.diameter() * 0.001).to_polygon();
                                             add_mesh_to_state(&mut s, mesh, "STEP Mesh", None);
                                             count += 1;
                                         }

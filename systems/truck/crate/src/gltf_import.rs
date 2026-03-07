@@ -1,6 +1,6 @@
-use truck_meshalgo::prelude::*;
-use truck_modeling::{Point3, Vector3, Vector2, Matrix4, cgmath};
-use truck_polymesh::{PolygonMesh, Faces, Attributes}; 
+use monstertruck_meshing::prelude::*;
+use monstertruck_modeling::{Point3, Vector3, Vector2, Matrix4, cgmath};
+use monstertruck_mesh::{PolygonMesh, Faces, Attributes}; 
 
 /// Parse GLTF/GLB bytes and return a list of PolygonMesh objects with their world transforms.
 pub fn parse_gltf(data: &[u8]) -> Vec<(PolygonMesh, Matrix4)> {

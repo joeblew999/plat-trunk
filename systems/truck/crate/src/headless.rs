@@ -11,8 +11,8 @@ use uuid::Uuid;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use truck_meshalgo::prelude::*;
-use truck_modeling::*;
+use monstertruck_meshing::prelude::*;
+use monstertruck_modeling::*;
 
 use crate::commands::*;
 use crate::{make_cube, make_cylinder, make_sphere, make_torus};
@@ -146,7 +146,7 @@ fn tessellate_solid(solid: &Solid) -> PolygonMesh {
             let curve = edge.oriented_curve();
             bdd_box += match curve {
                 Curve::Line(line) => vec![line.0, line.1].into_iter().collect(),
-                Curve::BSplineCurve(curve) => {
+                Curve::BsplineCurve(curve) => {
                     let bdb = curve.roughly_bounding_box();
                     vec![bdb.max(), bdb.min()].into_iter().collect()
                 }
@@ -326,89 +326,20 @@ impl HeadlessController {
 
     pub fn boolean_union(&mut self, id_a: &str, id_b: &str) -> String {
         log!("headless: boolean_union({}, {})", id_a, id_b);
-        let idx_a = match self.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
-        let idx_b = match self.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
-        if idx_a == idx_b { return String::new(); }
-
-        let solid_a = match &self.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
-        let solid_b = match &self.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
-
-        let try_union = |a: &Solid, b: &Solid| -> Option<Solid> {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                truck_shapeops::or(a, b, 0.05)
-            })).ok().flatten();
-            result.or_else(|| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut not_a = a.clone();
-                    not_a.not();
-                    let mut not_b = b.clone();
-                    not_b.not();
-                    truck_shapeops::and(&not_a, &not_b, 0.05).map(|mut s| { s.not(); s })
-                })).ok().flatten()
-            })
-        };
-
-        let result = try_union(&solid_a, &solid_b).or_else(|| {
-            log!("headless: union failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
-            try_union(&solid_a, &perturbed)
-        });
-
-        match result {
-            Some(solid) => {
-                let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
-                self.objects.remove(hi);
-                self.objects.remove(lo);
-                rebuild_id_index(&self.objects, &mut self.id_to_index);
-                self.add_solid(solid, "Union", None)
-            }
-            None => {
-                error!("Boolean union failed");
-                String::new()
-            }
-        }
+        self.bool_op_impl(id_a, id_b, crate::bool_union, "Union")
     }
 
     pub fn boolean_subtract(&mut self, id_a: &str, id_b: &str) -> String {
         log!("headless: boolean_subtract({}, {})", id_a, id_b);
-        let idx_a = match self.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
-        let idx_b = match self.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
-        if idx_a == idx_b { return String::new(); }
-
-        let solid_a = match &self.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
-        let solid_b = match &self.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
-
-        let try_sub = |a: &Solid, b: &Solid| -> Option<Solid> {
-            let mut neg = b.clone();
-            neg.not();
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                truck_shapeops::and(a, &neg, 0.05)
-            })).ok().flatten()
-        };
-
-        let result = try_sub(&solid_a, &solid_b).or_else(|| {
-            log!("headless: subtract failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
-            try_sub(&solid_a, &perturbed)
-        });
-
-        match result {
-            Some(solid) => {
-                let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
-                self.objects.remove(hi);
-                self.objects.remove(lo);
-                rebuild_id_index(&self.objects, &mut self.id_to_index);
-                self.add_solid(solid, "Subtraction", None)
-            }
-            None => {
-                error!("Boolean subtract failed");
-                String::new()
-            }
-        }
+        self.bool_op_impl(id_a, id_b, crate::bool_subtract, "Subtraction")
     }
 
     pub fn boolean_intersect(&mut self, id_a: &str, id_b: &str) -> String {
         log!("headless: boolean_intersect({}, {})", id_a, id_b);
+        self.bool_op_impl(id_a, id_b, crate::bool_intersect, "Intersection")
+    }
+
+    fn bool_op_impl(&mut self, id_a: &str, id_b: &str, op: fn(&Solid, &Solid) -> Option<Solid>, label: &str) -> String {
         let idx_a = match self.id_to_index.get(id_a) { Some(&i) => i, None => return String::new() };
         let idx_b = match self.id_to_index.get(id_b) { Some(&i) => i, None => return String::new() };
         if idx_a == idx_b { return String::new(); }
@@ -416,28 +347,16 @@ impl HeadlessController {
         let solid_a = match &self.objects[idx_a].solid { Some(s) => s.clone(), None => return String::new() };
         let solid_b = match &self.objects[idx_b].solid { Some(s) => s.clone(), None => return String::new() };
 
-        let try_intersect = |a: &Solid, b: &Solid| -> Option<Solid> {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                truck_shapeops::and(a, b, 0.05)
-            })).ok().flatten()
-        };
-
-        let result = try_intersect(&solid_a, &solid_b).or_else(|| {
-            log!("headless: intersect failed, retrying with perturbation");
-            let perturbed = builder::translated(&solid_b, Vector3::new(-0.1, -0.07, -0.03));
-            try_intersect(&solid_a, &perturbed)
-        });
-
-        match result {
+        match op(&solid_a, &solid_b) {
             Some(solid) => {
                 let (lo, hi) = if idx_a < idx_b { (idx_a, idx_b) } else { (idx_b, idx_a) };
                 self.objects.remove(hi);
                 self.objects.remove(lo);
                 rebuild_id_index(&self.objects, &mut self.id_to_index);
-                self.add_solid(solid, "Intersection", None)
+                self.add_solid(solid, label, None)
             }
             None => {
-                error!("Boolean intersect failed");
+                error!("Boolean {} failed", label.to_lowercase());
                 String::new()
             }
         }
@@ -489,7 +408,7 @@ impl HeadlessController {
     }
 
     pub fn export_step(&self) -> String {
-        use truck_stepio::out::*;
+        use monstertruck_step::save::*;
         log!("headless: export_step processing {} objects", self.objects.len());
         let compressed_solids: Vec<_> = self.objects.iter()
             .filter_map(|obj| obj.solid.as_ref().map(|s| s.compress()))
@@ -508,7 +427,7 @@ impl HeadlessController {
     }
 
     pub fn export_obj(&self) -> String {
-        use truck_polymesh::obj;
+        use monstertruck_mesh::obj;
         let meshes: Vec<_> = self.objects.iter().map(|obj| obj.mesh.clone()).collect();
         let mut buf = Vec::new();
         if obj::write_vec(&meshes, &mut buf).is_ok() {
@@ -519,7 +438,7 @@ impl HeadlessController {
     }
 
     pub fn export_stl(&self) -> String {
-        use truck_polymesh::stl;
+        use monstertruck_mesh::stl;
         let mut meshes = PolygonMesh::default();
         for obj in &self.objects {
             meshes.merge(obj.mesh.clone());
@@ -572,11 +491,7 @@ impl HeadlessController {
         let idx_b = match self.id_to_index.get(id_b) { Some(&i) => i, None => return false };
         let solid_a = match &self.objects[idx_a].solid { Some(s) => s, None => return false };
         let solid_b = match &self.objects[idx_b].solid { Some(s) => s, None => return false };
-        if let Some(result) = truck_shapeops::and(solid_a, solid_b, 0.05) {
-            !result.boundaries().is_empty()
-        } else {
-            false
-        }
+        crate::clash_detect_solids(solid_a, solid_b)
     }
 
     // ── Sketch ──────────────────────────────────────────────
@@ -872,16 +787,16 @@ impl HeadlessController {
             "import_step" => Some(match serde_json::from_value::<ImportStepParams>(p) {
                 Ok(params) => {
                     log!("headless: import_step data length={}", params.data.len());
-                    use truck_stepio::r#in::*;
+                    use monstertruck_step::load::*;
                     match Table::from_step(&params.data) {
                         Some(table) => {
                             let mut count = 0;
                             for step_solid in table.manifold_solid_brep.values() {
                                 if let Ok(csolid) = table.to_compressed_solid(step_solid) {
                                     for cshell in csolid.boundaries {
-                                        let pre = cshell.robust_triangulation(0.01).to_polygon();
+                                        let pre = cshell.triangulation(0.01).to_polygon();
                                         let bdd = pre.bounding_box();
-                                        let mesh = cshell.robust_triangulation(bdd.diameter() * 0.001).to_polygon();
+                                        let mesh = cshell.triangulation(bdd.diameter() * 0.001).to_polygon();
                                         self.add_mesh(mesh, "STEP Mesh", None);
                                         count += 1;
                                     }

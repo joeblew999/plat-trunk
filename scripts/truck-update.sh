@@ -174,41 +174,77 @@ fail()  { echo -e "${RED}[truck-update]${NC} FAIL: $*"; exit 1; }
 patch_truck_to_monster() {
   local dir="$CRATE_DIR/src"
 
-  # Only patch if truck names are present
-  if ! grep -q 'truck-modeling' "$CRATE_DIR/Cargo.toml" 2>/dev/null; then
+  # Only patch if truck-* names (not monstertruck-*) are present
+  # Use grep -E with negative lookbehind equivalent: match "truck-modeling" not preceded by "monster"
+  if ! grep -q '^truck-modeling\|[^r]truck-modeling\|"truck-modeling' "$CRATE_DIR/Cargo.toml" 2>/dev/null; then
     ok "Already using monstertruck-* crate names"
     return
   fi
 
-  # Cargo.toml — crate names and paths
-  sed -i '' \
-    -e 's|truck-modeling|monstertruck-modeling|g' \
-    -e 's|truck-shapeops|monstertruck-solid|g' \
-    -e 's|truck-meshalgo|monstertruck-meshing|g' \
-    -e 's|truck-rendimpl|monstertruck-render|g' \
-    -e 's|truck-platform|monstertruck-gpu|g' \
-    -e 's|truck-base|monstertruck-core|g' \
-    -e 's|truck-stepio|monstertruck-step|g' \
-    -e 's|truck-polymesh|monstertruck-mesh|g' \
-    -e 's|truck-topology|monstertruck-topology|g' \
-    -e 's|truck-assembly|monstertruck-assembly|g' \
+  # Cargo.toml — crate names, paths, and versions
+  # Step 1: rename crates (use sed -E to avoid matching "monstertruck-" → "monstermonstertruck-")
+  # Only match truck-* NOT preceded by "monster"
+  sed -i '' -E \
+    -e 's|([^r])truck-modeling|\1monstertruck-modeling|g' \
+    -e 's|^truck-modeling|monstertruck-modeling|g' \
+    -e 's|([^r])truck-shapeops|\1monstertruck-solid|g' \
+    -e 's|^truck-shapeops|monstertruck-solid|g' \
+    -e 's|([^r])truck-meshalgo|\1monstertruck-meshing|g' \
+    -e 's|^truck-meshalgo|monstertruck-meshing|g' \
+    -e 's|([^r])truck-rendimpl|\1monstertruck-render|g' \
+    -e 's|^truck-rendimpl|monstertruck-render|g' \
+    -e 's|([^r])truck-platform|\1monstertruck-gpu|g' \
+    -e 's|^truck-platform|monstertruck-gpu|g' \
+    -e 's|([^r])truck-base|\1monstertruck-core|g' \
+    -e 's|^truck-base|monstertruck-core|g' \
+    -e 's|([^r])truck-stepio|\1monstertruck-step|g' \
+    -e 's|^truck-stepio|monstertruck-step|g' \
+    -e 's|([^r])truck-polymesh|\1monstertruck-mesh|g' \
+    -e 's|^truck-polymesh|monstertruck-mesh|g' \
+    -e 's|([^r])truck-topology|\1monstertruck-topology|g' \
+    -e 's|^truck-topology|monstertruck-topology|g' \
+    -e 's|([^r])truck-assembly|\1monstertruck-assembly|g' \
+    -e 's|^truck-assembly|monstertruck-assembly|g' \
+    "$CRATE_DIR/Cargo.toml"
+
+  # Step 2: fix versions — all monstertruck crates use same version
+  # Read actual version from monstertruck source (single source of truth)
+  local mt_ver
+  mt_ver=$(grep '^version' "$TRUCK_DIR/monstertruck-modeling/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+  info "monstertruck crate version: $mt_ver"
+  sed -i '' -E \
+    -e "s|(monstertruck-[a-z]+) = \{ version = \"[^\"]+\"|\1 = { version = \"$mt_ver\"|g" \
     "$CRATE_DIR/Cargo.toml"
 
   # Rust source — use statements (underscore names) + API renames
-  find "$dir" -name '*.rs' -exec sed -i '' \
-    -e 's|truck_modeling|monstertruck_modeling|g' \
-    -e 's|truck_shapeops|monstertruck_solid|g' \
-    -e 's|truck_meshalgo|monstertruck_meshing|g' \
-    -e 's|truck_rendimpl|monstertruck_render|g' \
-    -e 's|truck_platform|monstertruck_gpu|g' \
-    -e 's|truck_base|monstertruck_core|g' \
-    -e 's|truck_stepio|monstertruck_step|g' \
-    -e 's|truck_polymesh|monstertruck_mesh|g' \
-    -e 's|truck_topology|monstertruck_topology|g' \
-    -e 's|truck_assembly|monstertruck_assembly|g' \
+  # Same protection: only match truck_ NOT preceded by "monster"
+  find "$dir" -name '*.rs' -exec sed -i '' -E \
+    -e 's|([^r])truck_modeling|\1monstertruck_modeling|g' \
+    -e 's|^truck_modeling|monstertruck_modeling|g' \
+    -e 's|([^r])truck_shapeops|\1monstertruck_solid|g' \
+    -e 's|^truck_shapeops|monstertruck_solid|g' \
+    -e 's|([^r])truck_meshalgo|\1monstertruck_meshing|g' \
+    -e 's|^truck_meshalgo|monstertruck_meshing|g' \
+    -e 's|([^r])truck_rendimpl|\1monstertruck_render|g' \
+    -e 's|^truck_rendimpl|monstertruck_render|g' \
+    -e 's|([^r])truck_platform|\1monstertruck_gpu|g' \
+    -e 's|^truck_platform|monstertruck_gpu|g' \
+    -e 's|([^r])truck_base|\1monstertruck_core|g' \
+    -e 's|^truck_base|monstertruck_core|g' \
+    -e 's|([^r])truck_stepio|\1monstertruck_step|g' \
+    -e 's|^truck_stepio|monstertruck_step|g' \
+    -e 's|([^r])truck_polymesh|\1monstertruck_mesh|g' \
+    -e 's|^truck_polymesh|monstertruck_mesh|g' \
+    -e 's|([^r])truck_topology|\1monstertruck_topology|g' \
+    -e 's|^truck_topology|monstertruck_topology|g' \
+    -e 's|([^r])truck_assembly|\1monstertruck_assembly|g' \
+    -e 's|^truck_assembly|monstertruck_assembly|g' \
     -e 's|builder::tsweep|builder::extrude|g' \
     -e 's|builder::rsweep|builder::revolve|g' \
     -e 's|BSplineCurve|BsplineCurve|g' \
+    -e 's|monstertruck_step::out::|monstertruck_step::save::|g' \
+    -e 's|monstertruck_step::r#in::|monstertruck_step::load::|g' \
+    -e 's|\.robust_triangulation(|.triangulation(|g' \
     {} +
 
   ok "Patched to monstertruck-* crate names"
@@ -223,7 +259,7 @@ patch_monster_to_truck() {
     return
   fi
 
-  # Cargo.toml — reverse
+  # Cargo.toml — reverse crate names
   sed -i '' \
     -e 's|monstertruck-modeling|truck-modeling|g' \
     -e 's|monstertruck-solid|truck-shapeops|g' \
@@ -235,6 +271,19 @@ patch_monster_to_truck() {
     -e 's|monstertruck-mesh|truck-polymesh|g' \
     -e 's|monstertruck-topology|truck-topology|g' \
     -e 's|monstertruck-assembly|truck-assembly|g' \
+    "$CRATE_DIR/Cargo.toml"
+
+  # Restore original truck versions (read from truck source)
+  sed -i '' \
+    -e 's|truck-modeling = { version = "[^"]*"|truck-modeling = { version = "0.6.0"|' \
+    -e 's|truck-meshalgo = { version = "[^"]*"|truck-meshalgo = { version = "0.4.0"|' \
+    -e 's|truck-polymesh = { version = "[^"]*"|truck-polymesh = { version = "0.6.0"|' \
+    -e 's|truck-topology = { version = "[^"]*"|truck-topology = { version = "0.6.0"|' \
+    -e 's|truck-shapeops = { version = "[^"]*"|truck-shapeops = { version = "0.4.0"|' \
+    -e 's|truck-stepio = { version = "[^"]*"|truck-stepio = { version = "0.3.0"|' \
+    -e 's|truck-assembly = { version = "[^"]*"|truck-assembly = { version = "0.1.0"|' \
+    -e 's|truck-platform = { version = "[^"]*"|truck-platform = { version = "0.6.0"|' \
+    -e 's|truck-rendimpl = { version = "[^"]*"|truck-rendimpl = { version = "0.6.0"|' \
     "$CRATE_DIR/Cargo.toml"
 
   # Rust source — reverse
@@ -252,6 +301,8 @@ patch_monster_to_truck() {
     -e 's|builder::extrude|builder::tsweep|g' \
     -e 's|builder::revolve|builder::rsweep|g' \
     -e 's|BsplineCurve|BSplineCurve|g' \
+    -e 's|truck_stepio::save::|truck_stepio::out::|g' \
+    -e 's|truck_stepio::load::|truck_stepio::r#in::|g' \
     {} +
 
   ok "Patched back to truck-* crate names"
@@ -537,7 +588,9 @@ cd "$CRATE_DIR"
 
 # 5c. WASM build
 info "[3/5] wasm-pack build (dev mode)..."
-if wasm-pack build --target web --dev --out-dir ../web/pkg-browser-renderer 2>&1; then
+if wasm-pack build --target web --dev 2>&1; then
+  rm -rf ../web/pkg-browser-renderer
+  mv pkg ../web/pkg-browser-renderer
   ok "[3/5] WASM build succeeded"
 else
   fail "[3/5] WASM build failed"

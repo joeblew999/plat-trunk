@@ -17,6 +17,7 @@
 import { execSync } from 'child_process';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 
 // ── System registry ──────────────────────────────────────────────────────────
 // To add a system: add one import + push to SYSTEMS
@@ -31,6 +32,34 @@ const SYSTEMS = [
 // ────────────────────────────────────────────────────────────────────────────
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const LOCKFILE = ROOT + '/target/.test-lock';
+
+// Prevent concurrent test runs — cargo can only compile one at a time,
+// so multiple `bun run test` invocations deadlock on the target dir lock.
+if (existsSync(LOCKFILE)) {
+  let info = '';
+  try { info = readFileSync(LOCKFILE, 'utf8').trim(); } catch {}
+  // Check if the PID in the lock is still alive
+  if (info) {
+    const pid = parseInt(info.split('\n')[0], 10);
+    if (pid && pid !== process.pid) {
+      try { process.kill(pid, 0); /* just checks if alive */ } catch {
+        // Process is dead — stale lock, remove and continue
+        unlinkSync(LOCKFILE);
+      }
+    }
+    if (existsSync(LOCKFILE)) {
+      console.error(`\n\x1b[31m\x1b[1mAnother test run is already in progress (PID ${info.split('\\n')[0]}).\x1b[0m`);
+      console.error(`\x1b[2mIf stuck, delete: ${LOCKFILE}\x1b[0m\n`);
+      process.exit(1);
+    }
+  }
+}
+writeFileSync(LOCKFILE, `${process.pid}\n${new Date().toISOString()}`);
+process.on('exit', () => { try { unlinkSync(LOCKFILE); } catch {} });
+process.on('SIGINT', () => { try { unlinkSync(LOCKFILE); } catch {} process.exit(130); });
+process.on('SIGTERM', () => { try { unlinkSync(LOCKFILE); } catch {} process.exit(143); });
+
 const W = 66;
 const line  = '━'.repeat(W);
 const reset = '\x1b[0m';
@@ -57,16 +86,23 @@ function subheader(name) {
   if (SYSTEMS.length > 1) console.log(`\n${dim}  ▶ ${name}${reset}`);
 }
 
+const PHASE_TIMEOUT = 5 * 60 * 1000; // 5 minutes per phase
+
 function run(cmd, opts = {}) {
   const t = Date.now();
   try {
-    execSync(cmd, { cwd: ROOT, stdio: 'inherit', ...opts });
+    execSync(cmd, { cwd: ROOT, stdio: 'inherit', timeout: PHASE_TIMEOUT, ...opts });
     const ms = Date.now() - t;
     console.log(`\n${green}✓ passed${reset} ${dim}(${(ms/1000).toFixed(1)}s)${reset}`);
     passed++;
-  } catch {
+  } catch (err) {
     const ms = Date.now() - t;
-    console.log(`\n${red}✗ FAILED${reset} ${dim}(${(ms/1000).toFixed(1)}s)${reset}`);
+    if (err.killed) {
+      console.log(`\n${red}✗ TIMED OUT after ${(ms/1000).toFixed(0)}s${reset}`);
+      console.log(`${dim}Command: ${cmd}${reset}`);
+    } else {
+      console.log(`\n${red}✗ FAILED${reset} ${dim}(${(ms/1000).toFixed(1)}s)${reset}`);
+    }
     failed++;
     console.log(`\n${red}${bold}Pipeline stopped. Fix the failure above and re-run.${reset}\n`);
     process.exit(1);
