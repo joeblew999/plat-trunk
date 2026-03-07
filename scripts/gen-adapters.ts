@@ -193,6 +193,60 @@ export type WasmModuleName = typeof wasmModules[number];
 `;
 }
 
+// ─── Native Rust: command list + domain routing ──────────────────
+
+function genNativeCommands(): string {
+  const commands = schema.commands as Record<string, { domain: string; readonly: boolean; ephemeral: boolean }>;
+  const sorted = Object.entries(commands).sort(([a], [b]) => a.localeCompare(b));
+  const domains = [...new Set(sorted.map(([, c]) => c.domain))].sort();
+
+  const domainArms = domains.map(domain => {
+    const cmds = sorted.filter(([, c]) => c.domain === domain);
+    const names = cmds.map(([name]) => `"${name}"`).join(' | ');
+    return `        ${names} => Some(CadDomain::${capitalize(domain)}),`;
+  }).join('\n');
+
+  const allNames = sorted.map(([name]) => `    "${name}",`).join('\n');
+
+  const syncExports = (boundaries.modules['truck-sync']?.exports as string[]) || [];
+  const syncNames = syncExports.map(name => `    "${name}",`).join('\n');
+
+  return `${HEADER('native').replace(/^\/\//gm, '//')}
+//! Generated command metadata for native Rust targets (ADR-0004).
+//!
+//! Provides: command names, domain routing, sync module exports.
+//! Use via \`include!("commands_generated.rs")\` or as a standalone module.
+
+/// All ${sorted.length} command names from cad-schema.json.
+pub const COMMAND_NAMES: &[&str] = &[
+${allNames}
+];
+
+/// Command domain categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CadDomain {
+${domains.map(d => `    ${capitalize(d)},`).join('\n')}
+}
+
+/// Look up the domain for a command name.
+pub fn command_domain(cmd: &str) -> Option<CadDomain> {
+    match cmd {
+${domainArms}
+        _ => None,
+    }
+}
+
+/// All ${syncExports.length} exports from the truck-sync WASM module.
+pub const SYNC_EXPORTS: &[&str] = &[
+${syncNames}
+];
+`;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ─── Output ──────────────────────────────────────────────────────
 
 interface GeneratedFile {
@@ -204,6 +258,7 @@ const outputs: GeneratedFile[] = [
   { path: 'systems/truck/worker/src/truck-wasm.generated.ts', content: genCfTruckWasm() },
   { path: 'systems/truck/worker/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
   { path: 'systems/truck/web/cad-dispatch.generated.ts', content: genBrowserDispatch() },
+  { path: 'systems/truck/crate/src/commands_generated.rs', content: genNativeCommands() },
 ];
 
 const checkMode = process.argv.includes('--check');
