@@ -175,6 +175,8 @@ pub fn build_schema() -> serde_json::Value {
     });
 
     serde_json::json!({
+        "_generated": "This file is generated — do not edit directly. Re-generate: bun run build:truck",
+        "_chain": "Rust #[derive(JsonSchema)] → cargo run --bin generate-schema → cad-schema.json",
         "module": "cad",
         "version": env!("PROJECT_VERSION"),
         "commands": cmd_map,

@@ -3,17 +3,115 @@
 - **Status:** Proposed
 - **Date:** 2026-03-07
 - **Supersedes:** None
-- **Related:** ADR-0019 (Module Router), ADR-0038 (Versioning Model)
+- **Related:** ADR-0002 (Headless as Core Engine), ADR-0003 (Format Workers)
 
 ## Context
 
-plat-trunk compiles Rust crates to WASM for two runtime targets: the browser (Web Worker via `wasm-bindgen` + `WebAssembly.instantiateStreaming`) and Cloudflare Workers (bound via `wasm_modules` in `wrangler.toml`). A third target — native Rust — is desirable for CLI tooling, testing at native speed, desktop apps (Tauri/wgpu), and heavyweight server-side processing (booleans, tessellation, STEP generation) that exceeds edge CPU limits. The same Truck geometry kernel, Automerge CRDT logic, and coordinate transform pipeline must run on all three.
+plat-trunk compiles Rust crates to WASM for two runtime targets today, with a third target planned:
 
-Today this creates three problems:
+**Browser** — Two WASM modules loaded on the main thread via `wasm-bindgen --target web`:
+- `truck-webgpu-gui` (geometry engine + WebGPU rendering) from `systems/truck/crate`
+- `truck-sync` (Automerge CRDT op log) from `systems/sync/crate`
 
-1. **Different instantiation paths.** The browser distributes WASM modules across multiple Web Workers (e.g. a geometry worker running Truck, a sync worker running Automerge), with the main thread orchestrating via `postMessage`. CF Workers receive pre-bound modules as globals in a single isolate. Each target requires distinct JS glue code, currently hand-written.
-1. **WASM-to-WASM calling.** When module A (e.g. Truck geometry) needs to call module B (e.g. Automerge), both targets require glue that bridges separate linear memories. In the browser, these modules may also live in different Web Workers, adding a `postMessage` serialisation boundary on top of the WASM boundary. The binding mechanism differs per target, and the glue grows combinatorially as modules increase.
-1. **No shared contract.** There is no single source of truth that describes which functions cross WASM boundaries, what types they exchange, which modules export or import them, or which Web Worker hosts them in the browser. Changes to a Rust crate’s public API can silently break one target while the other continues to work.
+Both run on the main thread — no Web Workers yet. `history-domain.ts` imports directly from `pkg-sync/truck_sync.js`; `boot.ts` imports from `pkg-browser-renderer/truck_webgpu_gui.js`.
+
+**Cloudflare Workers** — The same two WASM modules loaded in a single worker isolate via `WebAssembly.instantiate`:
+- `truck-webgpu-gui` (headless, `rendering` feature disabled) with hand-written loader `truck-wasm.ts`
+- `truck-sync` with hand-written loader `sync-wasm.ts`
+
+Both use an identical lazy-init pattern but the loader code is duplicated by hand.
+
+**Native Rust** (planned) — desirable for CLI tooling, testing at native speed, desktop apps (Tauri/wgpu), and heavyweight server-side processing (booleans, tessellation, STEP generation) that exceeds edge CPU limits.
+
+The same Truck geometry kernel and Automerge CRDT logic must run on all three targets. Today there are 2 WASM modules × 2 targets = 4 hand-written loader paths. As format workers (IFC, STEP, MVT, glTF) are added, this grows combinatorially.
+
+### Platform constraints that drive splitting
+
+Beyond code organisation, hard platform limits make multi-module splitting a requirement, not a preference:
+
+- **CF Worker CPU time limits.** Free-tier workers get 10ms CPU time per request; paid-tier gets 30ms. Complex boolean operations, large tessellation, and STEP generation routinely exceed these budgets. Splitting stateless format handlers (IFC, STEP, MVT, glTF) into separate workers via CF service bindings gives each handler its own CPU budget — the calling worker's clock stops while waiting for the RPC response.
+- **CF Worker cold start.** Larger WASM modules have slower cold starts. Splitting into smaller, focused workers (each well under 3MB) means each worker initialises faster and stays warm independently.
+- **CF service binding subrequest isolation.** When worker A calls worker B via a service binding, B gets its own CPU time budget. This is the key mechanism: a 50ms boolean operation that would timeout in a single worker succeeds when the geometry engine delegates to a format worker, because each worker's clock runs independently.
+- **Browser Web Workers.** The browser main thread must never block on geometry computation — it owns the render loop and UI events. WASM modules running in Web Workers via `postMessage` keep the main thread responsive. Multiple Web Workers enable parallel computation (e.g. tessellation in one worker while sync runs in another).
+- **Native target.** The same crate boundaries that define worker splits also define Cargo workspace members for native compilation. This enables: Rust-level testing at native speed (no WASM compile, full debugger), desktop apps via Tauri/wgpu, mobile deployment via FFI, native MCP servers for heavy compute that exceeds edge CPU limits, and CI validation without browser or miniflare overhead.
+
+### What already works — the existing codegen chain
+
+The current system already solves the "single source of truth" problem for command contracts. Understanding it is essential because ADR-0004 extends this pattern, not replaces it.
+
+**The chain:**
+
+```
+Rust #[derive(JsonSchema)] param structs
+  → cargo run --bin generate-schema   → cad-schema.json   [committed]
+  → scripts/gen-openapi.ts            → openapi.json      [gitignored]
+  → openapi-typescript                → api-types.ts       [committed]
+```
+
+**How it works:**
+
+1. **Rust structs are the source of truth.** Each command's param struct (e.g. `AddCubeParams`) uses `#[derive(JsonSchema)]` with serde attributes for field names, types, ranges, and defaults. No separate schema file to maintain.
+
+2. **Domain modules are self-describing.** Each domain (`commands/geometry.rs`, `booleans.rs`, `sketch.rs`, `scene.rs`, `style.rs`) owns its param structs AND a `schema_entries()` function returning tuples of `(name, description, params_schema, returns, ephemeral, readonly, domain)`. Adding a new command = add the struct + one tuple entry.
+
+3. **The schema binary is trivial.** `generate_schema.rs` is 3 lines — calls `build_schema()`, prints JSON. No framework, no extra dependencies. Runs natively (not in WASM).
+
+4. **gen-openapi.ts is pure transformation.** Reads `cad-schema.json` statically (no running server needed), iterates commands, emits OpenAPI paths for both `/async/{name}` and `/sync/{name}` routes. The OpenAPI spec is derived, not authored.
+
+5. **The chain is atomic.** `bun run build:truck` = WASM build + schema generation. `bun run build:truck-web` = type generation + Vite build. No manual steps.
+
+**What the chain already feeds:**
+
+| Consumer | How it uses cad-schema.json |
+|----------|---------------------------|
+| MCP tools (29) | Worker reads schema, exposes as MCP tool list |
+| Hono/Zod routes | Worker mounts `/async/{name}` and `/sync/{name}` per command |
+| Browser `cadCommand()` | Dispatches by command name |
+| HeadlessController | Dispatches by command name in headless WASM |
+| OpenAPI spec | Generated from schema commands |
+| TypeScript types | Generated from OpenAPI via openapi-typescript |
+| check-alignment.mjs | Validates schema ↔ worker ↔ wrangler consistency |
+
+**Generation pipeline files:**
+
+| File | What it does |
+|------|-------------|
+| `systems/truck/crate/src/bin/generate_schema.rs` | 3-line Rust binary — calls `build_schema()`, prints JSON to stdout |
+| `scripts/gen-openapi.ts` | Reads `cad-schema.json` → emits `openapi.json` + `api-types.ts` |
+| `systems/truck/worker/src/truck-wasm.ts` | Hand-written WASM loader glue for truck geometry on CF |
+| `systems/truck/worker/src/sync-wasm.ts` | Hand-written WASM loader glue for truck-sync on CF |
+
+**Generated outputs:**
+
+| Output | Generated by | Committed? |
+|--------|-------------|-----------|
+| `systems/truck/cad-schema.json` | `generate_schema.rs` | Yes |
+| `systems/truck/web/openapi.json` | `gen-openapi.ts` | No (gitignored) |
+| `systems/truck/web/api-types.ts` | `openapi-typescript` | Yes |
+
+ADR-0004 adds one new script — `scripts/gen-adapters.ts` — that reads the schema and emits CF adapter, browser worker scripts, and native dispatcher. The two hand-written WASM loaders (`truck-wasm.ts`, `sync-wasm.ts`) become generated outputs. When crates split, each emits its own schema fragment; `scripts/` merges and generates everything. Crates stay dumb.
+
+**The `domain` field is the ADR-0004 seed.** Every command already carries a domain tag — `"geometry"`, `"booleans"`, `"sketch"`, `"scene"`, `"style"`. When crates split into separate workers, this field becomes the routing key. The `commandWorker` routing table in the browser dispatcher (described below) is a codegen'd version of what's already in the schema.
+
+**What's missing** is the boundary layer: which WASM modules exist, which functions they export, what types cross the boundary, and how each target loads them. That's what this ADR adds.
+
+### Relationship to ADR-0002 (GeometryStore)
+
+ADR-0002 eliminates the code duplication between `headless.rs` (CF) and `wasm_app.rs` (browser) by extracting a shared `GeometryStore` — one engine, two thin wrappers. ADR-0004 generates the loader/adapter code that wires those wrappers to their targets.
+
+**ADR-0004 does not require ADR-0002 first.** The boundary contracts work with the current architecture — they describe which WASM modules exist and how to load them, regardless of whether the internal code is deduplicated. The `generate_schema.rs` binary and `cad-schema.json` already exist and work today.
+
+However, **ADR-0002 makes ADR-0004 more valuable.** Once GeometryStore exists as a clean shared engine, the boundary between "geometry logic" and "target-specific adapter" becomes crisp. The generated adapters get simpler because there's one consistent API surface to wrap, not two diverged implementations.
+
+**Recommended order:** Either can land first. ADR-0002 is a Rust refactor (internal, no new files). ADR-0004 is a build tooling addition (`scripts/gen-adapters.ts`, schema extensions). They don't conflict.
+
+### Problems with the current approach
+
+The hand-written, per-target loader pattern creates three problems today:
+
+1. **Different instantiation paths.** The browser loads WASM via `wasm-bindgen --target web` (dynamic `import()` of JS glue). CF Workers load the same WASM via `WebAssembly.instantiate` with manually-collected glue imports. Each target requires distinct hand-written loader code — today `truck-wasm.ts` and `sync-wasm.ts` for CF, and direct imports in `boot.ts` and `history-domain.ts` for the browser.
+1. **Duplicated loader pattern.** The two CF loaders (`truck-wasm.ts`, `sync-wasm.ts`) are nearly identical — same lazy-init, same glue import collection, same `__wbg_set_wasm` call. Each new WASM module would require copying this pattern again. The browser side has a different but equally manual loading pattern per module.
+1. **No shared contract.** There is no single source of truth that describes which WASM modules exist, which functions they export, what types cross the boundary, or how modules should be loaded on each target. Changes to a Rust crate’s public API can silently break one target while the other continues to work.
 
 ### Why Not WIT / WASM Component Model?
 
@@ -156,6 +254,10 @@ The codegen script (a `system.mjs` step) reads the extended schema and emits:
 
 **Browser — per-worker scripts and main-thread dispatcher:**
 
+> **Current state:** Both WASM modules (`truck-webgpu-gui` and `truck-sync`) run on the main thread via direct `import()` calls in `boot.ts` and `history-domain.ts`. There are no Web Workers.
+>
+> **Proposed:** The codegen moves WASM execution into Web Workers, keeping the main thread free for rendering and UI. The `commandWorker` routing table replaces today's direct `cadCommand()` calls with `postMessage`-based dispatch.
+
 The browser target generates multiple files reflecting the Web Worker topology:
 
 *Worker script (`workers/geometry-worker.ts`):*
@@ -290,6 +392,10 @@ When two modules share the same Web Worker (e.g. `truck-geometry` and `coord-tra
 
 **CF Worker adapter (`cf-adapter.ts`):**
 
+> **Current state:** Two hand-written loaders (`truck-wasm.ts` and `sync-wasm.ts`) use an identical lazy-init pattern — collect glue imports, `WebAssembly.instantiate`, `__wbg_set_wasm`. Both live in the same worker isolate.
+>
+> **Proposed:** The codegen replaces these with a single generated adapter. Each new crate/worker gets its adapter generated automatically — no more copying the lazy-init boilerplate.
+
 ```typescript
 // Generated — do not edit. Source: cad-schema.json
 import truckWasm from './truck-geometry.wasm';
@@ -308,6 +414,10 @@ export const addCube = (p: AddCubeParams): CommandResult =>
 **Shared types (`types.ts`):** Generated from schemars JSON Schema, identical on both WASM targets.
 
 **Native dispatcher (`native-dispatcher.rs`):**
+
+> **Current state:** `headless.rs` has a hand-written dispatch chain (`dispatch_geometry → dispatch_booleans → dispatch_sketch → dispatch_scene → dispatch_style`). This works but must be manually updated when commands are added.
+>
+> **Proposed:** The codegen generates the dispatch match arms from `cad-schema.json`, keeping it in sync automatically.
 
 The native target is fundamentally different from the WASM targets. Cargo handles crate linking — there is no WASM instantiation, no JS glue, no linear memory bridging. Inter-module imports resolve to direct function calls at compile time.
 
