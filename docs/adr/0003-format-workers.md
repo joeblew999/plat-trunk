@@ -2,7 +2,13 @@
 
 ## Status
 
-**Proposed** — 2026-03-06
+**Superseded by [ADR-0004](0004-wasm-boundary-contracts.md)** — 2026-03-07
+
+> The format worker splitting pattern described here is a specific application of ADR-0004's
+> general WASM boundary contract system. ADR-0004 Phase 1+ covers the codegen, routing,
+> and topology that would drive format worker splitting. This ADR is retained as a reference
+> for the format-specific details (ParsedObject contract, directory structure, splitting seams)
+> that ADR-0004 will consume when the 3MB limit approaches.
 
 ## Principle
 

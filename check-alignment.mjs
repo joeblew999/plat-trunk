@@ -160,6 +160,21 @@ for (const s of devServers) {
   }
 }
 
+// ── 7. Generated adapters not stale (ADR-0004) ─────────────────────────────
+console.log('\n[7] Generated adapters (ADR-0004)');
+import { spawnSync } from 'child_process';
+const adapterCheck = spawnSync('bun', ['scripts/gen-adapters.ts', '--check'], {
+  cwd: ROOT, encoding: 'utf8', timeout: 15000,
+});
+if (adapterCheck.status === 0) {
+  ok('Generated adapters match cad-schema.json boundaries');
+} else {
+  const lines = (adapterCheck.stdout + adapterCheck.stderr).trim().split('\n');
+  for (const line of lines) {
+    if (line.startsWith('STALE:') || line.startsWith('MISSING:')) fail(line);
+  }
+}
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('');
 if (errors === 0 && warnings === 0) {

@@ -1,9 +1,10 @@
 # ADR-0004: WASM Boundary Contracts via Schema-Driven Codegen
 
-- **Status:** Proposed
+- **Status:** Phase 0 Implemented
 - **Date:** 2026-03-07
-- **Supersedes:** None
-- **Related:** ADR-0002 (Headless as Core Engine), ADR-0003 (Format Workers)
+- **Supersedes:** ADR-0003 (Format Workers)
+- **Related:** ADR-0001 (Multi-Actor Sync), ADR-0002 (GeometryStore)
+- **Blocked by:** ADR-0002 for browser Web Workers (geometry/rendering separation); not blocked for CF Worker split
 
 ## Context
 
@@ -587,12 +588,30 @@ One script, reads `cad-schema.json`, emits 3 files:
 - No `#[cad_boundary]` proc macro — boundaries are hardcoded in `build_schema()`
 - No Web Workers in browser — dispatcher still runs on main thread
 - No topology / cross-worker routing — single module per target
-- No `check-alignment.mjs` boundary checks
 
 **What Phase 0 proves:**
 - The schema carries enough information to generate correct loader code
 - The codegen chain (`cad-schema.json` → `gen-adapters.ts` → per-target files) works
 - Adding a new crate = add its exports to `boundaries` → regenerate → done
+
+**Phase 0 implementation status (2026-03-07):**
+
+All three steps completed and verified:
+
+| Deliverable | File | Status |
+|-------------|------|--------|
+| Schema boundaries | `commands/mod.rs` → `cad-schema.json` | Done — 42 geometry + 10 sync exports |
+| CF Worker truck loader | `worker/src/truck-wasm.generated.ts` | Done — replaces hand-written `truck-wasm.ts` (deleted) |
+| CF Worker sync loader | `worker/src/sync-wasm.generated.ts` | Done — replaces hand-written `sync-wasm.ts` (deleted) |
+| Browser command routing | `web/cad-dispatch.generated.ts` | Done — typed `commandDomain` map, 5 domains |
+| Native Rust command list | `crate/src/commands_generated.rs` | Done — `COMMAND_NAMES`, `CadDomain` enum, `command_domain()` |
+| Alignment check | `check-alignment.mjs` [7] | Done — verifies generated adapters aren't stale |
+| Module router wiring | `web/core/module-router.ts` | Done — imports generated `commandDomain` for multi-module routing |
+| Boundary contract tests | `tests/boundary_dispatch.rs` | Done — 3 native tests (dispatch coverage, codegen sync, sync exports) |
+| Missing dispatch fix | `headless.rs` | Done — `quick_rect_extrude` was missing, caught by contract test |
+| Build chain | `package.json` `gen:adapters` | Done — wired into `build:truck` |
+
+Verification: 30/30 API tests, 3/3 boundary contract tests, typecheck clean, alignment check passes.
 
 ### Phase 1+: Incremental additions
 
@@ -601,7 +620,7 @@ Once Phase 0 is verified, each of these can land independently:
 1. **Proc macro:** `#[cad_boundary]` replaces the hardcoded boundaries in `build_schema()`. Inert on `wasm32`, emits metadata on native.
 1. **Browser Web Workers:** `gen-adapters.ts` gains a Web Worker codegen path — `geometry-worker.ts`, `sync-worker.ts`, `browser-dispatcher.ts` with `postMessage` routing.
 1. **Native dispatcher binary:** Thin CLI that links pure logic crates, uses the generated dispatcher. Validates `add_cube` works identically via browser WASM, CF Worker WASM, and native function call.
-1. **Alignment checks:** `check-alignment.mjs` gains boundary verification — exported functions match schema, generated files aren't stale.
+1. ~~**Alignment checks:** `check-alignment.mjs` gains boundary verification — exported functions match schema, generated files aren't stale.~~ **Done in Phase 0** — `check-alignment.mjs` [7] + `boundary_dispatch.rs` contract tests.
 1. **Topology:** `workers` and `topology` sections in schema, cross-worker `postMessage` bridges.
 1. **Native MCP server:** Generated dispatcher serves MCP tools over stdio — full Truck kernel at native speed, no WASM.
 1. **Documentation:** `llms.txt` and `llms-full.txt` updated with boundary contract docs for AI agent consumption.

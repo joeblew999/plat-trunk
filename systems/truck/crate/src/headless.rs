@@ -753,6 +753,31 @@ impl HeadlessController {
                 }
                 Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
             }),
+            "quick_rect_extrude" => Some(match serde_json::from_value::<QuickRectExtrudeParams>(p) {
+                Ok(params) => {
+                    if params.width <= 0.0 || params.height <= 0.0 || params.depth <= 0.0 {
+                        serde_json::json!({ "error": "width, height, depth must all be > 0" })
+                    } else {
+                        let plane = match params.plane.as_deref().unwrap_or("xy") {
+                            "xz" => crate::sketch::SketchPlane::XZ,
+                            "yz" => crate::sketch::SketchPlane::YZ,
+                            _    => crate::sketch::SketchPlane::XY,
+                        };
+                        let sketch = crate::sketch::quick_rect_sketch(params.width, params.height, plane);
+                        match crate::sketch::sketch_to_solid(&sketch, params.depth) {
+                            Ok(solid) => {
+                                let id = self.add_solid(solid, "QuickRect", None);
+                                serde_json::json!({ "objectId": id })
+                            }
+                            Err(e) => {
+                                error!("headless: quick_rect_extrude failed: {}", e);
+                                serde_json::json!({ "error": format!("Extrude failed: {}", e) })
+                            }
+                        }
+                    }
+                }
+                Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+            }),
             _ => None,
         }
     }

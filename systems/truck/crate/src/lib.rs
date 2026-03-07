@@ -282,6 +282,11 @@ pub use wasm_app::SceneController;
 ))]
 pub mod headless;
 
+// Generated command metadata (ADR-0004) — domain routing, command list, sync exports.
+// Regenerate: bun run gen:adapters
+#[path = "commands_generated.rs"]
+pub mod commands_generated;
+
 #[cfg(any(
     all(target_arch = "wasm32", not(feature = "rendering")),
     feature = "native",

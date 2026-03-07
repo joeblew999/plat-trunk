@@ -1,4 +1,80 @@
 {
+  "_chain": "Rust #[derive(JsonSchema)] → cargo run --bin generate-schema → cad-schema.json",
+  "_generated": "This file is generated — do not edit directly. Re-generate: bun run build:truck",
+  "boundaries": {
+    "modules": {
+      "truck-geometry": {
+        "crate": "truck-webgpu-gui",
+        "exports": [
+          "add_cube",
+          "add_cylinder",
+          "add_sphere",
+          "add_torus",
+          "begin_sketch",
+          "boolean_intersect",
+          "boolean_subtract",
+          "boolean_union",
+          "clash_detect",
+          "clear",
+          "delete",
+          "deselect",
+          "duplicate",
+          "export_obj",
+          "export_scene",
+          "export_step",
+          "export_stl",
+          "get_bim_metadata",
+          "get_object_style",
+          "get_state",
+          "import_ifc",
+          "import_scene",
+          "import_step",
+          "pick_at",
+          "pick_mesh_stats",
+          "quick_rect_extrude",
+          "rename",
+          "rotate",
+          "scale",
+          "select",
+          "select_at",
+          "set_camera",
+          "set_color",
+          "set_style",
+          "sketch_add_constraint",
+          "sketch_add_edge",
+          "sketch_add_point",
+          "sketch_cancel",
+          "sketch_export",
+          "sketch_extrude",
+          "sketch_solve",
+          "translate"
+        ],
+        "targets": [
+          "browser",
+          "cf-worker"
+        ]
+      },
+      "truck-sync": {
+        "crate": "truck-sync",
+        "exports": [
+          "create_doc",
+          "apply_op",
+          "merge_docs",
+          "get_ops",
+          "set_op_enabled",
+          "set_group_enabled",
+          "rollback_to",
+          "export_ops_since",
+          "validate_op",
+          "get_replay_ops"
+        ],
+        "targets": [
+          "browser",
+          "cf-worker"
+        ]
+      }
+    }
+  },
   "commands": {
     "add_cube": {
       "description": "Add a cube primitive",

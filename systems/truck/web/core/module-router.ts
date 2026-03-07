@@ -1,4 +1,5 @@
 import type { WasmResult } from '../types';
+import { commandDomain } from '../cad-dispatch.generated';
 
 /**
  * Module Router — routes commands to WASM modules by schema domain (ADR-0019).
@@ -40,17 +41,27 @@ export class BrowserModuleRouter {
 
   /**
    * Tier 1: Dispatch mutation to the module that owns this command.
-   * Today: everything goes to 'core'. Tomorrow: routes by command set.
+   * Single module: pass-through. Multi-module: routes by schema domain (ADR-0004).
    */
   execute(type: string, params: unknown): WasmResult {
-    // Phase 1: single module fast path
+    // Single module fast path
     if (this.modules.size === 1) {
       const mod = this.modules.values().next().value!;
       return this._call(mod.instance, type, params);
     }
 
-    // Multi-module: find the module that owns this command
-    for (const [name, mod] of this.modules) {
+    // Multi-module: use generated commandDomain map for routing
+    const domain = commandDomain[type];
+    if (domain) {
+      for (const [, mod] of this.modules) {
+        if (mod.commands?.has(type)) {
+          return this._call(mod.instance, type, params);
+        }
+      }
+    }
+
+    // Fallback: try all modules
+    for (const [, mod] of this.modules) {
       if (!mod.commands || mod.commands.has(type)) {
         return this._call(mod.instance, type, params);
       }
