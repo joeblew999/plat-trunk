@@ -5,10 +5,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPTransport } from '@hono/mcp';
 import cadSchema from '../../cad-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
-import { initHeadlessWasm } from './truck-wasm';
+import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { appendOp, getOpsSince, countOps } from './op-log';
-import { syncApplyOp, syncGetReplayOps } from './sync-wasm';
+import { syncApplyOp, syncGetReplayOps } from './sync-wasm.generated';
 
 type Bindings = {
   ASSETS: Fetcher;

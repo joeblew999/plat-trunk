@@ -174,6 +174,35 @@ pub fn build_schema() -> serde_json::Value {
         }
     });
 
+    // ── Boundary metadata (ADR-0004 Phase 0) ──────────────────────
+    // Hardcoded for now — Phase 1 replaces with #[cad_boundary] proc macro.
+    // Lists WASM modules, their exports, and the functions they provide.
+    let boundaries = serde_json::json!({
+        "modules": {
+            "truck-geometry": {
+                "crate": "truck-webgpu-gui",
+                "targets": ["browser", "cf-worker"],
+                "exports": cmd_map.keys().collect::<Vec<_>>(),
+            },
+            "truck-sync": {
+                "crate": "truck-sync",
+                "targets": ["browser", "cf-worker"],
+                "exports": [
+                    "create_doc",
+                    "apply_op",
+                    "merge_docs",
+                    "get_ops",
+                    "set_op_enabled",
+                    "set_group_enabled",
+                    "rollback_to",
+                    "export_ops_since",
+                    "validate_op",
+                    "get_replay_ops",
+                ],
+            },
+        },
+    });
+
     serde_json::json!({
         "_generated": "This file is generated — do not edit directly. Re-generate: bun run build:truck",
         "_chain": "Rust #[derive(JsonSchema)] → cargo run --bin generate-schema → cad-schema.json",
@@ -181,5 +210,6 @@ pub fn build_schema() -> serde_json::Value {
         "version": env!("PROJECT_VERSION"),
         "commands": cmd_map,
         "controlPlane": control_plane,
+        "boundaries": boundaries,
     })
 }
