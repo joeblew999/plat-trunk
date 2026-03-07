@@ -90,6 +90,7 @@ fn sync_boundary_exports_match_wasm_module() {
         "create_doc", "apply_op", "merge_docs", "get_ops",
         "set_op_enabled", "set_group_enabled", "rollback_to",
         "export_ops_since", "validate_op", "get_replay_ops",
+        "get_name", "set_name",
     ];
 
     let actual: Vec<&str> = sync_exports.iter().map(|v| v.as_str().unwrap()).collect();

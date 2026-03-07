@@ -66,7 +66,9 @@
           "rollback_to",
           "export_ops_since",
           "validate_op",
-          "get_replay_ops"
+          "get_replay_ops",
+          "get_name",
+          "set_name"
         ],
         "targets": [
           "browser",

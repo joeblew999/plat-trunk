@@ -198,6 +198,8 @@ pub fn build_schema() -> serde_json::Value {
                     "export_ops_since",
                     "validate_op",
                     "get_replay_ops",
+                    "get_name",
+                    "set_name",
                 ],
             },
         },

@@ -105,6 +105,8 @@ function genCfSyncWasm(): string {
     { wasmFn: 'export_ops_since', wrapperName: 'syncExportOpsSince', params: 'doc: Uint8Array, sinceIndex: number', call: 'bg.export_ops_since(doc, sinceIndex)', returnType: 'string' },
     { wasmFn: 'validate_op', wrapperName: 'syncValidateOp', params: 'opJson: string', call: 'bg.validate_op(opJson)', returnType: 'boolean' },
     { wasmFn: 'get_replay_ops', wrapperName: 'syncGetReplayOps', params: 'doc: Uint8Array', call: 'bg.get_replay_ops(doc)', returnType: 'string' },
+    { wasmFn: 'get_name', wrapperName: 'syncGetName', params: 'doc: Uint8Array', call: 'bg.get_name(doc)', returnType: 'string' },
+    { wasmFn: 'set_name', wrapperName: 'syncSetName', params: 'doc: Uint8Array, name: string', call: 'bg.set_name(doc, name)', returnType: 'Uint8Array<ArrayBuffer>' },
   ];
 
   // Only generate wrappers for exports that are in the schema

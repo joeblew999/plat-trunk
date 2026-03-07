@@ -286,6 +286,25 @@ pub mod core {
         serde_json::from_str::<Op>(op_json).is_ok()
     }
 
+    /// Get the model name from the Automerge doc (stored at root "name" key).
+    pub fn get_name(doc_bytes: &[u8]) -> Result<String, String> {
+        let doc = load_doc(doc_bytes)?;
+        match doc.get(ROOT, "name").map_err(|e| e.to_string())? {
+            Some((Value::Scalar(s), _)) => match s.as_ref() {
+                automerge::ScalarValue::Str(v) => Ok(v.to_string()),
+                _ => Ok(String::new()),
+            },
+            _ => Ok(String::new()),
+        }
+    }
+
+    /// Set the model name in the Automerge doc (stored at root "name" key).
+    pub fn set_name(doc_bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
+        let mut doc = load_doc(doc_bytes)?;
+        doc.put(ROOT, "name", name).map_err(|e| e.to_string())?;
+        Ok(doc.save())
+    }
+
     /// Return ops ready for scene replay: index order, disabled ops excluded.
     ///
     /// This is the only input the geometry layer needs — the sync crate has no
@@ -376,6 +395,18 @@ mod wasm {
     pub fn get_replay_ops(doc: &[u8]) -> Result<String, JsValue> {
         let ops = core::get_replay_ops(doc).map_err(|e| JsValue::from_str(&e))?;
         serde_json::to_string(&ops).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Get the model name from the Automerge doc.
+    #[wasm_bindgen]
+    pub fn get_name(doc: &[u8]) -> Result<String, JsValue> {
+        core::get_name(doc).map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// Set the model name in the Automerge doc. Returns updated doc bytes.
+    #[wasm_bindgen]
+    pub fn set_name(doc: &[u8], name: &str) -> Result<Vec<u8>, JsValue> {
+        core::set_name(doc, name).map_err(|e| JsValue::from_str(&e))
     }
 }
 
@@ -595,6 +626,21 @@ mod tests {
         let ids_ab: Vec<_> = replay_ab.iter().map(|o| &o.id).collect();
         let ids_ba: Vec<_> = replay_ba.iter().map(|o| &o.id).collect();
         assert_eq!(ids_ab, ids_ba);
+    }
+
+    /// get_name/set_name round-trips and syncs via merge_docs.
+    #[test]
+    fn name_round_trips_and_merges() {
+        let doc = core::create_doc();
+        assert_eq!(core::get_name(&doc).unwrap(), "");
+
+        let doc = core::set_name(&doc, "My Model").unwrap();
+        assert_eq!(core::get_name(&doc).unwrap(), "My Model");
+
+        // Name survives merge
+        let doc2 = core::create_doc();
+        let merged = core::merge_docs(&doc2, &doc).unwrap();
+        assert_eq!(core::get_name(&merged).unwrap(), "My Model");
     }
 
     /// Concurrent extrude + boolean — merge must contain all ops; disabled ops must be excluded
