@@ -305,6 +305,10 @@ export class CadDocumentManagerBase {
                 this._bc.postMessage(msg);
             } catch { /* BroadcastChannel may be closed */ }
         }
+        // Push to server (debounced — batch rapid ops)
+        if (navigator.onLine) {
+            this._debouncedSync();
+        }
     }
 
     _listenForChanges(): void {
@@ -474,6 +478,56 @@ export class CadDocumentManagerBase {
 
         console.log(`[Progressive] ${hotEntries.length} Hot, ${warmEntries.length} Warm, ${ops.length - startIndex} remaining ops`);
         await this._replayRemainingOps(ops, startIndex, REPLAY);
+    }
+
+    // ── Server sync (ADR-0001 Part B) ─────────────────────────────────────────
+
+    /** Apply a server-originated op (from SSE sync-op event).
+     *  Executes in WASM + records in local Automerge doc (same op id — no duplicate). */
+    async applyServerOp(op: CadOperation): Promise<void> {
+        if (!this._docBytes || !this._modelId) return;
+        cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
+        this._docBytes = apply_op(this._docBytes, JSON.stringify(op));
+        await saveDoc(this._modelId, this._docBytes);
+        this._localOpCount = this._getDocOpCount();
+        reconcile({});
+        this._renderTimeline();
+    }
+
+    /** Sync local doc with server via CRDT merge. */
+    async syncWithServer(): Promise<void> {
+        if (!this._docBytes || !this._modelId) return;
+        try {
+            const resp = await fetch(`/api/models/${this._modelId}/sync`, {
+                method: 'POST',
+                body: this._docBytes as unknown as BodyInit,
+                headers: { 'content-type': 'application/octet-stream' },
+            });
+            if (!resp.ok) return;
+            const serverDoc = new Uint8Array(await resp.arrayBuffer());
+            const prevOpCount = this._getDocOpCount();
+            this._docBytes = merge_docs(this._docBytes, serverDoc);
+            await saveDoc(this._modelId, this._docBytes);
+            const newOpCount = this._getDocOpCount();
+            if (newOpCount !== prevOpCount) {
+                console.log(`[Sync] Server merge: ${prevOpCount} → ${newOpCount} ops, replaying...`);
+                await this._replayScene();
+            }
+            this._localOpCount = newOpCount;
+        } catch (err) {
+            console.warn('[Sync] Server sync failed:', err);
+        }
+    }
+
+    private _syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** Debounced sync — batch rapid local ops before pushing to server. */
+    _debouncedSync(): void {
+        if (this._syncTimer) clearTimeout(this._syncTimer);
+        this._syncTimer = setTimeout(() => {
+            this._syncTimer = null;
+            this.syncWithServer();
+        }, 2000);
     }
 
     // ── UI stubs ──────────────────────────────────────────────────────────────

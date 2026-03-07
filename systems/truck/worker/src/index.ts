@@ -9,7 +9,7 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStorage } from './doc-storage';
-import { syncCreate, syncApplyOp, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
 
 type Bindings = {
   ASSETS: Fetcher;
@@ -529,6 +529,7 @@ const OpLogAppendBody = z.object({
 const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Get ops from automerge doc', request: { params: OpLogModelParam, query: OpLogSinceQuery }, responses: { 200: { description: 'Ops array' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
 const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Apply op to automerge doc', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
 const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
+const syncDocRoute = createRoute({ method: 'post', path: '/models/{modelId}/sync', tags: ['sync'], summary: 'Merge browser doc with server doc (CRDT sync)', request: { params: OpLogModelParam }, responses: { 200: { description: 'Merged doc bytes (application/octet-stream)' } } });
 
 const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(getOpsRoute, async (c) => {
@@ -575,6 +576,31 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     } catch (err: any) {
       return c.json({ error: `Replay failed: ${err.message}` }, 500);
     }
+  })
+  .openapi(syncDocRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const storage = new R2DocStorage(c.env.MODELS);
+    const browserDoc = new Uint8Array(await c.req.arrayBuffer());
+
+    const existing = await storage.loadWithEtag(modelId);
+    let serverDoc = existing?.doc ?? await syncCreate();
+    let merged = await syncMergeDocs(serverDoc, browserDoc);
+
+    if (existing) {
+      const saved = await storage.saveConditional(modelId, merged, existing.etag);
+      if (!saved) {
+        // Retry once on etag conflict
+        const fresh = await storage.load(modelId);
+        merged = await syncMergeDocs(fresh ?? await syncCreate(), browserDoc);
+        await storage.save(modelId, merged);
+      }
+    } else {
+      await storage.save(modelId, merged);
+    }
+
+    return new Response(merged, {
+      headers: { 'content-type': 'application/octet-stream' },
+    }) as any;
   });
 
 // Health + WASM test (chained for type export)

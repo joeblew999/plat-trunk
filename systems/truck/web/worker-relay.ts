@@ -36,6 +36,19 @@ const relay = {
       }
     });
 
+    // Handle server-originated ops (from MCP server-direct execution)
+    eventSource.addEventListener('sync-op', (e) => {
+      try {
+        const op = JSON.parse(e.data);
+        const mgr = window.cadDocManager;
+        if (mgr?._docBytes) {
+          mgr.applyServerOp(op).catch(err => console.warn('[worker-relay] sync-op apply failed:', err));
+        }
+      } catch (err) {
+        console.warn('[worker-relay] sync-op parse error:', err);
+      }
+    });
+
     eventSource.onopen = () => {
       console.log('[worker-relay] Connected');
       const state = reconcile({});
@@ -43,6 +56,8 @@ const relay = {
         params: { path: { modelId } },
         body: { ...state, broadcast: false },
       }).catch(() => {});
+      // Sync local doc with server on connect (ADR-0001 Part B2)
+      window.cadDocManager?.syncWithServer();
     };
 
     eventSource.onerror = () => {
