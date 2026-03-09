@@ -13,7 +13,7 @@
 //   cd systems/truck/web && bun run gen:api-types
 
 import createClient from 'openapi-fetch';
-import type { paths } from './api-types';
+import type { paths } from './api-types.generated';
 
 // Typed fetch client. Paths defined in api-types.ts — generated from /api/openapi.json.
 // Usage:

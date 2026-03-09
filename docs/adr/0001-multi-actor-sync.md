@@ -38,7 +38,7 @@ Replay: load automerge.bin from R2, get_replay_ops, execute
 The parts are presented thematically but must be **implemented** in dependency order:
 
 1. **E (codegen)** — `schemars` derive + `generate-schema` binary. Produces `sync-schema.json` and generated `CadOperation` type. Everything else imports this type.
-2. **A0 (shared layer)** — Rust `get_name`/`set_name` + WASM exports. Then `doc-ops.ts` (shared pure functions). Then browser adapter (`doc-store.ts`) and server adapter (`doc-storage.ts`).
+2. **A0 (shared layer)** — Rust `get_name`/`set_name` + WASM exports. Then `doc-ops.ts` (shared pure functions). Then browser adapter (`doc-store.ts`) and server adapter (`doc-store.ts`).
 3. **D1 removal** — Delete `op-log.ts`, remove D1 bindings/endpoints. Clean break before adding new server code.
 4. **A (server R2 doc)** — MCP writes to `automerge.bin`, extend manifest. Server-direct headless execution.
 5. **A3 (SSE dedup)** — Full-op broadcast. Depends on A because server must have the op to broadcast.
@@ -97,7 +97,7 @@ File tables throughout this plan are updated to reflect this.
 
 ### `model-store.ts` has no doc methods
 
-Plan A1 said "saveDoc/loadDoc methods move to doc-storage.ts". ModelStore currently has NO doc methods — it only stores manifest + scene + thumbnail. Correct statement: "ADD doc storage methods in new `doc-storage.ts`".
+Plan A1 said "saveDoc/loadDoc methods move to doc-store.ts". ModelStore currently has NO doc methods — it only stores manifest + scene + thumbnail. Correct statement: "ADD doc storage methods in new `doc-store.ts`".
 
 ## Part A0: Shared DocManager + Adapter Pattern
 
@@ -112,7 +112,7 @@ Plan A1 said "saveDoc/loadDoc methods move to doc-storage.ts". ModelStore curren
 
 ```typescript
 /** Storage adapter — platform provides load/save */
-export interface DocStorage {
+export interface DocStore {
   load(modelId: string): Promise<Uint8Array | null>;
   save(modelId: string, bytes: Uint8Array): Promise<void>;
 }
@@ -177,11 +177,11 @@ pub fn set_name(doc_bytes: &[u8], name: &str) -> Result<Vec<u8>, String> { ... }
 
 ### A0.4 Browser adapter — `systems/truck/web/doc-store.ts` (EDIT)
 
-Already exists. Implements `DocStorage`:
+Already exists. Implements `DocStore`:
 ```typescript
-import type { DocStorage } from 'systems/sync/ts/doc-ops';
+import type { DocStore } from 'systems/sync/ts/doc-ops';
 
-export const idbStorage: DocStorage = {
+export const idbStorage: DocStore = {
   load: (modelId) => loadDoc(modelId),   // existing IDB function
   save: (modelId, bytes) => saveDoc(modelId, bytes),  // existing IDB function
 };
@@ -189,12 +189,12 @@ export const idbStorage: DocStorage = {
 
 Remove `name` from `DocMeta` — name now lives in Automerge doc. Keep `snapshots` and `bimHierarchy` (browser-only).
 
-### A0.5 Server adapter — `systems/truck/worker/src/doc-storage.ts` (NEW)
+### A0.5 Server adapter — `systems/truck/worker/src/doc-store.ts` (NEW)
 
 ```typescript
-import type { DocStorage } from 'systems/sync/ts/doc-ops';
+import type { DocStore } from 'systems/sync/ts/doc-ops';
 
-export function r2Storage(r2: R2Bucket): DocStorage {
+export function r2Storage(r2: R2Bucket): DocStore {
   return {
     async load(modelId) {
       const obj = await r2.get(`models/${modelId}/automerge.bin`);
@@ -253,7 +253,7 @@ enabledOpCount?: number;
 actors?: Record<string, string>;  // actorId → displayName (for Part F)
 ```
 
-New `doc-storage.ts` (Part A0.5) adds doc load/save methods for R2. `model-store.ts` keeps manifest + scene + thumbnail R2 operations only (it has no doc methods today).
+New `doc-store.ts` (Part A0.5) adds doc load/save methods for R2. `model-store.ts` keeps manifest + scene + thumbnail R2 operations only (it has no doc methods today).
 
 ### A2. Update MCP op execution path in `index.ts`
 
@@ -432,13 +432,13 @@ export function currentBudget(): StorageBudget | null
 ### Shared layer (A0)
 | File | Action | What |
 |------|--------|------|
-| `systems/sync/ts/doc-ops.ts` | NEW | Shared `DocStorage` interface, `SyncWasm` interface, pure doc operation functions |
+| `systems/sync/ts/doc-ops.ts` | NEW | Shared `DocStore` interface, `SyncWasm` interface, pure doc operation functions |
 | `systems/sync/crate/src/lib.rs` | EDIT | Add `get_name()`/`set_name()` + WASM exports, `JsonSchema` derive (E1) |
 
 ### Browser adapter + wiring
 | File | Action | What |
 |------|--------|------|
-| `systems/truck/web/doc-store.ts` | EDIT | Export `idbStorage: DocStorage` adapter, remove `name` from `DocMeta` |
+| `systems/truck/web/doc-store.ts` | EDIT | Export `idbStorage: DocStore` adapter, remove `name` from `DocMeta` |
 | `systems/truck/web/history-domain.ts` | EDIT | Use shared `doc-ops` functions, debounced sync push, import generated CadOperation |
 | `systems/truck/web/worker-relay.ts` | EDIT | Call sync endpoint on connect + periodically, handle `cad-op` SSE events |
 | `systems/truck/web/storage-budget.ts` | NEW | Quota manager |
@@ -453,7 +453,7 @@ export function currentBudget(): StorageBudget | null
 ### Server adapter + wiring
 | File | Action | What |
 |------|--------|------|
-| `systems/truck/worker/src/doc-storage.ts` | NEW | `r2Storage: DocStorage` adapter (+ etag variant) |
+| `systems/truck/worker/src/doc-store.ts` | NEW | `r2Storage: DocStore` adapter (+ etag variant) |
 | `systems/truck/worker/src/sync-wasm.ts` | EDIT | Refactor to use shared `doc-ops`, add `SyncWasm` adapter |
 | `systems/truck/worker/src/model-store.ts` | EDIT | Extend manifest (replayOpsHash, actors) |
 | `systems/truck/worker/src/replay.ts` | NEW | `replayModel()` from R2 automerge.bin via shared ops |
@@ -1002,9 +1002,9 @@ Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/
 ### Definition of Done
 
 #### Shared DocManager + adapters
-- [x] `systems/sync/ts/doc-ops.ts` — `DocStorage` interface, `SyncWasm` interface, pure operation functions
-- [x] Browser adapter: `idbStorage` in `doc-store.ts` implements `DocStorage`
-- [x] Server adapter: `r2Storage` in `doc-storage.ts` implements `DocStorage` (+ etag variant)
+- [x] `systems/sync/ts/doc-ops.ts` — `DocStore` interface, `SyncWasm` interface, pure operation functions
+- [x] Browser adapter: `idbStorage` in `doc-store.ts` implements `DocStore`
+- [x] Server adapter: `r2Storage` in `doc-store.ts` implements `DocStore` (+ etag variant)
 - [x] `get_name()`/`set_name()` in Rust crate + WASM exports
 - [ ] `history-domain.ts` uses shared `doc-ops` functions (not direct WASM calls) — still uses direct WASM, works fine
 - [ ] `sync-wasm.ts` refactored to provide `SyncWasm` adapter — generated wrappers work, adapter pattern deferred

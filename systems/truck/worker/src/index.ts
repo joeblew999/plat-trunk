@@ -8,7 +8,7 @@ import syncSchema from '../../../sync/sync-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
-import { R2DocStorage } from './doc-storage';
+import { R2DocStore } from './doc-store';
 import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
@@ -248,7 +248,7 @@ async function executeServerDirect(
   type: string,
   params: Record<string, unknown>
 ): Promise<{ id: string; status: string; result?: any; error?: string }> {
-  const storage = new R2DocStorage(env.MODELS);
+  const storage = new R2DocStore(env.MODELS);
   const opId = crypto.randomUUID();
   const op = { id: opId, type, params, enabled: true, timestamp: Date.now(), actorId: 'mcp-server', groupId: null };
 
@@ -496,10 +496,10 @@ const modelRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   })
   .openapi(deleteModelRoute, async (c) => {
     const store = new ModelStore(c.env.MODELS);
+    const docStore = new R2DocStore(c.env.MODELS);
     const id = c.req.valid('param').id;
-    const existing = await store.getManifest(id);
-    if (!existing) return c.json({ error: 'Not found' }, 404);
-    await store.delete(id);
+    // Each store deletes its own files
+    await Promise.all([store.delete(id), docStore.delete(id)]);
     return c.json({ status: 'deleted' as const }, 200);
   })
   .openapi(putThumbnailRoute, async (c) => {
@@ -548,7 +548,7 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(getOpsRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const { since } = c.req.valid('query');
-    const storage = new R2DocStorage(c.env.MODELS);
+    const storage = new R2DocStore(c.env.MODELS);
     const docBytes = await storage.load(modelId);
     if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
     const sinceIndex = since ? parseInt(since, 10) : -1;
@@ -560,7 +560,7 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(appendOpRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const body = c.req.valid('json');
-    const storage = new R2DocStorage(c.env.MODELS);
+    const storage = new R2DocStore(c.env.MODELS);
     let docBytes = await storage.load(modelId) ?? await syncCreate();
     docBytes = await syncApplyOp(docBytes, JSON.stringify(body));
     await storage.save(modelId, docBytes);
@@ -579,7 +579,7 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   })
   .openapi(historyRoute, async (c) => {
     const { modelId } = c.req.valid('param');
-    const storage = new R2DocStorage(c.env.MODELS);
+    const storage = new R2DocStore(c.env.MODELS);
     const docBytes = await storage.load(modelId);
     if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
     const opsJson = await syncGetOps(docBytes);
@@ -604,7 +604,7 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   })
   .openapi(syncDocRoute, async (c) => {
     const { modelId } = c.req.valid('param');
-    const storage = new R2DocStorage(c.env.MODELS);
+    const storage = new R2DocStore(c.env.MODELS);
     const browserDoc = new Uint8Array(await c.req.arrayBuffer());
 
     const existing = await storage.loadWithEtag(modelId);

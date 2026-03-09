@@ -2,7 +2,7 @@
 // Loads doc → gets replay ops → executes in HeadlessController → returns scene JSON.
 // Caches scene.json + scene-meta.json in R2 for fast subsequent loads.
 
-import { R2DocStorage } from './doc-storage';
+import { R2DocStore } from './doc-store';
 import { syncGetReplayOps } from './sync-wasm.generated';
 import { initHeadlessWasm } from './truck-wasm.generated';
 
@@ -31,7 +31,7 @@ export async function replayModel(
   bucket: R2Bucket,
   opts?: { forceRefresh?: boolean }
 ): Promise<ReplayResult | null> {
-  const storage = new R2DocStorage(bucket);
+  const storage = new R2DocStore(bucket);
   const docBytes = await storage.load(modelId);
   if (!docBytes) return null;
 

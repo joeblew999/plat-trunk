@@ -1,5 +1,5 @@
 /**
- * doc-storage.ts — R2-backed Automerge doc storage (ADR-0001 Part A0.5).
+ * doc-store.ts — R2-backed Automerge doc store (ADR-0001 Part A0.5).
  *
  * Stores automerge.bin alongside existing model artifacts in R2:
  *   models/{id}/manifest.json
@@ -10,7 +10,7 @@
  * Supports optimistic concurrency via R2 etag for concurrent MCP writes.
  */
 
-import type { DocStorage } from '../../../sync/ts/doc-ops';
+import type { DocStore } from '../../../sync/ts/doc-ops';
 
 const PREFIX = 'models/';
 
@@ -19,7 +19,7 @@ export interface DocWithEtag {
   etag: string;
 }
 
-export class R2DocStorage implements DocStorage {
+export class R2DocStore implements DocStore {
   constructor(private bucket: R2Bucket) {}
 
   async load(modelId: string): Promise<Uint8Array | null> {
@@ -42,6 +42,10 @@ export class R2DocStorage implements DocStorage {
       doc: new Uint8Array(await obj.arrayBuffer()),
       etag: obj.etag,
     };
+  }
+
+  async delete(modelId: string): Promise<void> {
+    await this.bucket.delete(`${PREFIX}${modelId}/automerge.bin`);
   }
 
   /** Save only if etag matches (optimistic concurrency). Returns false on conflict. */

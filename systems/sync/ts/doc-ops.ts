@@ -25,10 +25,11 @@ export interface SyncWasm {
   set_name(doc: Uint8Array, name: string): Uint8Array;
 }
 
-/** Storage adapter — platform provides load/save. */
-export interface DocStorage {
+/** Storage adapter — platform provides load/save/delete. */
+export interface DocStore {
   load(modelId: string): Promise<Uint8Array | null>;
   save(modelId: string, bytes: Uint8Array): Promise<void>;
+  delete(modelId: string): Promise<void>;
 }
 
 // ── Pure doc operations (no side effects) ────────────────────────────────

@@ -21,7 +21,7 @@
 // not direct browser fetch. Result posting uses /api/cad/{modelId}/result/{id}.
 
 import { client } from './api-client';
-import type { components } from './api-types';
+import type { components } from './api-types.generated';
 
 async function _checkResponseTypes() {
   // ── state.ts: save_cloud ────────────────────────────────────────────────

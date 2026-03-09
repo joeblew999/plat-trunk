@@ -151,7 +151,10 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
     }
 
     case 'delete_model': {
-      await client.DELETE('/api/models/{id}', { params: { path: { id: params.id as string } } });
+      const delId = params.id as string;
+      // Disconnect SSE if deleting the active model to prevent sync race
+      if (delId === window.__modelId) window.__workerRelay?.disconnect();
+      await client.DELETE('/api/models/{id}', { params: { path: { id: delId } } });
       (document.querySelector('cad-gallery') as any)?.refresh();
       return { success: true };
     }
@@ -177,9 +180,11 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
         indexedDB.deleteDatabase('cad-sync');
         if (wipeMode === 'full') {
           const mid = window.__modelId;
-          if (mid) await fetch(`/api/models/${mid}`, { method: 'DELETE' }).catch(() => {});
+          if (mid) await handleJsCommand('delete_model', { id: mid });
+          window.location.href = '/model/new';
+        } else {
+          location.reload();
         }
-        location.reload();
         return { success: true };
       }
       return { success: false };

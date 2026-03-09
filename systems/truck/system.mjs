@@ -50,7 +50,7 @@ export const testing = {
     // --release: boolean ops are 10-20x slower in debug (unoptimized BREP math)
     domain: 'cargo test --release -p truck-webgpu-gui --no-default-features --features native',
   },
-  // Phase 5: TypeScript boundary — api-types.ts derived from schema, catches renames
+  // Phase 5: TypeScript boundary — api-types.generated.ts derived from schema, catches renames
   typecheck: 'cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck',
   // Phase 6: HTTP/MCP contract — worker serves exactly the committed schema (deep equality)
   vitest: 'cd systems/truck/worker && bun x vitest run',

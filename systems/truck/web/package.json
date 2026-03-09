@@ -4,7 +4,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "gen:api-types": "bun x openapi-typescript http://localhost:8789/api/openapi.json -o api-types.ts"
+    "gen:api-types": "bun x openapi-typescript http://localhost:8789/api/openapi.json -o api-types.generated.ts"
   },
   "dependencies": {
     "lit": "^3",

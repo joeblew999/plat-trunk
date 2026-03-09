@@ -5,12 +5,12 @@
 // │  Rust (#[derive(JsonSchema)])                                            │
 // │    → bun run build:truck     → systems/truck/cad-schema.json            │
 // │    → bun run gen:openapi     → systems/truck/web/openapi.json (gitign.) │
-// │    → bun run gen:api-types   → systems/truck/web/api-types.ts (commit.) │
+// │    → bun run gen:api-types   → systems/truck/web/api-types.generated.ts (commit.) │
 // │    → bun run build:truck-web → systems/truck/web/dist/                  │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
 // This script handles steps 2 + 3: generate openapi.json from cad-schema.json,
-// then run openapi-typescript and prepend a chain-origin comment to api-types.ts.
+// then run openapi-typescript and prepend a chain-origin comment to api-types.generated.ts.
 //
 // Usage:
 //   bun run gen:api-types          (full chain: gen-openapi + openapi-typescript)
@@ -23,7 +23,7 @@ import { spawnSync } from 'child_process';
 
 const version: string = (cadSchema as any).version || '1.0.0';
 const OPENAPI_OUT = 'systems/truck/web/openapi.json';
-const API_TYPES_OUT = 'systems/truck/web/api-types.ts';
+const API_TYPES_OUT = 'systems/truck/web/api-types.generated.ts';
 
 // ── Schema components (mirrors Worker Zod schemas in systems/truck/worker/src/index.ts) ──
 
@@ -311,7 +311,7 @@ const spec = {
     // Chain provenance — visible in openapi.json and API docs UI
     'x-generated-from': 'systems/truck/cad-schema.json',
     'x-generated-by': 'scripts/gen-openapi.ts (bun run gen:api-types)',
-    'x-chain': 'Rust → cad-schema.json → gen:openapi → openapi.json → gen:api-types → api-types.ts',
+    'x-chain': 'Rust → cad-schema.json → gen:openapi → openapi.json → gen:api-types → api-types.generated.ts',
   },
   tags: [
     { name: 'cad-commands', description: 'Modeling operations (schema-driven from Rust cad-schema.json)' },
@@ -350,10 +350,10 @@ if (result.status !== 0) {
 }
 console.log(`[2/3] ✓ openapi-typescript → ${API_TYPES_OUT}`);
 
-// ── Step 3: Prepend chain-origin comment to api-types.ts ─────────────────────
+// ── Step 3: Prepend chain-origin comment to api-types.generated.ts ─────────────────────
 
 const HEADER = `// GENERATED — do not edit directly.
-// Chain: Rust (#[derive(JsonSchema)]) → cad-schema.json → scripts/gen-openapi.ts → openapi.json → openapi-typescript → api-types.ts
+// Chain: Rust (#[derive(JsonSchema)]) → cad-schema.json → scripts/gen-openapi.ts → openapi.json → openapi-typescript → api-types.generated.ts
 // Re-generate: bun run gen:api-types  (no server needed — reads cad-schema.json directly)
 // Source:       systems/truck/cad-schema.json  (built by: bun run build:truck)
 // Used by:      systems/truck/web/api-client.ts  via openapi-fetch createClient<paths>

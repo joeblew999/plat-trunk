@@ -7,7 +7,7 @@
  */
 import { LitElement, html } from 'lit';
 import { client } from './api-client';
-import type { components } from './api-types';
+import type { components } from './api-types.generated';
 
 type ModelManifest = components['schemas']['ModelManifest'];
 
