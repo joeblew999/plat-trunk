@@ -183,7 +183,7 @@ Available for future cherry-picks (not currently used):
 
 ```sh
 bun run build:truck    # Build sync WASM + truck WASM + generate cad-schema.json
-bun run test:crate     # Run Rust tests (schema_contract + truck-sync + native tests)
+bun run test:crate     # Run Rust tests (contract + truck-sync + native tests)
 ```
 
 ## Schema Generation

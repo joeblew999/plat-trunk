@@ -1,8 +1,8 @@
 import { Page, expect } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import path from 'path';
-import { SCREENSHOTS_DIR, VIDEOS_DIR, EXAMPLES_DIR } from '../paths';
-import cadSchema from '../../cad-schema.json';
+import { SCREENSHOTS_DIR, VIDEOS_DIR, EXAMPLES_DIR } from './paths';
+import cadSchema from '../cad-schema.json';
 
 /** Union of all valid CAD command names — derived from the committed schema.
  *  Rename a command in Rust → bun run build:truck → TypeScript error here. */

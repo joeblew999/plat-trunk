@@ -8,7 +8,7 @@ Browser + Cloudflare Workers CAD platform. [truck](https://github.com/ricosjp/tr
 
 ```bash
 bun install
-bun run dev          # starts all workers → http://localhost:8788
+bun run dev          # starts all workers → http://localhost:5173
 ```
 
 ## Architecture
@@ -20,30 +20,44 @@ Client → plat-router (port 8788)
   /*       → truck-cad (port 8789) — API, MCP, Web UI
 ```
 
-Each system = Rust crate → WASM → schema → worker with MCP endpoint. The router at repo root ties them together via service bindings.
+Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck is the first system. The router at repo root ties them together via service bindings. 3MB worker size limit means WASM-heavy systems must be separate workers.
 
 ## Commands
 
 ```bash
-bun run dev             # Start all workers (router + truck + test + watchers)
-bun run build           # Build WASM + docs
-bun run test            # Run all tests (cargo + vitest)
-bun run deploy          # Build + deploy all workers to Cloudflare
+# Dev
+bun run dev             # Start all workers + Vite dev server (HMR at :5173)
 
-bun run build:truck     # WASM compile + schema generation
-bun run build:docs      # Build VitePress docs
-bun run test:crate      # Rust unit tests
-bun run test:api        # Worker API tests (vitest)
+# Build — system-aware pipeline (each system declares steps in system.mjs)
+bun run build           # All systems: sync → truck → docs
+bun run build:sync      # Just sync (WASM + schema + types)
+bun run build:truck     # Sync + truck (WASM + schema + adapters + sizes + web)
+bun run build:docs      # Just docs (llm-docs + VitePress)
+
+# Test — system-aware pipeline
+bun run test            # All tests: alignment → sync → truck (Rust + vitest)
+bun run test:crate      # Rust tests only (contract + domain)
+bun run test:api        # Truck worker vitest
+bun run test:sync       # Sync worker vitest
 bun run test:e2e        # Playwright E2E tests
+
+# Deploy
+bun run deploy          # Build + deploy all workers + smoke test
 ```
 
 ## Deploy
 
 ```bash
-bun run deploy                          # Build + deploy all workers
-bun run deploy:nuke                     # Delete all workers (clean slate)
-bun run deploy:upload -- --target truck # Upload single worker
+bun run deploy                                   # Build + deploy all + smoke test
+bun scripts/cf-deploy.ts upload --target truck   # Upload single worker
+bun scripts/cf-deploy.ts promote --target truck  # Promote to production
+bun run deploy:nuke:data                         # Wipe R2 data (re-seed after)
+bun run deploy:nuke:all                          # Delete all workers + data
+bun run seed:gallery                             # Populate gallery (localhost)
+bun scripts/seed-gallery.ts --clean --url https://truck-cad.gedw99.workers.dev  # Seed prod
 ```
+
+Immutable UUID URL on every upload. Production untouched until explicit promote. No backward compatibility — wipe and re-seed if data format changes.
 
 ## URLs
 
@@ -54,13 +68,30 @@ bun run deploy:upload -- --target truck # Upload single worker
 | Docs | https://cad.ubuntusoftware.net/docs/ |
 | LLM Docs | https://cad.ubuntusoftware.net/docs/llms.txt |
 | **Local Dev** | |
+| UI (HMR) | http://localhost:5173 |
 | Router | http://localhost:8788 |
 | Truck (direct) | http://localhost:8789 |
-| Test (direct) | http://localhost:5175 |
-| API Docs | http://localhost:8788/api-docs |
-| MCP | http://localhost:8788/mcp |
 | **Project** | |
 | GitHub | https://github.com/joeblew999/plat-trunk |
+
+## REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/mcp` | MCP StreamableHTTP (JSON-RPC, 29 tools) |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/cad/schema` | Command schema |
+| `GET` | `/api/models` | List models |
+| `PUT` | `/api/models/{id}` | Save model |
+| `GET` | `/api/models/{id}` | Get model manifest |
+| `DELETE` | `/api/models/{id}` | Delete model (cascades R2) |
+| `POST` | `/api/models/{id}/ops` | Apply op to automerge doc |
+| `GET` | `/api/models/{id}/ops` | Get ops from automerge doc |
+| `POST` | `/api/models/{id}/sync` | Merge browser + server CRDT docs |
+| `GET` | `/api/models/{id}/replay` | Headless WASM replay → scene JSON |
+| `GET` | `/api/models/{id}/history` | Edit history by actor |
+| `POST` | `/api/cad/{id}/sync/{cmd}` | Execute CAD command (sync) |
+| `POST` | `/api/cad/{id}/async/{cmd}` | Execute CAD command (async/SSE) |
 
 ## MCP (AI Agent Access)
 
@@ -74,39 +105,25 @@ Worker `/mcp` — stateless MCP endpoint (JSON-RPC). 29 tools.
 
 For production: set `CAD_URL=https://cad.ubuntusoftware.net`.
 
-## Adding a Worker
+## Adding a System
 
-1. Create `systems/{name}/worker/` with `wrangler.toml` + `src/index.ts`
-2. Add entry to `workers.mjs` (unique port + inspectorPort)
-3. Add `[[services]]` binding in root `wrangler.toml`
-4. Add routing in `src/router.ts`
-5. Add entry in `cf-deploy.json` (before "router")
-
-## REST API
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/mcp` | MCP StreamableHTTP (JSON-RPC) |
-| `POST` | `/api/cad/{modelId}/sync/{cmd}` | Execute command (sync) |
-| `POST` | `/api/cad/{modelId}/async/{cmd}` | Queue command (async) |
-| `GET` | `/api/cad/{modelId}/state` | Scene state |
-| `GET` | `/api/cad/schema` | Command schema |
-| `GET` | `/api/health` | Health check |
+1. Create `systems/{name}/system.mjs` exporting `workers`, `devServers`, `building`, `testing`, `testFiles`
+2. Add one import+spread line to `workers.mjs`
+3. Add one import to `scripts/build.mjs` + one to `scripts/test.mjs`
+4. The platform handles routing, build ordering, and test orchestration
 
 ## Requirements
 
-- Rust + wasm-pack
-- Bun
-- Node.js
+- **Rust** + `wasm32-unknown-unknown` target + wasm-pack
+- **Bun** — JavaScript runtime and package manager
 
 ## Configuration
 
 | File | Description |
 |------|-------------|
 | `wrangler.toml` | Root router config (port 8788, service bindings) |
-| `workers.mjs` | Worker registry (ports, build commands) |
+| `workers.mjs` | Worker aggregator (imports from each system.mjs) |
 | `run.mjs` | Dev/deploy orchestrator |
 | `cf-deploy.json` | Cloudflare deploy metadata |
-| `.env` | Default config (tracked) |
-| `.env.local` | Secrets (not tracked) |
 | `.mcp.json` | MCP server config (bridge → Worker /mcp) |
+| `AGENT.md` | Full project context for AI agents |

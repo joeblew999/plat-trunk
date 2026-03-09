@@ -1,4 +1,4 @@
-// sync-message-contract.test.ts — Verifies the BroadcastChannel message contract.
+// message-contract.test.ts — Verifies the BroadcastChannel message contract.
 //
 // SyncMessage is the wire format between browser tabs. This test documents the
 // required fields and ensures the shape is correct at runtime.

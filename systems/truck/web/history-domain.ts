@@ -1,5 +1,5 @@
 import initSyncWasm, {
-    create_doc, apply_op, get_ops,
+    create_doc, apply_op, get_ops, get_name, set_name,
     set_op_enabled, set_group_enabled, rollback_to, merge_docs,
 } from './pkg-sync/truck_sync.js';
 import { saveDoc, loadDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
@@ -92,6 +92,9 @@ export class CadDocumentManagerBase {
             this._docBytes = bytes;
             this._modelId = modelId;
             this._meta = await loadMeta(modelId);
+            // Prefer name from CRDT doc (synced across actors)
+            const docName = get_name(this._docBytes);
+            if (docName) this._meta.name = docName;
             await this._replayScene();
             const ids = moduleRouter.query('objectIds') as string[] | null;
             const ops = this._getOps();
@@ -118,7 +121,9 @@ export class CadDocumentManagerBase {
     async createFreshDoc(modelId: string, sceneJson: string | null, source: string): Promise<void> {
         this._docBytes = create_doc();
         this._modelId = modelId;
-        this._meta = { name: `Model ${modelId}`, snapshots: [] };
+        const defaultName = `Model ${modelId}`;
+        this._docBytes = set_name(this._docBytes, defaultName);
+        this._meta = { name: defaultName, snapshots: [] };
         if (sceneJson) {
             cadCommand('clear', {}, { record: false, reconcile: false });
             cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
@@ -126,6 +131,28 @@ export class CadDocumentManagerBase {
             const snapshotRef = await storeBlob(sceneJson) as string;
             this._meta.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
             console.log(`[loadModel] Loaded from ${source}`);
+        }
+        await saveDoc(modelId, this._docBytes);
+        await saveMeta(modelId, this._meta);
+    }
+
+    /** Adopt a server-originated CRDT doc (e.g. MCP created the model).
+     *  Replays ops into WASM so the scene renders, then saves to IDB. */
+    async adoptServerDoc(modelId: string, docBytes: Uint8Array): Promise<void> {
+        this._docBytes = docBytes;
+        this._modelId = modelId;
+        const docName = get_name(this._docBytes) || `Model ${modelId}`;
+        this._meta = { name: docName, snapshots: [] };
+        // Replay ops into WASM geometry engine
+        const opsJson = get_ops(this._docBytes);
+        const ops: CadOperation[] = JSON.parse(opsJson);
+        if (ops.length > 0) {
+            cadCommand('clear', {}, { record: false, reconcile: false });
+            for (const op of ops) {
+                cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
+            }
+            reconcile({});
+            console.log(`[loadModel] Adopted server doc (${ops.length} ops)`);
         }
         await saveDoc(modelId, this._docBytes);
         await saveMeta(modelId, this._meta);
@@ -454,6 +481,12 @@ export class CadDocumentManagerBase {
             const serverDoc = new Uint8Array(await resp.arrayBuffer());
             const prevOpCount = this._getDocOpCount();
             this._docBytes = merge_docs(this._docBytes, serverDoc);
+            // Sync model name from CRDT doc
+            const docName = get_name(this._docBytes);
+            if (docName) {
+                this._meta.name = docName;
+                this._updateDocInfo();
+            }
             await saveDoc(this._modelId, this._docBytes);
             const newOpCount = this._getDocOpCount();
             if (newOpCount !== prevOpCount) {

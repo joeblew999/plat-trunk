@@ -115,7 +115,7 @@ In `systems/truck/crate/src/sketch.rs`:
 
 ### Playwright E2E Tests
 
-In `systems/truck/tests/e2e/`:
+In `systems/truck/e2e/`:
 - WASM API: begin_sketch, add_point, add_edge, add_constraint, solve, extrude
 - Round-trip: export/import preserves sketch
 - Edge cases: < 3 edges fails, has_active_sketch tracks state

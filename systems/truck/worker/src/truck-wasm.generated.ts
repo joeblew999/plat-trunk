@@ -9,8 +9,10 @@
  * Generated from cad-schema.json boundaries — 42 commands.
  */
 
-// Wrangler imports .wasm files as WebAssembly.Module
-import wasmModule from '../pkg/truck_webgpu_gui_bg.wasm';
+// Wrangler: default import is WebAssembly.Module.
+// vitest (vite-plugin-wasm): default is undefined, namespace has instantiated exports.
+import wasmDefault from '../pkg/truck_webgpu_gui_bg.wasm';
+import * as wasmStar from '../pkg/truck_webgpu_gui_bg.wasm';
 // @ts-expect-error — no .d.ts for the bg.js glue (generated code)
 import * as bg from '../pkg/truck_webgpu_gui_bg.js';
 
@@ -19,22 +21,23 @@ let initialized = false;
 export async function initHeadlessWasm(): Promise<typeof bg> {
   if (initialized) return bg;
 
-  // Collect all glue functions the WASM module needs.
-  // WebAssembly.instantiate ignores extras, so we can pass all bg exports.
-  const glueImports: WebAssembly.ModuleImports = {};
-  for (const [key, value] of Object.entries(bg)) {
-    if (typeof value === 'function') {
-      glueImports[key] = value as WebAssembly.ImportValue;
+  if (wasmDefault instanceof WebAssembly.Module) {
+    // Wrangler: instantiate from Module with bg glue as imports
+    const glueImports: WebAssembly.ModuleImports = {};
+    for (const [key, value] of Object.entries(bg)) {
+      if (typeof value === 'function') {
+        glueImports[key] = value as WebAssembly.ImportValue;
+      }
     }
+    const instance = await WebAssembly.instantiate(wasmDefault, {
+      './truck_webgpu_gui_bg.js': glueImports,
+    });
+    bg.__wbg_set_wasm(instance.exports);
+    (instance.exports as unknown as { __wbindgen_start: () => void }).__wbindgen_start();
+  } else {
+    // vitest (vite-plugin-wasm): namespace has already-instantiated exports
+    bg.__wbg_set_wasm(wasmStar as unknown as WebAssembly.Exports);
   }
-
-  const imports: WebAssembly.Imports = {
-    './truck_webgpu_gui_bg.js': glueImports,
-  };
-
-  const instance = await WebAssembly.instantiate(wasmModule, imports);
-  bg.__wbg_set_wasm(instance.exports);
-  (instance.exports as unknown as { __wbindgen_start: () => void }).__wbindgen_start();
   initialized = true;
   return bg;
 }

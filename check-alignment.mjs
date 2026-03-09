@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // check-alignment.mjs — Verify workers.mjs, wrangler.toml, crates, and package.json are in sync.
 //
 // Checks:
@@ -173,6 +173,42 @@ if (adapterCheck.status === 0) {
   for (const line of lines) {
     if (line.startsWith('STALE:') || line.startsWith('MISSING:')) fail(line);
   }
+}
+
+// ── 8. Test registry — verify every declared test file exists ───────────────
+console.log('\n[8] Test file registry');
+
+// Collect testFiles from all systems
+const allTestRegistries = [];
+for (const sys of systemNames) {
+  const p = join(systemsDir, sys, 'system.mjs');
+  if (!existsSync(p)) continue;
+  try {
+    const mod = await import(`./${join('systems', sys, 'system.mjs')}`);
+    if (mod.testFiles) allTestRegistries.push({ system: sys, testFiles: mod.testFiles });
+  } catch {}
+}
+
+let totalTestFiles = 0;
+for (const { system, testFiles } of allTestRegistries) {
+  for (const category of ['rust', 'vitest', 'helpers']) {
+    const items = testFiles[category];
+    if (!items) continue;
+    for (const item of items) {
+      const filePath = typeof item === 'string' ? item : item.file;
+      const fullPath = resolve(ROOT, filePath);
+      totalTestFiles++;
+      if (!existsSync(fullPath)) {
+        fail(`${system}: test file missing: ${filePath}`);
+      } else {
+        const covers = typeof item === 'string' ? '(helper)' : item.covers;
+        ok(`${system}: ${filePath.split('/').pop()} → ${covers}`);
+      }
+    }
+  }
+}
+if (totalTestFiles === 0) {
+  warn('No testFiles registries found in any system.mjs');
 }
 
 // ── Summary ────────────────────────────────────────────────────────────────

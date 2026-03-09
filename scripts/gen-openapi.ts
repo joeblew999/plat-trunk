@@ -6,7 +6,7 @@
 // │    → bun run build:truck     → systems/truck/cad-schema.json            │
 // │    → bun run gen:openapi     → systems/truck/web/openapi.json (gitign.) │
 // │    → bun run gen:api-types   → systems/truck/web/api-types.generated.ts (commit.) │
-// │    → bun run build:truck-web → systems/truck/web/dist/                  │
+// │    → truck building.web step → gen:api-types + Vite build → dist/       │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
 // This script handles steps 2 + 3: generate openapi.json from cad-schema.json,
@@ -15,7 +15,7 @@
 // Usage:
 //   bun run gen:api-types          (full chain: gen-openapi + openapi-typescript)
 //   bun run gen:openapi            (openapi.json only — for inspection)
-//   bun run build:truck-web        (calls gen:api-types automatically)
+//   bun run build:truck            (runs gen:api-types + Vite as part of build pipeline)
 
 import cadSchema from '../systems/truck/cad-schema.json';
 import { writeFileSync, readFileSync } from 'fs';

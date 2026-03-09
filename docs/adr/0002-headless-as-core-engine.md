@@ -483,7 +483,7 @@ commands.rs (#[derive(JsonSchema)])
   → bun run build:truck     → cad-schema.json       [committed]
   → bun run gen:openapi      → openapi.json          [gitignored]
   → bun run gen:api-types    → api-types.ts          [committed]
-  → bun run build:truck-web  → dist/                 [gitignored]
+  → bun run build:truck      → dist/                 [gitignored, web step]
 ```
 
 | Component | Changes? |
@@ -505,14 +505,14 @@ All tests call `HeadlessController.execute()`. HeadlessController now wraps Geom
 
 | Test file | Tests | Changes? |
 |-----------|-------|----------|
-| `schema_contract.rs` | 1 | **No** |
-| `schema_geometry.rs` | 14 | **No** |
-| `schema_booleans.rs` | 5 | **No** |
-| `schema_scene.rs` | 6 | **No** |
-| `schema_sketch.rs` | 7 | **No** |
-| `schema_style.rs` | 3 | **No** |
-| `sync_crdt.rs` | 8 | **No** |
-| `resources_golden.rs` | 11 | **No** |
+| `contract.rs` | 1 | **No** |
+| `geometry.rs` | 14 | **No** |
+| `booleans.rs` | 5 | **No** |
+| `scene.rs` | 6 | **No** |
+| `sketch.rs` | 7 | **No** |
+| `style.rs` | 3 | **No** |
+| `sync.rs` | 8 | **No** |
+| `golden.rs` | 11 | **No** |
 | `bool_robustness.rs` | 29 | **No** |
 | `worker/*.test.ts` | 30 | **No** |
 

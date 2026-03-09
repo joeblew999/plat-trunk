@@ -18,7 +18,9 @@ ADRs must be implemented in this order — each depends on the one before it.
 
 | ADR | Status |
 |-----|--------|
-| [ADR-0001](0001-multi-actor-sync.md) | Proposed |
+| [ADR-0001](0001-multi-actor-sync.md) | Implemented |
 | [ADR-0002](0002-headless-as-core-engine.md) | Proposed |
 | [ADR-0003](0003-format-workers.md) | Superseded by ADR-0004 |
 | [ADR-0004](0004-wasm-boundary-contracts.md) | Phase 0 Implemented |
+| [ADR-0005](0005-scene-graph-with-assembly-hierarchy.md) | Proposed |
+| [ADR-0006](0006-worker-performance.md) | Proposed |

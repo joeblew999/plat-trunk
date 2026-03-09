@@ -8,12 +8,7 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"],
-    "lib": ["ESNext"],
-    "baseUrl": ".",
-    "paths": {
-      "hono": ["node_modules/hono"],
-      "hono/*": ["node_modules/hono/*"]
-    }
+    "lib": ["ESNext"]
   },
-  "include": ["src/**/*.ts", "../web/src/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

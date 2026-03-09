@@ -42,11 +42,18 @@ export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {
 
     // ── Phase 3: Fall back to scene data ─────────────────────────
     if (!restored) {
-        if (!sceneJson) {
-            sceneJson = await fetchDefault();
-            sceneSource = 'default';
+        // Try to adopt server's CRDT doc (e.g. MCP created the model first).
+        // This avoids creating an independent doc that would lose ops on merge.
+        const serverDoc = await fetchServerDoc(modelId);
+        if (serverDoc) {
+            await mgr.adoptServerDoc(modelId, serverDoc);
+        } else {
+            if (!sceneJson) {
+                sceneJson = await fetchDefault();
+                sceneSource = 'default';
+            }
+            await mgr.createFreshDoc(modelId, sceneJson, sceneSource);
         }
-        await mgr.createFreshDoc(modelId, sceneJson, sceneSource);
     }
 
     // ── Phase 4: Finalize ────────────────────────────────────────
@@ -87,6 +94,14 @@ async function fetchExample(name: string): Promise<string | null> {
         }
     } catch (e) { console.warn(`[loadModel] Example fetch failed:`, e); }
     return null;
+}
+
+async function fetchServerDoc(modelId: string): Promise<Uint8Array | null> {
+    try {
+        const res = await fetch(`/api/models/${modelId}/doc`);
+        if (!res.ok) return null;
+        return new Uint8Array(await res.arrayBuffer());
+    } catch { return null; }
 }
 
 async function fetchDefault(): Promise<string | null> {

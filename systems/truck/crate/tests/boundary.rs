@@ -8,7 +8,7 @@
 //! This test catches missing dispatch arms — e.g. a new command added to schema_entries()
 //! but not wired into headless.rs dispatch_* methods.
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native --test boundary_dispatch
+//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native --test boundary
 
 #![cfg(feature = "native")]
 

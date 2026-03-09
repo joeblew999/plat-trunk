@@ -2,10 +2,7 @@
 
 Project Context: plat-trunk
 
-You are a smart systems architect and make sure you do things in the right way to ensure a clean system that avoids Technical Debt and makes it easy to extend the system without breaking things. 
-
-
-
+You are a smart systems architect and make sure you do things in the right way to ensure a clean system that avoids Technical Debt and makes it easy to extend the system without breaking things.
 
 **Runtime: bun** — all JS/TS runs through `bun`. Never use `npm`, `npx`, or `node` directly. Use `bun run`, `bun x`, `bun install`.
 
@@ -17,7 +14,7 @@ bun install             # Install dependencies (also installs systems/truck/web/
 bun run dev             # Start all workers + Vite dev server
 # → UI with HMR: http://localhost:5173  (use this for development)
 # → API/worker:  http://localhost:8789
-# → Router:      http://localhost:8788  (serves built dist, run build:truck-web first)
+# → Router:      http://localhost:8788  (serves built dist)
 # Ctrl+C to stop
 ```
 
@@ -27,16 +24,17 @@ bun run dev             # Start all workers + Vite dev server
 bun run dev             # Start router + truck + test workers + Vite dev server (run.mjs)
 # Use localhost:5173 for UI development — .ts changes hot-reload without restart
 
-# Build
-bun run build           # Build WASM + truck-web (Vite) + docs
-bun run build:truck     # wasm-pack build + cargo run --bin generate-schema → cad-schema.json
-bun run build:truck-web # Vite build → systems/truck/web/dist/ (served by wrangler)
-bun run build:docs      # Build VitePress docs
+# Build — system-aware pipeline (scripts/build.mjs reads building config from each system.mjs)
+bun run build           # All systems: sync → truck → docs (sorted by order field)
+bun run build:sync      # Just sync (WASM + schema + types)
+bun run build:truck     # Sync + truck (WASM + schema + adapters + sizes + web)
+bun run build:docs      # Just docs (llm-docs + VitePress)
 
-# Test
-bun run test            # All tests (cargo test + vitest)
-bun run test:crate      # Rust unit tests
-bun run test:api        # Worker API tests (vitest)
+# Test — system-aware pipeline (scripts/test.mjs reads testing config from each system.mjs)
+bun run test            # All tests: alignment → sync (Rust + vitest) → truck (Rust + vitest)
+bun run test:crate      # Rust tests only (contract + domain)
+bun run test:api        # Truck worker vitest
+bun run test:sync       # Sync worker vitest
 bun run test:e2e        # Playwright E2E tests
 
 # Deploy
@@ -87,31 +85,41 @@ Each system = Rust crate → WASM → schema → worker with MCP endpoint. Truck
 │   ├── build-llm-docs.ts  LLM docs generator (llms.txt, llms-full.txt)
 │   ├── mcp-bridge.ts      stdio ↔ HTTP proxy to Worker /mcp (retry + hot-reload)
 │   └── mcp-setup.sh       Generates MCP configs for Gemini/Cursor
-├── systems/
+├── systems/                 Every system follows the same skeleton:
+│   │                        system.mjs, crate/, worker/, web/, e2e/, ts/
+│   │                        Omit folders the system doesn't need.
+│   │                        Domain name = filename across all layers.
+│   ├── sync/
+│   │   ├── system.mjs       Build config, testing config, testFiles
+│   │   ├── sync-schema.json GENERATED from Rust
+│   │   ├── crate/src/       Rust source + unit tests (lib.rs)
+│   │   ├── ts/              Shared TS consumed by other systems
+│   │   └── worker/src/      Vitest runner (WASM boundary tests, no deployed worker)
 │   ├── truck/
-│   │   ├── crate/src/     Rust: wasm_app.rs (SceneController), commands.rs (params + schema)
-│   │   ├── web/           Browser TypeScript (Vite project): *.ts, vite.config.ts, public/
-│   │   │                  → dist/ (gitignored, built by `bun run build:truck-web`)
-│   │   ├── worker/src/    Hono worker: index.ts (REST + OpenAPI + MCP), index.test.ts
-│   │   └── tests/         Playwright E2E
-│   ├── truck/cad-schema.json  GENERATED from Rust — drives Worker/MCP/OpenAPI/browser
-│   ├── test/worker/       Test worker (port 5175, validates N-worker pattern)
-│   ├── docs/website/      VitePress source (dist served by router DOCS_ASSETS)
-│   └── ezpz/              KittyCAD kcl-ezpz integration
-└── docs/adr/              Architecture Decision Records
+│   │   ├── system.mjs       Build config, testing config, testFiles
+│   │   ├── cad-schema.json  GENERATED from Rust — drives Worker/MCP/OpenAPI/browser
+│   │   ├── crate/src/       Rust source + unit tests
+│   │   ├── crate/tests/     Rust integration tests (one file per domain)
+│   │   ├── web/             Browser TypeScript (Vite project)
+│   │   ├── worker/src/      Hono worker + vitest (REST + MCP + tests)
+│   │   └── e2e/             Playwright E2E
+│   ├── test/worker/         Test worker (validates N-worker topology)
+│   ├── docs/website/        VitePress source (dist served by router DOCS_ASSETS)
+│   └── ezpz/                KittyCAD kcl-ezpz integration
+└── docs/adr/                Architecture Decision Records
 ```
 
 ## Schema-Driven Architecture
 
 ```
 Rust structs (#[derive(Deserialize, JsonSchema)])
-  → bun run build:truck          wasm-pack --release + cargo run --bin generate-schema
+  → bun run build:truck          system-aware pipeline: wasm+schema → adapters → sizes → web
   → systems/truck/cad-schema.json                     [COMMITTED generated artifact]
   → bun run gen:openapi          scripts/gen-openapi.ts reads cad-schema.json
   → systems/truck/web/openapi.json                    [gitignored intermediate]
   → bun run gen:api-types        openapi-typescript + chain-origin header
   → systems/truck/web/api-types.ts                    [COMMITTED generated artifact]
-  → bun run build:truck-web      Vite build (imports api-types.ts via openapi-fetch)
+  → truck building.web step      gen:api-types + Vite build
   → systems/truck/web/dist/                           [gitignored, served by wrangler]
 
   → Worker: OpenAPIHono routes use same cad-schema.json at runtime
@@ -120,9 +128,7 @@ Rust structs (#[derive(Deserialize, JsonSchema)])
   → Browser: cadCommand() dispatches to same Rust execute()
 ```
 
-**Add a Rust command** → `bun run build:truck` + `bun run gen:api-types` → schema + types regenerate → Worker/MCP/OpenAPI/browser all update. Nothing hand-written drifts.
-
-**bun run build:truck-web** runs the full gen chain automatically (gen:api-types is a prerequisite).
+**Add a Rust command** → `bun run build:truck` → schema + types + adapters + web all regenerate. Nothing hand-written drifts.
 
 ## Single Dispatch Path
 
@@ -151,7 +157,7 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 
 **Dev workflow** (MANDATORY — edit → test → verify → deploy → verify):
 ```
-1. bun run dev                      → builds both WASMs (sync + geometry), applies D1 migrations,
+1. bun run dev                      → builds both WASMs (sync + geometry),
                                       starts Vite (5173) + wrangler workers, polls /api/health
    - Browser TS changes: HMR at localhost:5173 — NO restart needed
    - Worker TS changes: wrangler auto-reloads — NO restart needed
@@ -159,7 +165,7 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 2. bun run build:truck              (only if Rust changed outside dev)
 3. bun run test:api                 → no regressions
 4. browser_navigate('http://localhost:5173') + browser_snapshot → verify in browser
-5. bun run build:truck-web          → build dist/ before deploying
+5. bun run build                    → build all systems before deploying
 6. bun scripts/cf-deploy.ts upload  → deploy
 7. wrangler versions deploy <id>@100% --yes → promote
 8. browser_navigate (prod URL) + browser_snapshot → verify production
@@ -179,61 +185,66 @@ Immutable UUID URL on every upload (`preview_urls = true`). Named aliases only a
 
 ## Window Globals (browser)
 
-7 globals, all needed:
 - `sceneController` — Rust WASM SceneController instance
 - `_ds` — Datastar instance (signals at `_ds.root.*`)
-- `cadCommand` — Single dispatch function
+- `cadCommand` / `cadQuery` — Single dispatch functions
 - `cadDocManager` — Automerge CadDocumentManager
-- `setSelection` — Legacy (being removed, use `cadCommand('select')`)
 - `cadUI` — UI state helpers
 - `showFeedbackSignal` — Toast feedback display
+- `reconcile` / `addShape` — Scene state sync
+- `moduleRouter` — Module routing
 
-## Isomorphic WASM Core + D1 Op-Log (COMPLETE)
+## Sync Architecture (ADR-0001 — Implemented)
 
 **truck-sync crate** (`systems/sync/crate/`) — Automerge-backed op log, no geometry knowledge.
 - Op schema: `{id, type, params, enabled, timestamp, actorId, groupId?}` — matches JS `CadOperation` exactly
-- WASM built twice per target: `--target web` → `web/pkg-sync/` (browser), `--target bundler` → `worker/pkg-sync/` (CF Worker)
-- `bun run dev` builds both targets automatically via `DEV_BUILD` in `systems/sync/system.mjs`
+- WASM built 3x: `--target web` → `web/pkg-sync/` (browser), `--target bundler` → `truck/worker/pkg-sync/` + `sync/worker/pkg-sync/` (CF Worker + tests)
+- `bun run dev` builds all targets automatically via `DEV_BUILD` in `systems/sync/system.mjs`
 
-**D1 op-log** (`systems/truck/worker/src/op-log.ts`):
-- Migration: `systems/truck/worker/migrations/0001_op_log.sql` — auto-applied by `bun run dev`
-- `POST /api/models/{id}/ops` — append op (op_json must be full Op schema JSON string)
-- `GET /api/models/{id}/ops?since=N` — get ops with op_index > N (use `since=-1` for all)
-- `GET /api/models/{id}/replay` — headless WASM replay → scene JSON array (same shape as export_scene)
+**R2 automerge.bin** — server source of truth (D1 op-log removed entirely):
+- `models/{id}/automerge.bin` — Automerge CRDT doc in R2
+- MCP ops: server-direct via headless WASM (no browser round-trip for data-plane)
+- `POST /api/models/{id}/ops` — apply op to automerge.bin with optimistic concurrency (etag)
+- `POST /api/models/{id}/sync` — merge browser + server docs
+- `GET /api/models/{id}/replay` — headless WASM replay → scene JSON array
+- SSE broadcasts full ops (with id/actorId) — no duplicate on merge
 
 **Browser entry point** (`systems/truck/web/main.ts`):
 - Vite drops inline `<script type="module">` in `<body>` — always use `<script src="...">` in `<head>`
 - `main.ts` = Datastar init + `boot()` — single entry point for Vite
 
 **system.mjs pattern** — each system owns its config in `systems/{name}/system.mjs`:
-- Exports `workers`, `devServers`, `DEV_BUILD`, `RELEASE_BUILD`
+- Exports `workers`, `devServers`, `DEV_BUILD`/`RELEASE_BUILD`, `building`, `testing`, `testFiles`
+- `building`: `{name, order, steps[]}` — consumed by `scripts/build.mjs` (sorted by order)
+- `testing`: `{name, rust?, typecheck?, vitest?}` — consumed by `scripts/test.mjs`
 - `workers.mjs` is a thin aggregator — imports from each system.mjs, no system-specific logic
-- Adding a new system = create `systems/{name}/system.mjs` + one import line in `workers.mjs`
+- Adding a new system = create `systems/{name}/system.mjs` + one import line in `workers.mjs` + one import in `build.mjs` + one in `test.mjs`
 - `bun run check:alignment` verifies all system.mjs files, wrangler.toml names, migrations, and crate coverage
 
 **system.mjs worker config fields:**
-- `migrate`: shell command run before wrangler starts (D1 migrations, schema seeds)
 - `healthUrl`: polled after all workers start — dev script prints `ready ✓` when 200
+- `build`: dev build command run before wrangler starts (WASM compilation)
+- `watch`: file watcher config for auto-rebuild on Rust changes
 
 ## ADRs
 
-Active plans live in `docs/adr/`. Currently: `0001-multi-actor-sync.md` (snapshot + multi-actor sync).
+Active plans live in `docs/adr/`. ADR-0001 (multi-actor sync) is implemented. Next: ADR-0002 (GeometryStore).
 Historical ADRs were removed — their decisions are baked into the codebase and documented in this file.
 
 ## AI Agent Rules
 
-1. **Code + automation = one atomic change** — every code change must simultaneously update the relevant `systems/{name}/system.mjs` (build/migrate/healthUrl), run.mjs, package.json scripts, and AGENT.md. A migration without a `migrate:` field, or a boot change without updating the dev workflow section, is an incomplete change. Never finish one without the other.
+1. **Code + automation = one atomic change** — every code change must simultaneously update the relevant `systems/{name}/system.mjs` (build/healthUrl), run.mjs, package.json scripts, and AGENT.md. A boot change without updating the dev workflow section is an incomplete change. Never finish one without the other.
 2. **Use bun run scripts** — never bypass with ad-hoc commands or manual config edits
-2. **Schema first** — change `commands.rs` → `bun run build:truck` → everything downstream updates
-3. **Single dispatch** — all mutations through `cadCommand()`, all state sync through `reconcile()`
-4. **DRY** — `cf-deploy.json` owns deploy config, `cad-schema.json` owns commands. Import the JSON. Never duplicate into env vars, wrangler [vars], or hardcoded strings
-5. **Isomorphic local/cloud** — relative paths in HTML (`/docs/`, `/api/health`). Workers redirect cross-worker paths to the router
-6. **Verify with Playwright MCP** — always check fixes in browser before AND after deploy. Never assume
-7. **No hand-writing** — Zod enums, MCP tools, OpenAPI paths are all auto-generated from schema
-8. **data-testid** — all interactive HTML elements need them for testing
-9. **No legacy/compat** — no existing users, no migration paths, clean code only
-10. **ADR context** — read `docs/adr/` before proposing architectural changes
-11. **Plans live in `docs/adr/`** — all implementation plans go in `docs/adr/` as numbered ADRs, never in agent-private folders (`.claude/plans/`, `.cursor/`, etc.). The ADR is the single source of truth shared by all agents and humans
+3. **Schema first** — change `commands.rs` → `bun run build:truck` → everything downstream updates
+4. **Single dispatch** — all mutations through `cadCommand()`, all state sync through `reconcile()`
+5. **DRY** — `cf-deploy.json` owns deploy config, `cad-schema.json` owns commands. Import the JSON. Never duplicate into env vars, wrangler [vars], or hardcoded strings
+6. **Isomorphic local/cloud** — relative paths in HTML (`/docs/`, `/api/health`). Workers redirect cross-worker paths to the router
+7. **Verify with Playwright MCP** — always check fixes in browser before AND after deploy. Never assume
+8. **No hand-writing** — Zod enums, MCP tools, OpenAPI paths are all auto-generated from schema
+9. **data-testid** — all interactive HTML elements need them for testing
+10. **No legacy/compat** — no existing users, no migration paths, clean code only
+11. **ADR context** — read `docs/adr/` before proposing architectural changes
+12. **Plans live in `docs/adr/`** — all implementation plans go in `docs/adr/` as numbered ADRs, never in agent-private folders (`.claude/plans/`, `.cursor/`, etc.). The ADR is the single source of truth shared by all agents and humans
 
 ## Library Reference
 - Automerge: `systems/docs/website/public/llms/automerge-llms-full.txt`

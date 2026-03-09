@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // scripts/test.mjs — Test pipeline with architectural descriptions.
 //
 // Each phase explains WHY it runs, what layer it owns, and what it catches.
@@ -22,9 +22,11 @@ import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 // ── System registry ──────────────────────────────────────────────────────────
 // To add a system: add one import + push to SYSTEMS
 import { testing as truckTesting } from '../systems/truck/system.mjs';
+import { testing as syncTesting } from '../systems/sync/system.mjs';
 
 const SYSTEMS = [
   truckTesting,
+  syncTesting,
   // mvtTesting,   ← add when systems/mvt/system.mjs exists
   // ifcTesting,   ← add when systems/ifc/system.mjs exists
 ];
@@ -130,7 +132,7 @@ header(next(), TOTAL,
   '        wrangler.toml name, migration dir, and crate reference is consistent.\n' +
   '        If this fails, the project is misconfigured — no point running code.'
 );
-run('node check-alignment.mjs');
+run('bun check-alignment.mjs');
 
 // ── 2. Schema Contract ──────────────────────────────────────────
 if (phaseActive[1]) {
@@ -194,12 +196,12 @@ if (phaseActive[4]) {
 // ── 6. HTTP / MCP Contract ──────────────────────────────────────
 if (phaseActive[5]) {
   header(next(), TOTAL,
-    'HTTP / MCP CONTRACT  (TypeScript → HTTP boundary)',
+    'HTTP / MCP / SYNC CONTRACT  (TypeScript → HTTP boundary)',
     'vitest run  (' + SYSTEMS.filter(s => s.vitest).map(s => s.name).join(', ') + ')',
-    'Verifies each worker serves exactly the committed schema JSON\n' +
-    '        (deep equality — catches add/delete/rename at the HTTP layer).\n' +
-    '        Also verifies: MCP tool list, MCP tool count formula, OpenAPI 3.1 spec,\n' +
-    '        model persistence (R2 CRUD), thumbnail round-trip, MCP tool call flow.'
+    'Full HTTP-layer contract: schema deep-equality, MCP protocol, model CRUD,\n' +
+    '        sync endpoints (POST /ops, POST /sync, GET /doc), CRDT WASM boundary,\n' +
+    '        merge dedup, multi-actor merge, replay fidelity, disabled ops,\n' +
+    '        delete cascade, etag concurrency, SSE message contract.'
   );
   for (const sys of SYSTEMS) {
     if (sys.vitest) { subheader(sys.name); run(sys.vitest); }

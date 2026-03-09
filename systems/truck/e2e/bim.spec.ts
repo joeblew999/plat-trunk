@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { waitForReady, getObjectCount, getObjectIds, apiCommand } from './helpers';
 import fs from 'fs';
 import path from 'path';
-import { SRC_DIR } from '../paths';
+import { SRC_DIR } from './paths';
 
 test.describe('BIM / IFC Operations', () => {
   test.beforeEach(async ({ page }) => {

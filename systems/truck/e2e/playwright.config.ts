@@ -4,7 +4,7 @@ import path from 'path';
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8788';
 const IS_SLOW = !!process.env.SLOW;
 
-// Repo root — two levels up from systems/truck/tests/
+// Repo root — two levels up from systems/truck/e2e/
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 // WebGPU requires specific Chrome flags on macOS
@@ -39,7 +39,7 @@ export default defineConfig({
     stderr: 'pipe',
   },
 
-  testDir: './e2e',
+  testDir: '.',
   outputDir: './test-results',
   timeout: 60_000,
   expect: { timeout: 15_000 },

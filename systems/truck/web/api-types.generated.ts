@@ -1,5 +1,5 @@
 // GENERATED — do not edit directly.
-// Chain: Rust (#[derive(JsonSchema)]) → cad-schema.json → scripts/gen-openapi.ts → openapi.json → openapi-typescript → api-types.ts
+// Chain: Rust (#[derive(JsonSchema)]) → cad-schema.json → scripts/gen-openapi.ts → openapi.json → openapi-typescript → api-types.generated.ts
 // Re-generate: bun run gen:api-types  (no server needed — reads cad-schema.json directly)
 // Source:       systems/truck/cad-schema.json  (built by: bun run build:truck)
 // Used by:      systems/truck/web/api-client.ts  via openapi-fetch createClient<paths>

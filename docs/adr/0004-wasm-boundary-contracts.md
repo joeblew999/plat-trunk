@@ -59,7 +59,7 @@ Rust #[derive(JsonSchema)] param structs
 
 4. **gen-openapi.ts is pure transformation.** Reads `cad-schema.json` statically (no running server needed), iterates commands, emits OpenAPI paths for both `/async/{name}` and `/sync/{name}` routes. The OpenAPI spec is derived, not authored.
 
-5. **The chain is atomic.** `bun run build:truck` = WASM build + schema generation. `bun run build:truck-web` = type generation + Vite build. No manual steps.
+5. **The chain is atomic.** `bun run build:truck` = WASM + schema + adapters + sizes + web (type generation + Vite build). No manual steps.
 
 **What the chain already feeds:**
 
@@ -607,7 +607,7 @@ All three steps completed and verified:
 | Native Rust command list | `crate/src/commands_generated.rs` | Done — `COMMAND_NAMES`, `CadDomain` enum, `command_domain()` |
 | Alignment check | `check-alignment.mjs` [7] | Done — verifies generated adapters aren't stale |
 | Module router wiring | `web/core/module-router.ts` | Done — imports generated `commandDomain` for multi-module routing |
-| Boundary contract tests | `tests/boundary_dispatch.rs` | Done — 3 native tests (dispatch coverage, codegen sync, sync exports) |
+| Boundary contract tests | `tests/boundary.rs` | Done — 3 native tests (dispatch coverage, codegen sync, sync exports) |
 | Missing dispatch fix | `headless.rs` | Done — `quick_rect_extrude` was missing, caught by contract test |
 | Build chain | `package.json` `gen:adapters` | Done — wired into `build:truck` |
 
@@ -620,7 +620,7 @@ Once Phase 0 is verified, each of these can land independently:
 1. **Proc macro:** `#[cad_boundary]` replaces the hardcoded boundaries in `build_schema()`. Inert on `wasm32`, emits metadata on native.
 1. **Browser Web Workers:** `gen-adapters.ts` gains a Web Worker codegen path — `geometry-worker.ts`, `sync-worker.ts`, `browser-dispatcher.ts` with `postMessage` routing.
 1. **Native dispatcher binary:** Thin CLI that links pure logic crates, uses the generated dispatcher. Validates `add_cube` works identically via browser WASM, CF Worker WASM, and native function call.
-1. ~~**Alignment checks:** `check-alignment.mjs` gains boundary verification — exported functions match schema, generated files aren't stale.~~ **Done in Phase 0** — `check-alignment.mjs` [7] + `boundary_dispatch.rs` contract tests.
+1. ~~**Alignment checks:** `check-alignment.mjs` gains boundary verification — exported functions match schema, generated files aren't stale.~~ **Done in Phase 0** — `check-alignment.mjs` [7] + `boundary.rs` contract tests.
 1. **Topology:** `workers` and `topology` sections in schema, cross-worker `postMessage` bridges.
 1. **Native MCP server:** Generated dispatcher serves MCP tools over stdio — full Truck kernel at native speed, no WASM.
 1. **Documentation:** `llms.txt` and `llms-full.txt` updated with boundary contract docs for AI agent consumption.

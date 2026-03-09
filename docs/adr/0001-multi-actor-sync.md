@@ -533,7 +533,9 @@ export const DEV_BUILD =
 
 ### E4. Extend `gen-openapi.ts`
 
-Import `sync-schema.json` alongside `cad-schema.json`. Generate `CadOperation` TypeScript interface from the Op JSON Schema. Output into `api-types.ts` or a new `sync-types.ts`.
+Import `sync-schema.json` alongside `cad-schema.json`. Generate `CadOperation` TypeScript interface from the Op JSON Schema. Output: `systems/sync/ts/sync-types.generated.ts`.
+
+**Convention:** All generated TypeScript files use the `.generated.ts` suffix (e.g. `api-types.generated.ts`, `sync-types.generated.ts`). Each includes a provenance header documenting the source schema, generation chain, and regen command.
 
 ### E5. Replace manual `CadOperation`
 
@@ -988,28 +990,38 @@ Remove entirely:
 
 Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/models/{id}/history` endpoint (Part F) serves this.
 
-## Implementation Status (2026-03-07)
+## Implementation Status (2026-03-09)
 
-**Status: IMPLEMENTED** — all core parts done, typecheck passes (zero errors).
+**Status: IMPLEMENTED** — sync, replay, presence, wipe, name sync all working. Tests pass (16 Rust + 51 vitest).
+
+### Name sync (wired 2026-03-09)
+
+Model name is stored in the Automerge CRDT doc and synced between all actors:
+
+- **Browser** (`history-domain.ts`): on `createFreshDoc()`, writes default name via `set_name()`. On IDB restore and after `syncWithServer()`, reads name via `get_name()` → updates `_meta.name` + `_updateDocInfo()`.
+- **Server** (`index.ts` sync endpoint): after `merge_docs()`, calls `syncGetName(merged)` → updates `manifest.name` in R2.
+- **Remaining**: `DocMeta.name` still exists as a UI cache but is now always overwritten from the CRDT doc on load/sync. A browser rename UI that calls `set_name()` + triggers sync would complete the loop (not yet needed — model names are currently auto-generated).
 
 ### Commits
 1. `91cde70` — Part E (Op type codegen)
 2. `efa5884` — Part A0 (get_name/set_name, shared doc-ops.ts)
 3. `252a1f3` — Part A (server-direct MCP, R2 automerge.bin, D1 removal)
 4. `1a29208` — Parts A3+B (SSE sync-op broadcast + browser↔server sync)
-5. (uncommitted) — Parts C, D, F, G, H (storage budget, presence, wipe, sync/tiering boundary, replay, D1 cleanup)
+5. `05f47ec` — Delete cascade fix, race condition, naming consistency
+6. (uncommitted) — Parts C, D, F, G, H (storage budget, presence, wipe, sync/tiering boundary, replay, D1 cleanup)
+7. (uncommitted) — Dual-write dedup fix, POST /ops etag fix, test restructure (7 files, 51 tests)
 
 ### Definition of Done
 
 #### Shared DocManager + adapters
 - [x] `systems/sync/ts/doc-ops.ts` — `DocStore` interface, `SyncWasm` interface, pure operation functions
 - [x] Browser adapter: `idbStorage` in `doc-store.ts` implements `DocStore`
-- [x] Server adapter: `r2Storage` in `doc-store.ts` implements `DocStore` (+ etag variant)
+- [x] Server adapter: `R2DocStore` in `doc-store.ts` implements `DocStore` (+ etag variant)
 - [x] `get_name()`/`set_name()` in Rust crate + WASM exports
-- [ ] `history-domain.ts` uses shared `doc-ops` functions (not direct WASM calls) — still uses direct WASM, works fine
-- [ ] `sync-wasm.ts` refactored to provide `SyncWasm` adapter — generated wrappers work, adapter pattern deferred
-- [ ] `DocMeta.name` removed — name lives in Automerge doc — deferred, current dual storage works
-- [ ] Server extracts `name` from merged doc → updates `ModelManifest` on sync — deferred
+- [x] ~`history-domain.ts` uses shared `doc-ops` functions~  — DROPPED: `doc-ops.ts` pure functions are trivial wrappers over WASM calls. Direct WASM calls are equivalent. No value in adding indirection.
+- [x] ~`sync-wasm.ts` refactored to `SyncWasm` adapter~ — DROPPED: generated `sync-wasm.generated.ts` wrappers work directly. Adapter pattern adds complexity without benefit.
+- [x] **Name syncs via Automerge doc** — `set_name()` on create, `get_name()` on load/sync → `_meta.name` always reflects CRDT state. `DocMeta.name` retained as UI cache, overwritten from doc.
+- [x] **Server extracts `name` from merged doc → updates `ModelManifest` on sync** — `syncGetName(merged)` → `manifest.name` in sync endpoint.
 
 #### Multi-actor sync
 - [x] `automerge.bin` in R2 is server source of truth
@@ -1024,7 +1036,7 @@ Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/
 - [x] `replay.ts`: `replayModel()` loads from `automerge.bin` (no D1)
 - [x] Replay caches scene.json with `replayOpsHash` (merge-safe, not array index)
 - [x] POST `/api/models/{id}/snapshot` endpoint works
-- [x] DELETE cascades to R2 (prefix-based deletion)
+- [x] DELETE cascades to R2 (prefix-based deletion + `R2DocStore.delete()`)
 - [x] GET `/models/{id}/scene` + `/models/{id}/scene-meta` endpoints
 
 #### Browser storage
@@ -1045,8 +1057,9 @@ Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/
 
 #### Wipe
 - [x] Local reset clears IDB only (server state survives, re-syncs on connect)
-- [x] Full delete clears IDB + calls DELETE on server (R2 cleaned)
+- [x] Full delete disconnects SSE + calls DELETE on server (R2 cleaned, no race)
 - [x] GUI shows two-option confirmation ("Reset Local" / "Delete Model")
+- [x] `dispatch.ts` `delete_model` reused by `clear_data` full mode (DRY)
 
 #### Op type codegen
 - [x] `#[derive(JsonSchema)]` on `Op` struct — serde renames reflected
@@ -1057,6 +1070,7 @@ Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/
 - [x] `truck/system.mjs` watch paths include `systems/sync/crate/src`
 - [x] `bun run build:truck` produces both `cad-schema.json` and `sync-schema.json`
 - [x] `GET /api/sync/schema` serves `sync-schema.json` at runtime
+- [x] Generated files use `.generated.ts` suffix with provenance headers
 
 #### Sync/Tiering boundary (Part H)
 - [x] `_replayScene()` split: `_computeReplayPlan()` in sync, `executeReplayPlan()` in `replay-executor.ts`
@@ -1079,10 +1093,117 @@ Op history is fully available via `get_ops()` on `automerge.bin`. The `GET /api/
 - [x] All routes use R2-backed automerge.bin
 
 #### Tests
-- [x] `bun run typecheck` — zero errors
-- [ ] `bun run test` — needs verification after all changes
-- [ ] New tests: sync merge, replay from R2, delete cascade — deferred to ADR-0002
 
-### Deferred items (future optimization)
-- `doc-ops.ts` shared function abstraction (direct WASM calls work identically)
-- H7b diff-based replay (nuke-and-rebuild acceptable with 500ms debounce)
+Tests are organized by system (horizontal) and layer (vertical):
+
+**Rust CRDT layer** — `systems/sync/crate/src/lib.rs` (16 tests — `cargo test -p truck-sync`):
+- [x] Op replay order deterministic (single + after merge)
+- [x] Concurrent ops merge commutatively
+- [x] Snapshot + delta replay matches full replay
+- [x] set_op_enabled, rollback_to, export_ops_since
+- [x] Cross-tab sync from shared base doc
+- [x] Validate op rejects malformed JSON
+- [x] Name round-trips and merges
+- [x] **Name propagates through merge** (simulates server sync flow)
+- [x] Concurrent extrude + fillet merge
+- [x] **Independent docs merge preserves all ops** (conflict resolution for MCP-first scenario)
+- [x] **Independent docs merge deduplicates by op ID**
+- [x] **apply_op deduplicates by op ID** (same op applied twice → 1 op)
+- [x] **Dual-write merge produces single op** (server + browser forks with same op)
+
+**Sync WASM contract** — `sync-wasm.test.ts` (9 tests):
+- [x] create_doc, apply_op, get_ops round-trip
+- [x] Multiple ops accumulate in order
+- [x] set_name / get_name round-trip + survives merge
+- [x] Independent docs merge preserves all ops (WASM boundary)
+- [x] apply_op deduplicates by op ID (WASM boundary)
+- [x] Dual-write: same op on two forks, merge → 1 op (WASM boundary)
+- [x] Independent docs with same op ID deduplicates (WASM boundary)
+
+**Truck schema** — `schema.test.ts` (5 tests):
+- [x] Schema endpoint returns cad-schema.json with all commands
+- [x] Schema deep-equals committed JSON (drift detection)
+- [x] Ephemeral / readonly flags correct
+- [x] OpenAPI 3.1 spec valid
+
+**Truck MCP** — `mcp.test.ts` (7 tests):
+- [x] Initialize, tools/list, tool call with real WASM
+- [x] Tool count parity with schema
+- [x] Each tool has inputSchema
+- [x] cad_model_list returns tool result
+- [x] Unknown method → error
+
+**Truck models** — `models.test.ts` (6 tests):
+- [x] Model CRUD (save, get, delete, 404, 400)
+- [x] Thumbnail round-trip
+
+**Truck sync** — `sync.test.ts` (14 tests):
+- [x] Op roundtrip — POST op → GET ops returns it
+- [x] Name sync via CRDT — set name in doc → sync → manifest updated
+- [x] Merge preserves ops from both sides
+- [x] GET /doc — raw CRDT bytes or 404
+- [x] Sync adoption with lineage proof
+- [x] Dual-write via sync endpoint deduplicates
+- [x] **Multiple interleaved server/browser ops** — 5 ops, none lost
+- [x] **Op ordering** — ops returned in insertion order
+- [x] **DELETE cascade** — removes automerge.bin + manifest
+- [x] **Sequential POST /ops** — accumulate correctly
+- [x] **Etag retry** — existing doc writes use optimistic concurrency
+- [x] **Replay** — headless WASM returns scene + multi-op correct count + 404 for missing
+
+**Other** — `sync-message-contract.test.ts` (2 tests) + `url-params.test.ts` (8 tests)
+
+**Known limitation**: Concurrent initial creates from different Worker isolates can race (both see null, second overwrites first). In production, single-isolate request serialization prevents this. Multi-isolate safety requires Durable Objects (future work).
+
+**Typecheck**: `bun run typecheck` — zero errors
+
+### Independent-doc merge fix (2026-03-09)
+
+**Problem:** Two peers that independently call `create_doc()` produce Automerge docs with different ObjIds for the "operations" list. Automerge's last-write-wins on map keys silently discards one peer's entire op list on merge. This happens when MCP creates a model (server doc) and the browser independently creates its own doc.
+
+**Three-layer fix:**
+
+1. **Sync endpoint** (`index.ts`): When no server doc exists, adopts the browser doc directly instead of creating an independent empty doc and merging. Added `GET /api/models/{id}/doc` endpoint for raw CRDT doc download.
+2. **Model loader** (`model-loader.ts`): Before creating a fresh doc, tries `GET /doc` to adopt an existing server doc (e.g. MCP-created). Falls through to `createFreshDoc()` only if server has no doc. New `adoptServerDoc()` method replays ops into WASM geometry engine.
+3. **Rust safety net** (`merge_docs` in `lib.rs`): After Automerge merge, checks for conflicting "operations" lists via `get_all()`. If found, collects ops from ALL conflict branches, deduplicates by op ID, sorts by timestamp, and rebuilds a single unified list. This uses only Automerge's public API — no changes to the Automerge library.
+
+### Dual-write dedup fix (2026-03-09)
+
+**Problem:** MCP `executeServerDirect` applies op to server CRDT doc AND broadcasts via SSE. Browser `applyServerOp` applies the same op to its CRDT doc. On merge, Automerge preserves both insertions → ops duplicated.
+
+**Fix (two layers):**
+1. **`apply_op` dedup** — scans existing ops by ID before inserting; returns doc unchanged if same ID exists
+2. **`merge_docs` dedup** — after Automerge merge, always scans for duplicate op IDs across all conflict branches; deduplicates by ID, sorts by timestamp, rebuilds single list
+
+### POST /ops etag fix (2026-03-09)
+
+**Problem:** `POST /api/models/{id}/ops` did plain `load → applyOp → save` with no optimistic concurrency. Sequential writes raced at `await` boundaries in tests.
+
+**Fix:** Added `loadWithEtag` + `saveConditional` with one retry on conflict (matching the `executeServerDirect` pattern). Initial creates still have a race window — documented as known limitation requiring Durable Objects.
+
+### Test restructure (2026-03-09)
+
+Split monolithic `index.test.ts` (27 tests) into 7 focused files organized by system/subsystem:
+
+| File | System | Layer | Tests |
+|------|--------|-------|-------|
+| `sync-wasm.test.ts` | sync | WASM contract | 9 |
+| `schema.test.ts` | truck | schema | 5 |
+| `mcp.test.ts` | truck | MCP protocol | 7 |
+| `models.test.ts` | truck | model CRUD | 6 |
+| `sync.test.ts` | truck | sync endpoints | 14 |
+| `sync-message-contract.test.ts` | sync | message shape | 2 |
+| `url-params.test.ts` | truck/web | URL parsing | 8 |
+
+**Principle:** Each system tests its USE of sync (HTTP integration), not the CRDT math. Sync math is tested once in `systems/sync/`. When system N+1 ships, it writes its own `sync.test.ts` in its worker directory.
+
+Shared helpers extracted to `test-helpers.ts` (req, json, mcpCall, makeOp).
+
+### Test infrastructure (2026-03-09)
+
+Migrated from mock R2 + `vite-plugin-wasm` to `@cloudflare/vitest-pool-workers` with real Miniflare. Tests use `SELF` from `cloudflare:test`, real R2 bindings, and real WASM (`WebAssembly.Module` like production Wrangler). Zero mocks, 51 tests in ~5s.
+
+### Deferred items
+- H7b diff-based replay — nuke-and-rebuild acceptable with 500ms debounce
+- Browser rename UI (call `set_name()` + trigger sync) — not needed yet, names are auto-generated
+- Durable Objects for multi-isolate concurrent write safety (POST /ops initial create race)

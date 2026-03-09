@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // run.mjs — Unified dev/deploy orchestrator.
 // Reads workers.mjs, starts/builds/deploys all workers.
 //
 // Usage:
-//   node run.mjs dev      Start all workers + watchers (auto-reloads on file changes)
-//   node run.mjs deploy   Build + deploy all workers
+//   bun run.mjs dev      Start all workers + watchers (auto-reloads on file changes)
+//   bun run.mjs deploy   Build + deploy all workers
 
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
@@ -175,6 +175,6 @@ switch (cmd) {
   case 'dev': dev(); break;
   case 'deploy': deploy(); break;
   default:
-    console.log('Usage: node run.mjs [dev|deploy]');
+    console.log('Usage: bun run.mjs [dev|deploy]');
     process.exit(1);
 }

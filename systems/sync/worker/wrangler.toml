@@ -1,0 +1,15 @@
+# ───────────────────────────────────────────────────────
+# sync-tests — minimal worker for vitest-pool-workers
+# ───────────────────────────────────────────────────────
+#
+# The sync system has no deployed worker — it's a WASM library.
+# This wrangler.toml exists solely to provide the execution
+# context that @cloudflare/vitest-pool-workers requires.
+#
+# Tests: bun run test:sync  (or: cd systems/sync/worker && bun x vitest run)
+# ───────────────────────────────────────────────────────
+
+name = "sync-tests"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]

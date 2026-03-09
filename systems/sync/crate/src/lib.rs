@@ -185,10 +185,26 @@ pub mod core {
     }
 
     /// Apply one op to the doc and return serialised bytes.
+    /// Deduplicates by op ID — if an op with the same ID already exists, returns
+    /// the doc unchanged. This prevents the dual-write bug where both server
+    /// (executeServerDirect) and browser (applyServerOp via SSE) record the same
+    /// op, producing duplicates on the next CRDT merge.
     pub fn apply_op(doc_bytes: &[u8], op: &Op) -> Result<Vec<u8>, String> {
         let mut doc = load_doc(doc_bytes)?;
         let ops_list = get_or_create_ops_list(&mut doc)?;
+
+        // Check for existing op with same ID (prevents dual-write duplicates)
         let len = doc.length(&ops_list);
+        for i in 0..len {
+            if let Ok(Some((Value::Object(ObjType::Map), entry))) = doc.get(&ops_list, i) {
+                if let Some(existing_id) = read_str(&doc, &entry, "id") {
+                    if existing_id == op.id {
+                        return Ok(doc.save()); // Already exists — no-op
+                    }
+                }
+            }
+        }
+
         let entry = doc
             .insert_object(&ops_list, len, ObjType::Map)
             .map_err(|e| e.to_string())?;
@@ -197,10 +213,55 @@ pub mod core {
     }
 
     /// CRDT merge — commutative, associative.
+    ///
+    /// After Automerge's merge, deduplicates ops by ID. Two cases produce dupes:
+    /// 1. **Independent-doc problem**: two peers call `create_doc()` independently,
+    ///    creating separate "operations" lists. Automerge's LWW on map keys picks
+    ///    one list as winner, discarding the other's ops.
+    /// 2. **Dual-write problem**: server `executeServerDirect` applies an op, then
+    ///    broadcasts via SSE; browser `applyServerOp` applies the same op. Both
+    ///    append to the SAME operations list (shared lineage), so Automerge
+    ///    preserves both insertions — no map-level conflict, but duplicate entries.
+    ///
+    /// This function handles both: collect all ops, deduplicate by ID, rebuild.
     pub fn merge_docs(local_bytes: &[u8], remote_bytes: &[u8]) -> Result<Vec<u8>, String> {
         let mut local = load_doc(local_bytes)?;
         let mut remote = load_doc(remote_bytes)?;
         local.merge(&mut remote).map_err(|e| e.to_string())?;
+
+        // Collect all ops from all conflict branches (or the single winning list)
+        let conflicts = local.get_all(ROOT, "operations").map_err(|e| e.to_string())?;
+        let mut all_ops: Vec<Op> = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for (value, obj_id) in &conflicts {
+            if let Value::Object(ObjType::List) = value {
+                let len = local.length(obj_id);
+                for i in 0..len {
+                    if let Some(op) = read_op(&local, obj_id, i) {
+                        if seen_ids.insert(op.id.clone()) {
+                            all_ops.push(op);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only rebuild if we found duplicates or conflicts
+        let total_entries: usize = conflicts.iter()
+            .filter_map(|(v, id)| if let Value::Object(ObjType::List) = v { Some(local.length(id)) } else { None })
+            .sum();
+        if all_ops.len() < total_entries || conflicts.len() > 1 {
+            all_ops.sort_by_key(|op| op.timestamp);
+            local.delete(ROOT, "operations").map_err(|e| e.to_string())?;
+            let new_list = local.put_object(ROOT, "operations", ObjType::List)
+                .map_err(|e| e.to_string())?;
+            for (i, op) in all_ops.iter().enumerate() {
+                let entry = local.insert_object(&new_list, i, ObjType::Map)
+                    .map_err(|e| e.to_string())?;
+                write_op_fields(&mut local, &entry, op)?;
+            }
+        }
+
         Ok(local.save())
     }
 
@@ -643,6 +704,27 @@ mod tests {
         assert_eq!(core::get_name(&merged).unwrap(), "My Model");
     }
 
+    /// Simulates server sync: browser sets name → syncs to server (empty doc) → server reads name.
+    /// Also verifies last-writer-wins when both actors set different names.
+    #[test]
+    fn sync_name_propagates_through_merge() {
+        // Browser creates doc and sets name
+        let browser_doc = core::create_doc();
+        let browser_doc = core::set_name(&browser_doc, "Browser Name").unwrap();
+
+        // Server has empty doc (first sync)
+        let server_doc = core::create_doc();
+        let merged = core::merge_docs(&server_doc, &browser_doc).unwrap();
+        assert_eq!(core::get_name(&merged).unwrap(), "Browser Name");
+
+        // Second scenario: both actors set different names — merge resolves
+        let server_doc2 = core::set_name(&core::create_doc(), "Server Name").unwrap();
+        let merged2 = core::merge_docs(&server_doc2, &browser_doc).unwrap();
+        let name = core::get_name(&merged2).unwrap();
+        // Automerge LWW: one wins deterministically (either is acceptable)
+        assert!(!name.is_empty(), "merged name should not be empty");
+    }
+
     /// Concurrent extrude + boolean — merge must contain all ops; disabled ops must be excluded
     /// from get_replay_ops even after merge.
     #[test]
@@ -674,5 +756,91 @@ mod tests {
         let replay_after_undo = core::get_replay_ops(&doc_after_undo).unwrap();
         assert_eq!(replay_after_undo.len(), 2);
         assert!(replay_after_undo.iter().all(|o| o.op_type != "boolean_subtract"));
+    }
+
+    /// Two independently-created docs (e.g. MCP creates server doc, browser creates its own)
+    /// must preserve ALL ops after merge, not silently discard one side.
+    /// This is the "independent doc problem" — without conflict resolution,
+    /// Automerge's LWW on the "operations" map key drops one list entirely.
+    #[test]
+    fn independent_docs_merge_preserves_all_ops() {
+        // Server creates doc independently and adds an op
+        let server_doc = core::create_doc();
+        let server_op = Op { actor_id: "mcp-server".to_string(), ..op("add_sphere", json!({"radius": 1.0})) };
+        let server_doc = core::apply_op(&server_doc, &server_op).unwrap();
+
+        // Browser creates doc independently and adds a different op
+        let browser_doc = core::create_doc();
+        let browser_op = Op { actor_id: "browser-user".to_string(), ..op("add_cube", json!({"size": 2.0})) };
+        let browser_doc = core::apply_op(&browser_doc, &browser_op).unwrap();
+
+        // Merge should preserve BOTH ops (not silently discard one side)
+        let merged = core::merge_docs(&server_doc, &browser_doc).unwrap();
+        let ops = core::get_ops(&merged).unwrap();
+        assert_eq!(ops.len(), 2, "merge of independent docs must preserve all ops");
+        let types: Vec<&str> = ops.iter().map(|o| o.op_type.as_str()).collect();
+        assert!(types.contains(&"add_sphere"), "server op must survive");
+        assert!(types.contains(&"add_cube"), "browser op must survive");
+
+        // Merge must be commutative
+        let merged_rev = core::merge_docs(&browser_doc, &server_doc).unwrap();
+        let ops_rev = core::get_ops(&merged_rev).unwrap();
+        assert_eq!(ops_rev.len(), 2, "reverse merge must also preserve all ops");
+    }
+
+    /// Independent docs with overlapping op IDs must deduplicate.
+    #[test]
+    fn independent_docs_merge_deduplicates_by_op_id() {
+        let shared_op = op("add_cube", json!({"size": 1.0}));
+
+        let doc_a = core::create_doc();
+        let doc_a = core::apply_op(&doc_a, &shared_op).unwrap();
+
+        let doc_b = core::create_doc();
+        let doc_b = core::apply_op(&doc_b, &shared_op).unwrap();
+
+        let merged = core::merge_docs(&doc_a, &doc_b).unwrap();
+        let ops = core::get_ops(&merged).unwrap();
+        assert_eq!(ops.len(), 1, "duplicate op IDs must be deduplicated");
+    }
+
+    /// apply_op with the same op ID twice must not create a duplicate.
+    /// This is the dual-write bug: server executeServerDirect applies the op,
+    /// then browser applyServerOp applies the same op — on merge, both copies
+    /// survived because they were different Automerge changes.
+    #[test]
+    fn apply_op_deduplicates_by_id() {
+        let doc = core::create_doc();
+        let the_op = op("add_cube", json!({"size": 2.0}));
+
+        // First apply — should add the op
+        let doc = core::apply_op(&doc, &the_op).unwrap();
+        let ops = core::get_ops(&doc).unwrap();
+        assert_eq!(ops.len(), 1);
+
+        // Second apply with same ID — should be a no-op
+        let doc = core::apply_op(&doc, &the_op).unwrap();
+        let ops = core::get_ops(&doc).unwrap();
+        assert_eq!(ops.len(), 1, "apply_op must deduplicate by op ID");
+    }
+
+    /// Dual-write scenario: server and browser both apply_op with same ID
+    /// on their own docs, then merge. Should produce 1 op, not 2.
+    #[test]
+    fn dual_write_merge_produces_single_op() {
+        let base = core::create_doc();
+        let the_op = op("add_sphere", json!({"radius": 1.5}));
+
+        // Server applies op to its fork
+        let server_doc = core::apply_op(&base, &the_op).unwrap();
+
+        // Browser applies same op to its fork (from SSE sync-op)
+        let browser_doc = core::apply_op(&base, &the_op).unwrap();
+
+        // Merge — should have exactly 1 op (deduplicated in merge_docs)
+        let merged = core::merge_docs(&server_doc, &browser_doc).unwrap();
+        let ops = core::get_ops(&merged).unwrap();
+        assert_eq!(ops.len(), 1, "dual-write merge must not duplicate ops");
+        assert_eq!(ops[0].op_type, "add_sphere");
     }
 }

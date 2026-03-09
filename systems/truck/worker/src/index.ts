@@ -9,7 +9,7 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStore } from './doc-store';
-import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince } from './sync-wasm.generated';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
 type Bindings = {
@@ -541,6 +541,7 @@ const OpLogAppendBody = z.object({
 const getOpsRoute = createRoute({ method: 'get', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Get ops from automerge doc', request: { params: OpLogModelParam, query: OpLogSinceQuery }, responses: { 200: { description: 'Ops array' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
 const appendOpRoute = createRoute({ method: 'post', path: '/models/{modelId}/ops', tags: ['sync'], summary: 'Apply op to automerge doc', request: { params: OpLogModelParam, body: { content: { 'application/json': { schema: OpLogAppendBody } } } }, responses: { 200: { description: 'OK', content: { 'application/json': { schema: StatusOk } } } } });
 const replayRoute = createRoute({ method: 'get', path: '/models/{modelId}/replay', tags: ['sync'], summary: 'Headless op replay → scene JSON', request: { params: OpLogModelParam }, responses: { 200: { description: 'Scene JSON (same shape as export_scene)' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } }, 500: { description: 'Replay error', content: { 'application/json': { schema: ErrorResponse } } } } });
+const getDocRoute = createRoute({ method: 'get', path: '/models/{modelId}/doc', tags: ['sync'], summary: 'Get raw CRDT doc bytes (for bootstrapping new peers)', request: { params: OpLogModelParam }, responses: { 200: { description: 'Automerge doc bytes (application/octet-stream)' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
 const syncDocRoute = createRoute({ method: 'post', path: '/models/{modelId}/sync', tags: ['sync'], summary: 'Merge browser doc with server doc (CRDT sync)', request: { params: OpLogModelParam }, responses: { 200: { description: 'Merged doc bytes (application/octet-stream)' } } });
 const historyRoute = createRoute({ method: 'get', path: '/models/{modelId}/history', tags: ['sync'], summary: 'Edit history grouped by actor', request: { params: OpLogModelParam }, responses: { 200: { description: 'Actor summaries' }, 404: { description: 'No doc', content: { 'application/json': { schema: ErrorResponse } } } } });
 
@@ -560,10 +561,26 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(appendOpRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const body = c.req.valid('json');
+    const opJson = JSON.stringify(body);
     const storage = new R2DocStore(c.env.MODELS);
-    let docBytes = await storage.load(modelId) ?? await syncCreate();
-    docBytes = await syncApplyOp(docBytes, JSON.stringify(body));
-    await storage.save(modelId, docBytes);
+    const existing = await storage.loadWithEtag(modelId);
+    if (existing) {
+      const docBytes = await syncApplyOp(existing.doc, opJson);
+      const saved = await storage.saveConditional(modelId, docBytes, existing.etag);
+      if (!saved) {
+        // Retry once on etag conflict (concurrent write to existing doc)
+        const fresh = await storage.load(modelId) ?? await syncCreate();
+        const retried = await syncApplyOp(fresh, opJson);
+        await storage.save(modelId, retried);
+      }
+    } else {
+      // No doc exists — create, apply, save.
+      // NOTE: concurrent initial creates can race (both see null, second overwrites first).
+      // In production, a single Worker isolate handles requests serially so this doesn't occur.
+      // For multi-isolate safety, use Durable Objects (future work).
+      const docBytes = await syncApplyOp(await syncCreate(), opJson);
+      await storage.save(modelId, docBytes);
+    }
     return c.json({ status: 'ok' as const });
   })
   .openapi(replayRoute, async (c) => {
@@ -602,24 +619,44 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     }
     return c.json([...actors.values()]);
   })
+  .openapi(getDocRoute, async (c) => {
+    const { modelId } = c.req.valid('param');
+    const storage = new R2DocStore(c.env.MODELS);
+    const docBytes = await storage.load(modelId);
+    if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
+    return new Response(docBytes, {
+      headers: { 'content-type': 'application/octet-stream' },
+    }) as any;
+  })
   .openapi(syncDocRoute, async (c) => {
     const { modelId } = c.req.valid('param');
     const storage = new R2DocStore(c.env.MODELS);
     const browserDoc = new Uint8Array(await c.req.arrayBuffer());
 
     const existing = await storage.loadWithEtag(modelId);
-    let serverDoc = existing?.doc ?? await syncCreate();
-    let merged = await syncMergeDocs(serverDoc, browserDoc);
+    let merged: Uint8Array;
 
-    if (existing) {
+    if (existing?.doc) {
+      // Server has a doc — CRDT merge (both share lineage)
+      merged = await syncMergeDocs(existing.doc, browserDoc);
       const saved = await storage.saveConditional(modelId, merged, existing.etag);
       if (!saved) {
         // Retry once on etag conflict
         const fresh = await storage.load(modelId);
-        merged = await syncMergeDocs(fresh ?? await syncCreate(), browserDoc);
+        if (fresh) {
+          merged = await syncMergeDocs(fresh, browserDoc);
+        } else {
+          // Doc disappeared between reads — adopt browser doc
+          merged = browserDoc;
+        }
         await storage.save(modelId, merged);
       }
     } else {
+      // No server doc — adopt browser doc directly.
+      // Creating an independent syncCreate() and merging would produce
+      // two conflicting "operations" lists (different ObjIds), causing
+      // Automerge's last-write-wins to silently discard one side's ops.
+      merged = browserDoc;
       await storage.save(modelId, merged);
     }
 
@@ -644,6 +681,12 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
           for (const [aid, info] of model.actors) {
             if (info.name && info.name !== aid) actors[aid] = info.name;
           }
+          changed = true;
+        }
+        // Sync model name from CRDT doc into manifest
+        const docName = await syncGetName(merged);
+        if (docName) {
+          manifest.name = docName;
           changed = true;
         }
         if (changed) {

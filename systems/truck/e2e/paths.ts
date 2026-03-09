@@ -3,7 +3,7 @@ import path from 'path';
 /**
  * Centralized path constants for truck tests.
  *
- * Anchor: this file lives at systems/truck/tests/paths.ts
+ * Anchor: this file lives at systems/truck/e2e/paths.ts
  * If the tests dir moves, update SYSTEM_DIR here — everything else follows.
  */
 export const SYSTEM_DIR = path.resolve(__dirname, '..');        // systems/truck

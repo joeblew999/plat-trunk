@@ -35,23 +35,21 @@ bun install
 # Full build: WASM (sync + truck) + schema + web + docs
 bun run build
 
-# Individual builds:
-bun run build:sync         # truck-sync WASM (two targets: web + bundler)
-bun run build:truck        # truck-sync + truck B-Rep WASM + cad-schema.json
-bun run build:truck-web    # API types + Vite build
-bun run build:docs         # VitePress docs site
+# Individual builds (system-aware — each system declares steps in system.mjs):
+bun run build:sync         # Sync: WASM (3 targets) + schema + types
+bun run build:truck        # Sync + Truck: WASM + schema + adapters + sizes + web
+bun run build:docs         # Docs: llm-docs + VitePress
 ```
 
 ### Build Chain
 
 ```
 Rust (#[derive(JsonSchema)])
-  → bun run build:truck        → cad-schema.json
-  → bun run gen:api-types      → openapi.json → api-types.ts
-  → bun run build:truck-web    → dist/
+  → bun run build:truck        → cad-schema.json → adapters → sizes → web (dist/)
+  → gen:api-types (auto)       → openapi.json → api-types.ts
 ```
 
-Adding a new CAD command = add Rust struct + rebuild → types, API, MCP all update automatically.
+Adding a new CAD command = add Rust struct + `bun run build:truck` → types, API, MCP all update automatically.
 
 ## Dev Server
 
@@ -74,7 +72,7 @@ Open `http://localhost:8788` in Chrome.
 bun run test
 
 # Individual test suites:
-bun run test:crate         # Rust: schema_contract + truck-sync + native tests
+bun run test:crate         # Rust: contract + truck-sync + native tests
 bun run test:api           # Vitest: 30+ Worker API tests
 bun run typecheck          # TypeScript: worker + web, zero errors
 bun run test:e2e           # Playwright: E2E browser tests (needs dev server)
@@ -119,10 +117,12 @@ plat-trunk/
 │   │   │   ├── types.ts       # WasmResult, CadOptions, CadSchema
 │   │   │   ├── history-domain.ts # Automerge undo/redo
 │   │   │   └── ...
-│   │   ├── tests/             # Playwright E2E
+│   │   ├── e2e/               # Playwright E2E
 │   │   └── cad-schema.json    # Generated command schema
 │   ├── sync/
-│   │   └── crate/             # truck-sync Rust CRDT crate
+│   │   ├── crate/             # truck-sync Rust CRDT crate
+│   │   ├── ts/                # Shared TS (doc-ops.ts)
+│   │   └── worker/            # Vitest runner (WASM boundary tests)
 │   ├── test/
 │   │   └── worker/            # Topology validation worker
 │   └── docs/
@@ -173,12 +173,12 @@ Deploy config is in `cf-deploy.json`. Workers deploy to:
 1. Add params struct in `systems/truck/crate/src/wasm_app.rs` with `#[derive(Serialize, Deserialize, JsonSchema)]`
 2. Add handler method on the WASM controller
 3. Register in the command dispatch
-4. `bun run build:truck` → schema updates
-5. `bun run build:truck-web` → TypeScript types update
-6. MCP tool appears automatically
+4. `bun run build:truck` → schema + adapters + types + web all update
+5. MCP tool appears automatically
 
 ## Adding a New System
 
-1. Create `systems/{name}/system.mjs` exporting workers/devServers
+1. Create `systems/{name}/system.mjs` exporting `workers`, `devServers`, `building`, `testing`, `testFiles`
 2. Add one import+spread line to `workers.mjs`
-3. Nothing else changes — the platform handles routing
+3. Add one import to `scripts/build.mjs` + one to `scripts/test.mjs`
+4. The platform handles routing, build ordering, and test orchestration
