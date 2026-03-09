@@ -3,7 +3,7 @@
 // Target: cf-worker / truck-geometry
 
 /**
- * Headless truck-webgpu-gui WASM loader for Cloudflare Workers.
+ * Headless truck-cad WASM loader for Cloudflare Workers.
  *
  * Lazy-init pattern: import the module, instantiate with glue imports on first use.
  * Generated from cad-schema.json boundaries — 42 commands.
@@ -11,10 +11,10 @@
 
 // Wrangler: default import is WebAssembly.Module.
 // vitest (vite-plugin-wasm): default is undefined, namespace has instantiated exports.
-import wasmDefault from '../pkg/truck_webgpu_gui_bg.wasm';
-import * as wasmStar from '../pkg/truck_webgpu_gui_bg.wasm';
+import wasmDefault from '../pkg/truck_cad_bg.wasm';
+import * as wasmStar from '../pkg/truck_cad_bg.wasm';
 // @ts-expect-error — no .d.ts for the bg.js glue (generated code)
-import * as bg from '../pkg/truck_webgpu_gui_bg.js';
+import * as bg from '../pkg/truck_cad_bg.js';
 
 let initialized = false;
 
@@ -30,7 +30,7 @@ export async function initHeadlessWasm(): Promise<typeof bg> {
       }
     }
     const instance = await WebAssembly.instantiate(wasmDefault, {
-      './truck_webgpu_gui_bg.js': glueImports,
+      './truck_cad_bg.js': glueImports,
     });
     bg.__wbg_set_wasm(instance.exports);
     (instance.exports as unknown as { __wbindgen_start: () => void }).__wbindgen_start();
@@ -43,4 +43,4 @@ export async function initHeadlessWasm(): Promise<typeof bg> {
 }
 
 // Re-export the HeadlessController type
-export type { HeadlessController } from '../pkg/truck_webgpu_gui.js';
+export type { HeadlessController } from '../pkg/truck_cad.js';

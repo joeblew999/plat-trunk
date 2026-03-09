@@ -8,13 +8,13 @@
 //! This test catches missing dispatch arms — e.g. a new command added to schema_entries()
 //! but not wired into headless.rs dispatch_* methods.
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native --test boundary
+//! Run: cargo test -p truck-cad --no-default-features --features native --test boundary
 
 #![cfg(feature = "native")]
 
 #[test]
 fn all_schema_commands_handled_by_headless() {
-    let schema = truck_webgpu_gui::commands::build_schema();
+    let schema = truck_cad::commands::build_schema();
     let commands = schema["commands"].as_object()
         .expect("cad-schema.json should have a commands object");
     let boundaries = schema["boundaries"]["modules"]["truck-geometry"]["exports"]
@@ -30,7 +30,7 @@ fn all_schema_commands_handled_by_headless() {
     }
 
     // Create a HeadlessController and verify every command is dispatched (not "Unknown command")
-    let mut controller = truck_webgpu_gui::headless::HeadlessController::new();
+    let mut controller = truck_cad::headless::HeadlessController::new();
     let mut unhandled = Vec::new();
 
     for cmd_name in commands.keys() {
@@ -54,9 +54,9 @@ fn all_schema_commands_handled_by_headless() {
 
 #[test]
 fn generated_command_list_matches_schema() {
-    use truck_webgpu_gui::commands_generated::{COMMAND_NAMES, command_domain};
+    use truck_cad::commands_generated::{COMMAND_NAMES, command_domain};
 
-    let schema = truck_webgpu_gui::commands::build_schema();
+    let schema = truck_cad::commands::build_schema();
     let commands = schema["commands"].as_object().unwrap();
 
     // Every schema command should be in the generated COMMAND_NAMES
@@ -80,7 +80,7 @@ fn generated_command_list_matches_schema() {
 
 #[test]
 fn sync_boundary_exports_match_wasm_module() {
-    let schema = truck_webgpu_gui::commands::build_schema();
+    let schema = truck_cad::commands::build_schema();
     let sync_exports = schema["boundaries"]["modules"]["truck-sync"]["exports"]
         .as_array()
         .expect("boundaries.modules.truck-sync.exports should be an array");

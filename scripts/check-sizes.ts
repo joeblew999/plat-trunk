@@ -28,16 +28,16 @@ interface Artifact {
 const artifacts: Artifact[] = [
   {
     label: "truck-cad worker WASM (headless)",
-    path: "systems/truck/worker/pkg/truck_webgpu_gui_bg.wasm",
+    path: "systems/truck/worker/pkg/truck_cad_bg.wasm",
   },
   {
     label: "truck-cad browser WASM (rendering, static asset — info only)",
-    path: "systems/truck/web/pkg-browser-renderer/truck_webgpu_gui_bg.wasm",
+    path: "systems/truck/web/pkg-browser-renderer/truck_cad_bg.wasm",
     limit: Infinity, // static asset, no CF worker limit — warn only
   },
   {
     label: "truck-cad headless JS glue",
-    path: "systems/truck/worker/pkg/truck_webgpu_gui_bg.js",
+    path: "systems/truck/worker/pkg/truck_cad_bg.js",
   },
 ];
 

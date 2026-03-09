@@ -11,13 +11,13 @@
 plat-trunk compiles Rust crates to WASM for two runtime targets today, with a third target planned:
 
 **Browser** — Two WASM modules loaded on the main thread via `wasm-bindgen --target web`:
-- `truck-webgpu-gui` (geometry engine + WebGPU rendering) from `systems/truck/crate`
+- `truck-cad` (geometry engine + WebGPU rendering) from `systems/truck/crate`
 - `truck-sync` (Automerge CRDT op log) from `systems/sync/crate`
 
-Both run on the main thread — no Web Workers yet. `history-domain.ts` imports directly from `pkg-sync/truck_sync.js`; `boot.ts` imports from `pkg-browser-renderer/truck_webgpu_gui.js`.
+Both run on the main thread — no Web Workers yet. `history-domain.ts` imports directly from `pkg-sync/truck_sync.js`; `boot.ts` imports from `pkg-browser-renderer/truck_cad.js`.
 
 **Cloudflare Workers** — The same two WASM modules loaded in a single worker isolate via `WebAssembly.instantiate`:
-- `truck-webgpu-gui` (headless, `rendering` feature disabled) with hand-written loader `truck-wasm.ts`
+- `truck-cad` (headless, `rendering` feature disabled) with hand-written loader `truck-wasm.ts`
 - `truck-sync` with hand-written loader `sync-wasm.ts`
 
 Both use an identical lazy-init pattern but the loader code is duplicated by hand.
@@ -255,7 +255,7 @@ The codegen script (a `system.mjs` step) reads the extended schema and emits:
 
 **Browser — per-worker scripts and main-thread dispatcher:**
 
-> **Current state:** Both WASM modules (`truck-webgpu-gui` and `truck-sync`) run on the main thread via direct `import()` calls in `boot.ts` and `history-domain.ts`. There are no Web Workers.
+> **Current state:** Both WASM modules (`truck-cad` and `truck-sync`) run on the main thread via direct `import()` calls in `boot.ts` and `history-domain.ts`. There are no Web Workers.
 >
 > **Proposed:** The codegen moves WASM execution into Web Workers, keeping the main thread free for rendering and UI. The `commandWorker` routing table replaces today's direct `cadCommand()` calls with `postMessage`-based dispatch.
 

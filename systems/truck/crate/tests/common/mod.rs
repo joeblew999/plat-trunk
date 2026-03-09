@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use truck_webgpu_gui::headless::HeadlessController;
+use truck_cad::headless::HeadlessController;
 use truck_sync::Op;
 
 /// Serialize a typed params struct to the JSON string expected by execute().

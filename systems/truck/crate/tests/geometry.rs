@@ -7,14 +7,14 @@
 //! truth) via the `p()` helper.  Renaming a field in a param struct causes a
 //! compile error here — drift between schema and tests is impossible.
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native
+//! Run: cargo test -p truck-cad --no-default-features --features native
 
 #![cfg(feature = "native")]
 
 mod common;
 use common::{object_id_from, p};
-use truck_webgpu_gui::headless::HeadlessController;
-use truck_webgpu_gui::commands::{
+use truck_cad::headless::HeadlessController;
+use truck_cad::commands::{
     AddCubeParams, AddSphereParams, AddCylinderParams, AddTorusParams,
     TranslateParams, RotateParams, ScaleParams, ObjectIdParam,
 };

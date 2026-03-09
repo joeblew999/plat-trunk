@@ -1794,7 +1794,7 @@ impl SceneController {
         CompleteStepDisplay::new(
             models,
             StepHeaderDescriptor {
-                organization_system: "truck-webgpu-gui".to_owned(),
+                organization_system: "truck-cad".to_owned(),
                 ..Default::default()
             },
         ).to_string()

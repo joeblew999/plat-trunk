@@ -2,14 +2,14 @@
 //!
 //! Commands: boolean_union, boolean_subtract, boolean_intersect, clash_detect
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native
+//! Run: cargo test -p truck-cad --no-default-features --features native
 
 #![cfg(feature = "native")]
 
 mod common;
 use common::{object_id_from, p};
-use truck_webgpu_gui::headless::HeadlessController;
-use truck_webgpu_gui::commands::{AddCubeParams, AddCylinderParams, TranslateParams, BooleanParams};
+use truck_cad::headless::HeadlessController;
+use truck_cad::commands::{AddCubeParams, AddCylinderParams, TranslateParams, BooleanParams};
 
 #[test]
 fn boolean_subtract_cube_minus_cylinder_returns_object_count_1() {

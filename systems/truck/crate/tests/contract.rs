@@ -12,13 +12,13 @@
 //!
 //! Failure means: run `bun run build:truck` to regenerate cad-schema.json.
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native
+//! Run: cargo test -p truck-cad --no-default-features --features native
 
 #![cfg(feature = "native")]
 
 #[test]
 fn committed_cad_schema_json_matches_build_schema() {
-    let generated = truck_webgpu_gui::commands::build_schema();
+    let generated = truck_cad::commands::build_schema();
 
     // CARGO_MANIFEST_DIR = systems/truck/crate
     // cad-schema.json    = systems/truck/cad-schema.json

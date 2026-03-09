@@ -180,7 +180,7 @@ pub fn build_schema() -> serde_json::Value {
     let boundaries = serde_json::json!({
         "modules": {
             "truck-geometry": {
-                "crate": "truck-webgpu-gui",
+                "crate": "truck-cad",
                 "targets": ["browser", "cf-worker"],
                 "exports": cmd_map.keys().collect::<Vec<_>>(),
             },

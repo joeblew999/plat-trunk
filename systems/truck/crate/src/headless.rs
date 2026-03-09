@@ -420,7 +420,7 @@ impl HeadlessController {
         CompleteStepDisplay::new(
             models,
             StepHeaderDescriptor {
-                organization_system: "truck-webgpu-gui headless".to_owned(),
+                organization_system: "truck-cad headless".to_owned(),
                 ..Default::default()
             },
         ).to_string()

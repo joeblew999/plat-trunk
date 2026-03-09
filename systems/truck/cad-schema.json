@@ -4,7 +4,7 @@
   "boundaries": {
     "modules": {
       "truck-geometry": {
-        "crate": "truck-webgpu-gui",
+        "crate": "truck-cad",
         "exports": [
           "add_cube",
           "add_cylinder",

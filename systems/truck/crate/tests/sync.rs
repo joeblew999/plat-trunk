@@ -6,7 +6,7 @@
 //! Mirrors the Playwright cross-tab-sync.spec.ts tests but runs natively
 //! in cargo test without a browser.
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native
+//! Run: cargo test -p truck-cad --no-default-features --features native
 
 #![cfg(feature = "native")]
 

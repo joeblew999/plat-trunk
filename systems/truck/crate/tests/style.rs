@@ -5,14 +5,14 @@
 //!   select_at, pick_at, set_camera, set_color, set_style,
 //!   get_object_style, pick_mesh_stats
 //!
-//! Run: cargo test -p truck-webgpu-gui --no-default-features --features native
+//! Run: cargo test -p truck-cad --no-default-features --features native
 
 #![cfg(feature = "native")]
 
 mod common;
 use common::{object_id_from, p};
-use truck_webgpu_gui::headless::HeadlessController;
-use truck_webgpu_gui::commands::{AddCubeParams, AddSphereParams, RenameParams};
+use truck_cad::headless::HeadlessController;
+use truck_cad::commands::{AddCubeParams, AddSphereParams, RenameParams};
 
 #[test]
 fn rename_changes_name_visible_in_get_state() {

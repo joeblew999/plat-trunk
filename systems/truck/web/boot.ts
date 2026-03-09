@@ -33,7 +33,7 @@ export async function boot() {
     await import('./cf-control-plane');
 
     // WASM modules (cad-viewport does the actual WebGPU init)
-    const wasm = await import('./pkg-browser-renderer/truck_webgpu_gui.js');
+    const wasm = await import('./pkg-browser-renderer/truck_cad.js');
     window.__wasmInit = wasm.default;
     window.__SceneController = wasm.SceneController;
 

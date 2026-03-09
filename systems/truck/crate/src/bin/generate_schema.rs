@@ -5,6 +5,6 @@
 // Usage: cargo run --bin generate-schema > web/cad-schema.json
 
 fn main() {
-    let schema = truck_webgpu_gui::commands::build_schema();
+    let schema = truck_cad::commands::build_schema();
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
 }

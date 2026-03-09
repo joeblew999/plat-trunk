@@ -278,7 +278,7 @@ Group independent imports in `boot.ts` lines 32-50:
 const [, , wasmModule] = await Promise.all([
   import('./live-signals'),
   import('./cf-control-plane'),
-  import('./pkg-browser-renderer/truck_webgpu_gui.js'),
+  import('./pkg-browser-renderer/truck_cad.js'),
 ]);
 window.__wasmInit = wasmModule.default;
 window.__SceneController = wasmModule.SceneController;

@@ -60,10 +60,10 @@ export const testing = {
   name: 'truck-cad',
   rust: {
     // Phase 2: innermost — Rust param structs must deep-equal committed cad-schema.json
-    schemaContract: 'cargo test -p truck-webgpu-gui --no-default-features --features native --test contract',
+    schemaContract: 'cargo test -p truck-cad --no-default-features --features native --test contract',
     // Phase 4: geometry domain — HeadlessController, all CAD commands, no GPU
     // --release: boolean ops are 10-20x slower in debug (unoptimized BREP math)
-    domain: 'cargo test --release -p truck-webgpu-gui --no-default-features --features native',
+    domain: 'cargo test --release -p truck-cad --no-default-features --features native',
   },
   // Phase 5: TypeScript boundary — api-types.generated.ts derived from schema, catches renames
   typecheck: 'cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck',

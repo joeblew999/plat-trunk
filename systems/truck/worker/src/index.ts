@@ -428,7 +428,7 @@ function mountModule(hono: OpenAPIHono<{ Bindings: Bindings }>, prefix: string, 
 }
 
 // =========================================================================
-// Headless truck-webgpu-gui WASM test (ADR-0018)
+// Headless truck-cad WASM test (ADR-0018)
 // =========================================================================
 
 async function runWasmHealthCheck() {
@@ -445,7 +445,7 @@ async function runWasmHealthCheck() {
   return {
     ok: true as const,
     headless: true,
-    engine: 'truck-webgpu-gui headless 0.1.0',
+    engine: 'truck-cad headless 0.1.0',
     objectId: cubeResult.objectId,
     objectCount: stateResult.objectCount,
     initMs,

@@ -15,7 +15,7 @@
     "gen:sync-types:check": "bun scripts/gen-sync-types.ts --check",
     "typecheck": "cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck",
     "test": "bun scripts/test.mjs",
-    "test:crate": "cargo test -p truck-webgpu-gui --no-default-features --features native --test contract && cargo test -p truck-sync && cargo test --release -p truck-webgpu-gui --no-default-features --features native",
+    "test:crate": "cargo test -p truck-cad --no-default-features --features native --test contract && cargo test -p truck-sync && cargo test --release -p truck-cad --no-default-features --features native",
     "test:api": "cd systems/truck/worker && bun x vitest run",
     "test:sync": "cd systems/sync/worker && bun x vitest run",
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
