@@ -471,9 +471,13 @@ export class CadDocumentManagerBase {
         this._renderTimeline();
     }
 
+    private _syncing = false;
+
     /** Sync local doc with server via CRDT merge. */
     async syncWithServer(): Promise<void> {
         if (!this._docBytes || !this._modelId) return;
+        if (this._syncing) return; // prevent re-entrant sync loops
+        this._syncing = true;
         try {
             const resp = await fetch(`/api/models/${this._modelId}/sync?actorId=${this.actorId}`, {
                 method: 'POST',
@@ -499,6 +503,8 @@ export class CadDocumentManagerBase {
             this._localOpCount = newOpCount;
         } catch (err) {
             console.warn('[Sync] Server sync failed:', err);
+        } finally {
+            this._syncing = false;
         }
     }
 

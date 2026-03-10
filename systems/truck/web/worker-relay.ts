@@ -61,14 +61,21 @@ const relay = {
     });
 
     // Handle doc-changed (another browser synced new ops to server — pull to merge)
+    // Debounce to prevent feedback loops: syncWithServer → server broadcast → doc-changed → syncWithServer
+    let docChangedTimer: ReturnType<typeof setTimeout> | null = null;
     eventSource.addEventListener('doc-changed', (e) => {
       try {
         const data = JSON.parse(e.data);
         const myActorId = getActorId();
         // Skip if we were the sender (we already have the latest)
         if (data.actorId === myActorId) return;
-        console.log(`[worker-relay] doc-changed from ${data.actorId} (${data.opCount} ops), syncing...`);
-        window.cadDocManager?.syncWithServer();
+        // Debounce: collapse rapid doc-changed events into one sync
+        if (docChangedTimer) clearTimeout(docChangedTimer);
+        docChangedTimer = setTimeout(() => {
+          docChangedTimer = null;
+          console.log(`[worker-relay] doc-changed from ${data.actorId}, syncing...`);
+          window.cadDocManager?.syncWithServer();
+        }, 500);
       } catch (err) {
         console.warn('[worker-relay] doc-changed parse error:', err);
       }
