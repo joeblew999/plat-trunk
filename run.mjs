@@ -86,7 +86,39 @@ async function waitReady(name, url, maxMs = 30000) {
 
 // ─── Commands ──────────────────────────────────────────
 
+function killStalePorts() {
+  // Collect all ports from workers (port + inspectorPort) and devServers
+  const ports = new Set();
+  for (const w of workers) {
+    if (w.port) ports.add(w.port);
+    if (w.inspectorPort) ports.add(w.inspectorPort);
+  }
+  // Vite dev server port (always 5173)
+  ports.add(5173);
+
+  const portList = [...ports].join(',');
+  try {
+    const pids = execSync(`lsof -ti ${portList} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    if (pids) {
+      const pidList = pids.split('\n').map(p => p.trim()).filter(Boolean);
+      const myPid = process.pid;
+      const stale = pidList.filter(p => parseInt(p) !== myPid);
+      if (stale.length > 0) {
+        console.log(`Killing ${stale.length} stale process(es) on ports ${portList}: PIDs ${stale.join(', ')}`);
+        execSync(`kill -9 ${stale.join(' ')} 2>/dev/null`, { stdio: 'ignore' });
+        // Brief pause for OS to release ports
+        execSync('sleep 1');
+      }
+    }
+  } catch {
+    // No processes on those ports — good
+  }
+}
+
 async function dev() {
+  // 0. Kill any stale processes from a previous dev session
+  killStalePorts();
+
   // 1. Install deps for each worker and devServer (if it has a dir)
   const installDirs = [
     ...workers.map(w => w.dir),

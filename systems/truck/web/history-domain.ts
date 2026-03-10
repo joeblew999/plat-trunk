@@ -1,6 +1,6 @@
 import initSyncWasm, {
-    create_doc, apply_op, get_ops, get_name, set_name,
-    set_op_enabled, set_group_enabled, rollback_to, merge_docs,
+    create_doc, apply_op, get_ops, get_op_count, get_name, set_name,
+    set_op_enabled, set_group_enabled, rollback_to, merge_docs, merge_docs_with_info,
 } from './pkg-sync/truck_sync.js';
 import { saveDoc, loadDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
@@ -327,7 +327,8 @@ export class CadDocumentManagerBase {
     }
 
     _getDocOpCount(): number {
-        return this._getOps().length;
+        if (!this._docBytes) return 0;
+        try { return get_op_count(this._docBytes); } catch { return 0; }
     }
 
     async _saveAndBroadcast(): Promise<void> {
@@ -486,21 +487,22 @@ export class CadDocumentManagerBase {
             });
             if (!resp.ok) return;
             const serverDoc = new Uint8Array(await resp.arrayBuffer());
-            const prevOpCount = this._getDocOpCount();
-            this._docBytes = merge_docs(this._docBytes, serverDoc);
+            const localDoc = this._docBytes!;
+            const modelId = this._modelId!;
+            const result = merge_docs_with_info(localDoc, serverDoc);
+            this._docBytes = result.doc;
             // Sync model name from CRDT doc
-            const docName = get_name(this._docBytes);
+            const docName = get_name(result.doc);
             if (docName) {
                 this._meta.name = docName;
                 this._updateDocInfo();
             }
-            await saveDoc(this._modelId, this._docBytes);
-            const newOpCount = this._getDocOpCount();
-            if (newOpCount !== prevOpCount) {
-                console.log(`[Sync] Server merge: ${prevOpCount} → ${newOpCount} ops, replaying...`);
+            await saveDoc(modelId, result.doc);
+            if (result.hadNewOps) {
+                console.log(`[Sync] Server merge: ${result.localOpCount} → ${result.mergedOpCount} ops, replaying...`);
                 await this._replayScene();
             }
-            this._localOpCount = newOpCount;
+            this._localOpCount = result.mergedOpCount;
         } catch (err) {
             console.warn('[Sync] Server sync failed:', err);
         } finally {

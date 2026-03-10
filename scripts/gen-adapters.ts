@@ -101,7 +101,9 @@ function genCfSyncWasm(): string {
     { wasmFn: 'create_doc', wrapperName: 'syncCreate', params: '', call: 'bg.create_doc()', returnType: 'Uint8Array<ArrayBuffer>' },
     { wasmFn: 'apply_op', wrapperName: 'syncApplyOp', params: 'doc: Uint8Array, opJson: string', call: 'bg.apply_op(doc, opJson)', returnType: 'Uint8Array<ArrayBuffer>' },
     { wasmFn: 'merge_docs', wrapperName: 'syncMergeDocs', params: 'local: Uint8Array, remote: Uint8Array', call: 'bg.merge_docs(local, remote)', returnType: 'Uint8Array<ArrayBuffer>' },
+    { wasmFn: 'merge_docs_with_info', wrapperName: 'syncMergeDocsWithInfo', params: 'local: Uint8Array, remote: Uint8Array', call: 'bg.merge_docs_with_info(local, remote)', returnType: 'SyncMergeResult' },
     { wasmFn: 'get_ops', wrapperName: 'syncGetOps', params: 'doc: Uint8Array', call: 'bg.get_ops(doc)', returnType: 'string' },
+    { wasmFn: 'get_op_count', wrapperName: 'syncGetOpCount', params: 'doc: Uint8Array', call: 'bg.get_op_count(doc)', returnType: 'number' },
     { wasmFn: 'set_op_enabled', wrapperName: 'syncSetOpEnabled', params: 'doc: Uint8Array, opId: string, enabled: boolean', call: 'bg.set_op_enabled(doc, opId, enabled)', returnType: 'Uint8Array<ArrayBuffer>' },
     { wasmFn: 'set_group_enabled', wrapperName: 'syncSetGroupEnabled', params: 'doc: Uint8Array, groupId: string, enabled: boolean', call: 'bg.set_group_enabled(doc, groupId, enabled)', returnType: 'Uint8Array<ArrayBuffer>' },
     { wasmFn: 'rollback_to', wrapperName: 'syncRollbackTo', params: 'doc: Uint8Array, actorId: string, toIndex: number', call: 'bg.rollback_to(doc, actorId, toIndex)', returnType: 'Uint8Array<ArrayBuffer>' },
@@ -163,6 +165,14 @@ async function initSyncWasm(): Promise<void> {
     bg.__wbg_set_wasm(wasmStar as unknown as WebAssembly.Exports);
   }
   initialized = true;
+}
+
+/** Result of merge_docs_with_info — tells callers if the merge introduced new ops. */
+export interface SyncMergeResult {
+  doc: Uint8Array<ArrayBuffer>;
+  localOpCount: number;
+  mergedOpCount: number;
+  hadNewOps: boolean;
 }
 ${wrapperCode}
 `;

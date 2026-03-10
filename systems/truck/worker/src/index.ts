@@ -9,7 +9,7 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStore } from './doc-store';
-import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
 type Bindings = {
@@ -643,45 +643,44 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
 
     const existing = await storage.loadWithEtag(modelId);
     let merged: Uint8Array;
+    let hadNewOps = false;
 
     if (existing?.doc) {
-      // Server has a doc — CRDT merge (both share lineage)
-      merged = await syncMergeDocs(existing.doc, browserDoc);
+      // Server has a doc — CRDT merge with diff detection (Rust, no JSON round-trip)
+      const result = await syncMergeDocsWithInfo(existing.doc, browserDoc);
+      merged = result.doc;
+      hadNewOps = result.hadNewOps;
       const saved = await storage.saveConditional(modelId, merged, existing.etag);
       if (!saved) {
         // Retry once on etag conflict
         const fresh = await storage.load(modelId);
         if (fresh) {
-          merged = await syncMergeDocs(fresh, browserDoc);
+          const retryResult = await syncMergeDocsWithInfo(fresh, browserDoc);
+          merged = retryResult.doc;
+          hadNewOps = retryResult.hadNewOps;
         } else {
           // Doc disappeared between reads — adopt browser doc
           merged = browserDoc;
+          hadNewOps = true;
         }
         await storage.save(modelId, merged);
       }
     } else {
       // No server doc — adopt browser doc directly.
-      // Creating an independent syncCreate() and merging would produce
-      // two conflicting "operations" lists (different ObjIds), causing
-      // Automerge's last-write-wins to silently discard one side's ops.
       merged = browserDoc;
+      hadNewOps = true;
       await storage.save(modelId, merged);
     }
 
     // Notify OTHER SSE clients that the doc changed (ADR-0001 cross-browser sync)
-    // Only broadcast if merge actually introduced new ops — prevents ping-pong:
-    // Browser A syncs → broadcast → Browser B syncs (no-op merge) → broadcast → A syncs → ...
+    // hadNewOps is computed in Rust (op count comparison) — prevents ping-pong loops
     const senderActorId = c.req.query('actorId') || 'unknown';
-    try {
-      const mergedOpsJson = await syncGetOps(merged);
-      const mergedOpCount = JSON.parse(mergedOpsJson).length;
-      const existingOpCount = existing?.doc
-        ? JSON.parse(await syncGetOps(existing.doc)).length
-        : 0;
-      if (mergedOpCount > existingOpCount) {
-        broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount: mergedOpCount } }, senderActorId);
-      }
-    } catch { /* best-effort broadcast */ }
+    if (hadNewOps) {
+      try {
+        const opCount = await syncGetOpCount(merged);
+        broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount } }, senderActorId);
+      } catch { /* best-effort broadcast */ }
+    }
 
     // Update manifest actor names from merged doc ops
     try {

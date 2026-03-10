@@ -212,6 +212,38 @@ pub mod core {
         Ok(doc.save())
     }
 
+    /// Result of a merge with diff information — lets callers know if
+    /// the merge introduced new ops without JSON round-tripping.
+    pub struct MergeResult {
+        pub doc: Vec<u8>,
+        pub local_op_count: usize,
+        pub merged_op_count: usize,
+    }
+
+    impl MergeResult {
+        pub fn had_new_ops(&self) -> bool {
+            self.merged_op_count > self.local_op_count
+        }
+    }
+
+    /// Count ops without JSON serialization.
+    pub fn get_op_count(doc_bytes: &[u8]) -> Result<usize, String> {
+        let doc = load_doc(doc_bytes)?;
+        match get_ops_list(&doc) {
+            Some(id) => Ok(doc.length(&id)),
+            None => Ok(0),
+        }
+    }
+
+    /// CRDT merge with diff info — returns doc bytes + op counts so callers
+    /// can decide whether to broadcast without JSON round-tripping.
+    pub fn merge_docs_with_info(local_bytes: &[u8], remote_bytes: &[u8]) -> Result<MergeResult, String> {
+        let local_op_count = get_op_count(local_bytes)?;
+        let doc = merge_docs_inner(local_bytes, remote_bytes)?;
+        let merged_op_count = get_op_count(&doc)?;
+        Ok(MergeResult { doc, local_op_count, merged_op_count })
+    }
+
     /// CRDT merge — commutative, associative.
     ///
     /// After Automerge's merge, deduplicates ops by ID. Two cases produce dupes:
@@ -225,6 +257,10 @@ pub mod core {
     ///
     /// This function handles both: collect all ops, deduplicate by ID, rebuild.
     pub fn merge_docs(local_bytes: &[u8], remote_bytes: &[u8]) -> Result<Vec<u8>, String> {
+        merge_docs_inner(local_bytes, remote_bytes)
+    }
+
+    fn merge_docs_inner(local_bytes: &[u8], remote_bytes: &[u8]) -> Result<Vec<u8>, String> {
         let mut local = load_doc(local_bytes)?;
         let mut remote = load_doc(remote_bytes)?;
         local.merge(&mut remote).map_err(|e| e.to_string())?;
@@ -409,6 +445,26 @@ mod wasm {
     #[wasm_bindgen]
     pub fn merge_docs(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, JsValue> {
         core::merge_docs(local, remote).map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// CRDT merge with diff info. Returns JSON: { doc: number[], localOpCount, mergedOpCount, hadNewOps }.
+    #[wasm_bindgen]
+    pub fn merge_docs_with_info(local: &[u8], remote: &[u8]) -> Result<JsValue, JsValue> {
+        let result = core::merge_docs_with_info(local, remote).map_err(|e| JsValue::from_str(&e))?;
+        // Return as a JS object with typed fields
+        let obj = js_sys::Object::new();
+        let doc_array = js_sys::Uint8Array::from(result.doc.as_slice());
+        js_sys::Reflect::set(&obj, &"doc".into(), &doc_array).unwrap();
+        js_sys::Reflect::set(&obj, &"localOpCount".into(), &JsValue::from(result.local_op_count as u32)).unwrap();
+        js_sys::Reflect::set(&obj, &"mergedOpCount".into(), &JsValue::from(result.merged_op_count as u32)).unwrap();
+        js_sys::Reflect::set(&obj, &"hadNewOps".into(), &JsValue::from(result.had_new_ops())).unwrap();
+        Ok(obj.into())
+    }
+
+    /// Count ops without JSON serialization.
+    #[wasm_bindgen]
+    pub fn get_op_count(doc: &[u8]) -> Result<u32, JsValue> {
+        core::get_op_count(doc).map(|n| n as u32).map_err(|e| JsValue::from_str(&e))
     }
 
     /// Get all ops as a JSON array string.
@@ -842,5 +898,39 @@ mod tests {
         let ops = core::get_ops(&merged).unwrap();
         assert_eq!(ops.len(), 1, "dual-write merge must not duplicate ops");
         assert_eq!(ops[0].op_type, "add_sphere");
+    }
+
+    /// get_op_count returns count without JSON serialization.
+    #[test]
+    fn get_op_count_matches_get_ops_length() {
+        let mut doc = core::create_doc();
+        assert_eq!(core::get_op_count(&doc).unwrap(), 0);
+
+        doc = core::apply_op(&doc, &op("add_cube", json!({"size": 1.0}))).unwrap();
+        assert_eq!(core::get_op_count(&doc).unwrap(), 1);
+
+        doc = core::apply_op(&doc, &op("add_sphere", json!({"radius": 0.5}))).unwrap();
+        assert_eq!(core::get_op_count(&doc).unwrap(), 2);
+        assert_eq!(core::get_op_count(&doc).unwrap(), core::get_ops(&doc).unwrap().len());
+    }
+
+    /// merge_docs_with_info reports correct diff info.
+    #[test]
+    fn merge_docs_with_info_reports_new_ops() {
+        let base = core::create_doc();
+        let doc_a = core::apply_op(&base, &op("add_cube", json!({"size": 1.0}))).unwrap();
+        let doc_b = core::apply_op(&base, &op_b("add_sphere", json!({"radius": 0.5}))).unwrap();
+
+        // Merge with new ops from B
+        let result = core::merge_docs_with_info(&doc_a, &doc_b).unwrap();
+        assert_eq!(result.local_op_count, 1);
+        assert_eq!(result.merged_op_count, 2);
+        assert!(result.had_new_ops());
+
+        // No-op merge (same doc merged with itself)
+        let result2 = core::merge_docs_with_info(&result.doc, &result.doc).unwrap();
+        assert_eq!(result2.local_op_count, 2);
+        assert_eq!(result2.merged_op_count, 2);
+        assert!(!result2.had_new_ops());
     }
 }
