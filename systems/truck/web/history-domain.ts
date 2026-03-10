@@ -37,7 +37,7 @@ export interface SyncMessage {
     type: 'doc_update';
     modelId: string;      // Scope: only merge when this matches local model
     bytes: number[];      // Uint8Array serialised as Array (structured clone compatible)
-    actorId: string;      // Filter: skip own messages
+    tabId: string;        // Filter: skip own tab's messages (unique per tab, not actorId)
 }
 
 // CadOperation is now generated from Rust Op struct — imported above, re-exported here.
@@ -52,6 +52,8 @@ export class CadDocumentManagerBase {
     _modelId: string | null = null;
     _meta: DocMeta = { name: '', snapshots: [] };
     actorId: string;
+    /** Per-tab unique ID — used for BroadcastChannel dedup (not persisted). */
+    tabId: string;
     _replayInProgress = false;
     _localOpCount = 0;
     _lastSavedOpIndex = 0;
@@ -60,6 +62,7 @@ export class CadDocumentManagerBase {
 
     constructor() {
         this.actorId = this._getOrCreateActorId();
+        this.tabId = crypto.randomUUID(); // unique per tab, not persisted
         this.enabled = !window.__cadSyncDisabled;
     }
 
@@ -337,7 +340,7 @@ export class CadDocumentManagerBase {
                     type: 'doc_update',
                     modelId: this._modelId,
                     bytes: Array.from(this._docBytes),
-                    actorId: this.actorId,
+                    tabId: this.tabId,
                 };
                 this._bc.postMessage(msg);
             } catch { /* BroadcastChannel may be closed */ }
@@ -352,8 +355,8 @@ export class CadDocumentManagerBase {
         this._bc = new BroadcastChannel('cad-sync');
         this._bc.onmessage = (event) => {
             const msg = event.data as Partial<SyncMessage>;
-            const { type, bytes, actorId, modelId } = msg;
-            if (type !== 'doc_update' || actorId === this.actorId) return;
+            const { type, bytes, tabId, modelId } = msg;
+            if (type !== 'doc_update' || tabId === this.tabId) return;
             if (modelId !== this._modelId) return;
             if (!this._docBytes) return;
             try {
@@ -472,7 +475,7 @@ export class CadDocumentManagerBase {
     async syncWithServer(): Promise<void> {
         if (!this._docBytes || !this._modelId) return;
         try {
-            const resp = await fetch(`/api/models/${this._modelId}/sync`, {
+            const resp = await fetch(`/api/models/${this._modelId}/sync?actorId=${this.actorId}`, {
                 method: 'POST',
                 body: this._docBytes as unknown as BodyInit,
                 headers: { 'content-type': 'application/octet-stream' },

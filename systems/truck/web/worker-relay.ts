@@ -60,6 +60,20 @@ const relay = {
       }
     });
 
+    // Handle doc-changed (another browser synced new ops to server — pull to merge)
+    eventSource.addEventListener('doc-changed', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const myActorId = getActorId();
+        // Skip if we were the sender (we already have the latest)
+        if (data.actorId === myActorId) return;
+        console.log(`[worker-relay] doc-changed from ${data.actorId} (${data.opCount} ops), syncing...`);
+        window.cadDocManager?.syncWithServer();
+      } catch (err) {
+        console.warn('[worker-relay] doc-changed parse error:', err);
+      }
+    });
+
     // Handle presence updates
     eventSource.addEventListener('presence', (e) => {
       try {

@@ -420,6 +420,74 @@ describe('Replay', () => {
   }, 15_000);
 });
 
+describe('Cross-Browser Sync (doc-changed SSE)', () => {
+  it('POST /sync with actorId query param returns 200 and merged doc', async () => {
+    const modelId = `xbrowser-${crypto.randomUUID().slice(0, 8)}`;
+
+    // Browser A creates a doc with one op
+    let docA = await syncCreate();
+    docA = await syncApplyOp(docA, JSON.stringify(makeOp('add_cube', { size: 1 }, 'browser-a')));
+
+    // Browser A syncs with actorId param (needed for doc-changed broadcast filtering)
+    const syncRes = await req(`/api/models/${modelId}/sync?actorId=browser-a`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docA,
+    });
+    expect(syncRes.status).toBe(200);
+
+    // Server doc should have the op
+    const opsRes = await req(`/api/models/${modelId}/ops?since=-1`);
+    const ops = await opsRes.json() as any[];
+    expect(ops.length).toBe(1);
+    expect(ops[0].actorId).toBe('browser-a');
+  });
+
+  it('two independent browsers merge via server sync', async () => {
+    const modelId = `xbrowser-merge-${crypto.randomUUID().slice(0, 8)}`;
+
+    // Browser A creates doc + op
+    let docA = await syncCreate();
+    docA = await syncApplyOp(docA, JSON.stringify(makeOp('add_cube', { size: 1 }, 'browser-a')));
+
+    // A syncs first (server adopts A's doc)
+    await req(`/api/models/${modelId}/sync?actorId=browser-a`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docA,
+    });
+
+    // Browser B creates independent doc + different op
+    let docB = await syncCreate();
+    docB = await syncApplyOp(docB, JSON.stringify(makeOp('add_sphere', { radius: 2 }, 'browser-b')));
+
+    // B syncs (server merges A+B, returns merged doc)
+    const syncRes = await req(`/api/models/${modelId}/sync?actorId=browser-b`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docB,
+    });
+    expect(syncRes.status).toBe(200);
+
+    // B receives merged doc — should have both ops
+    const mergedBytes = new Uint8Array(await syncRes.arrayBuffer());
+    const mergedOps = JSON.parse(await syncGetOps(mergedBytes)) as any[];
+    expect(mergedOps.length).toBe(2);
+    const actors = mergedOps.map((o: any) => o.actorId).sort();
+    expect(actors).toEqual(['browser-a', 'browser-b']);
+
+    // A re-syncs and gets B's op too
+    const resyncA = await req(`/api/models/${modelId}/sync?actorId=browser-a`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docA,
+    });
+    const remerged = new Uint8Array(await resyncA.arrayBuffer());
+    const remergedOps = JSON.parse(await syncGetOps(remerged)) as any[];
+    expect(remergedOps.length).toBe(2);
+  });
+});
+
 describe('Sync Merge', () => {
   it('POST /sync self-merge is idempotent', async () => {
     const modelId = `selfmerge-${crypto.randomUUID().slice(0, 8)}`;

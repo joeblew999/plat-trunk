@@ -147,6 +147,7 @@ type SSEEvent =
   | { type: 'cad-command'; data: { id: string; command: any } }
   | { type: 'datastar-patch-signals'; data: any }
   | { type: 'sync-op'; data: any }
+  | { type: 'doc-changed'; data: { actorId: string; opCount: number } }
   | { type: 'presence'; data: { actors: [string, { name: string; connectedAt: number }][] } };
 
 interface ModelSession {
@@ -659,6 +660,14 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
       merged = browserDoc;
       await storage.save(modelId, merged);
     }
+
+    // Notify other SSE clients that the doc changed (ADR-0001 cross-browser sync)
+    const senderActorId = c.req.query('actorId') || 'unknown';
+    try {
+      const opsJson2 = await syncGetOps(merged);
+      const opCount = JSON.parse(opsJson2).length;
+      broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount } });
+    } catch { /* best-effort broadcast */ }
 
     // Update manifest actor names from merged doc ops
     try {

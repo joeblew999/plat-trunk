@@ -10,7 +10,7 @@
 //
 // To verify the contract matches history-domain.ts, compare manually:
 //   systems/truck/web/history-domain.ts exports `interface SyncMessage`
-//   with identical fields: type, modelId, bytes, actorId.
+//   with identical fields: type, modelId, bytes, tabId.
 
 import { describe, it, expect } from 'vitest';
 
@@ -20,7 +20,7 @@ interface SyncMessage {
     type: 'doc_update';
     modelId: string;        // Filter: only merge if matches local model
     bytes: number[];        // Uint8Array serialized as Array (structured clone)
-    actorId: string;        // Filter: skip own messages
+    tabId: string;          // Filter: skip own tab's messages (unique per tab)
 }
 
 describe('SyncMessage contract', () => {
@@ -29,19 +29,19 @@ describe('SyncMessage contract', () => {
             type: 'doc_update',
             modelId: 'test-model-id',   // Required: filters to correct model
             bytes: [1, 2, 3],           // Uint8Array as Array (merge_docs input)
-            actorId: 'actor-uuid-123',  // Required: skip own messages
+            tabId: 'tab-uuid-123',      // Required: skip own tab's messages
         };
         expect(msg.type).toBe('doc_update');
         expect(typeof msg.modelId).toBe('string');
         expect(msg.modelId.length).toBeGreaterThan(0);
         expect(Array.isArray(msg.bytes)).toBe(true);
-        expect(typeof msg.actorId).toBe('string');
+        expect(typeof msg.tabId).toBe('string');
     });
 
     it('modelId prevents cross-model contamination (the fixed Bug 1)', () => {
         // Two different models must NOT share CRDT state
-        const msgA: SyncMessage = { type: 'doc_update', modelId: 'model-a', bytes: [], actorId: 'a' };
-        const msgB: SyncMessage = { type: 'doc_update', modelId: 'model-b', bytes: [], actorId: 'b' };
+        const msgA: SyncMessage = { type: 'doc_update', modelId: 'model-a', bytes: [], tabId: 'a' };
+        const msgB: SyncMessage = { type: 'doc_update', modelId: 'model-b', bytes: [], tabId: 'b' };
         expect(msgA.modelId).not.toBe(msgB.modelId);
     });
 });
