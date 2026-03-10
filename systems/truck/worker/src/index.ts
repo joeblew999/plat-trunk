@@ -150,13 +150,18 @@ type SSEEvent =
   | { type: 'doc-changed'; data: { actorId: string; opCount: number } }
   | { type: 'presence'; data: { actors: [string, { name: string; connectedAt: number }][] } };
 
+interface SSEListener {
+  actorId: string;
+  send: (ev: SSEEvent) => void;
+}
+
 interface ModelSession {
   commandQueue: Map<string, QueuedCommand>;
   sceneState: Record<string, unknown>;
   sceneStateAt: number;
   sseClientCount: number;
   lastActivity: number;
-  listeners: Set<(ev: SSEEvent) => void>;
+  listeners: Set<SSEListener>;
   actors: Map<string, { name: string; connectedAt: number }>;
 }
 
@@ -179,13 +184,15 @@ function broadcastPresence(modelId: string) {
   broadcast(modelId, { type: 'presence', data: { actors: [...model.actors.entries()] } });
 }
 
-function broadcast(modelId: string, ev: SSEEvent) {
+/** Broadcast to all listeners. excludeActorId skips that actor's connections. */
+function broadcast(modelId: string, ev: SSEEvent, excludeActorId?: string) {
   try {
     const model = getModel(modelId);
     for (const listener of model.listeners) {
-      try { listener(ev); } catch (e) { 
+      if (excludeActorId && listener.actorId === excludeActorId) continue;
+      try { listener.send(ev); } catch (e) {
         console.error(`[Worker] Listener error in model ${modelId}:`, e);
-        model.listeners.delete(listener); 
+        model.listeners.delete(listener);
       }
     }
   } catch (e) {
@@ -312,7 +319,7 @@ function mountModule(hono: OpenAPIHono<{ Bindings: Bindings }>, prefix: string, 
       broadcastPresence(modelId);
       await stream.writeSSE({ event: 'datastar-patch-signals', data: `signals ${JSON.stringify({ cadConnected: true, cadObjects: model.sceneState.objectCount ?? 0 })}` });
       const q: SSEEvent[] = [];
-      const l = (ev: SSEEvent) => q.push(ev);
+      const l: SSEListener = { actorId, send: (ev) => q.push(ev) };
       model.listeners.add(l);
       stream.onAbort(() => { model.listeners.delete(l); model.sseClientCount--; model.actors.delete(actorId); broadcastPresence(modelId); });
       for (const cmd of model.commandQueue.values()) if (cmd.status === 'pending') { cmd.status = 'running'; await stream.writeSSE({ event: 'cad-command', data: JSON.stringify({ id: cmd.id, command: cmd.command }) }); }
@@ -661,12 +668,13 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
       await storage.save(modelId, merged);
     }
 
-    // Notify other SSE clients that the doc changed (ADR-0001 cross-browser sync)
+    // Notify OTHER SSE clients that the doc changed (ADR-0001 cross-browser sync)
+    // Exclude sender's actorId — same-browser tabs already sync via BroadcastChannel
     const senderActorId = c.req.query('actorId') || 'unknown';
     try {
       const opsJson2 = await syncGetOps(merged);
       const opCount = JSON.parse(opsJson2).length;
-      broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount } });
+      broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount } }, senderActorId);
     } catch { /* best-effort broadcast */ }
 
     // Update manifest actor names from merged doc ops

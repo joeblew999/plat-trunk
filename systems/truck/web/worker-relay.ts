@@ -61,15 +61,12 @@ const relay = {
     });
 
     // Handle doc-changed (another browser synced new ops to server — pull to merge)
-    // Debounce to prevent feedback loops: syncWithServer → server broadcast → doc-changed → syncWithServer
+    // Server already excludes the sender's actorId, so we only receive events
+    // from OTHER browsers. Debounce to collapse rapid events.
     let docChangedTimer: ReturnType<typeof setTimeout> | null = null;
     eventSource.addEventListener('doc-changed', (e) => {
       try {
         const data = JSON.parse(e.data);
-        const myActorId = getActorId();
-        // Skip if we were the sender (we already have the latest)
-        if (data.actorId === myActorId) return;
-        // Debounce: collapse rapid doc-changed events into one sync
         if (docChangedTimer) clearTimeout(docChangedTimer);
         docChangedTimer = setTimeout(() => {
           docChangedTimer = null;
