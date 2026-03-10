@@ -7,8 +7,9 @@
 import { DEV_BUILD as SYNC_DEV_BUILD } from '../sync/system.mjs';
 
 // DEV_BUILD chains sync first — used by run.mjs watchers (single rebuild on Rust changes).
+// Full ripple: Rust → WASM → schema JSON → generated TS adapters → generated types
 export const DEV_BUILD =
-  `${SYNC_DEV_BUILD} && cd systems/truck/crate && wasm-pack build --target web --dev --out-dir ../web/pkg-browser-renderer && wasm-pack build --target bundler --dev --no-default-features --out-dir ../worker/pkg && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json`;
+  `${SYNC_DEV_BUILD} && cd systems/truck/crate && wasm-pack build --target web --dev --out-dir ../web/pkg-browser-renderer && wasm-pack build --target bundler --dev --no-default-features --out-dir ../worker/pkg && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json && cd ../../.. && bun run gen:sync-types && bun run gen:adapters`;
 
 // OWN_RELEASE_BUILD is truck-only (no sync prefix) — build.mjs handles ordering.
 const OWN_RELEASE_BUILD =
@@ -24,8 +25,9 @@ export const workers = [
     healthUrl: 'http://localhost:8789/api/health',
     watch: {
       name: 'watch-wasm',
-      paths: ['systems/truck/crate/src'],
+      paths: ['systems/truck/crate/src', 'systems/sync/crate/src'],
       extensions: ['rs'],
+      ignore: ['*_generated.rs'],
       command: DEV_BUILD,
       debounce: 3000,
     },

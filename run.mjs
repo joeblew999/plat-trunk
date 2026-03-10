@@ -9,7 +9,7 @@
 import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { createWriteStream, mkdirSync } from 'fs';
+import { createWriteStream, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { workers, devServers } from './workers.mjs';
@@ -165,12 +165,17 @@ async function dev() {
   });
 
   // 5. Start file watchers (rebuild on source changes)
+  //    Write watch commands to temp scripts to avoid shell quoting hell
+  //    (DEV_BUILD contains subshell parens that break when double-wrapped in sh -c + bash -c).
   for (const w of workers) {
     if (w.watch) {
       const paths = w.watch.paths.map(p => `-w ${p}`).join(' ');
       const exts = w.watch.extensions.map(e => `-e ${e}`).join(' ');
+      const ignores = (w.watch.ignore || []).map(p => `-i '${p}'`).join(' ');
       const debounce = w.watch.debounce ? `--debounce ${w.watch.debounce}ms` : '';
-      const cmd = `watchexec ${paths} ${exts} ${debounce} -- bash -c '${w.watch.command.replace(/'/g, "'\\''")}'`;
+      const scriptPath = join(LOG_DIR, `watch-${w.watch.name}.sh`);
+      writeFileSync(scriptPath, `#!/bin/bash\nset -e\ncd "${ROOT}"\n${w.watch.command}\n`, { mode: 0o755 });
+      const cmd = `watchexec ${paths} ${exts} ${ignores} ${debounce} -- ${scriptPath}`;
       start(w.watch.name, cmd, '.', idx++);
     }
   }

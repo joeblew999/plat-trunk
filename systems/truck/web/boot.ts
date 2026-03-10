@@ -84,9 +84,20 @@ export async function boot() {
 
 function deleteDb(name: string): Promise<void> {
     return new Promise(resolve => {
+        const timeout = setTimeout(() => {
+            console.warn(`[reset] deleteDatabase("${name}") timed out — continuing`);
+            resolve();
+        }, 3000);
+        const done = () => { clearTimeout(timeout); resolve(); };
         const req = indexedDB.deleteDatabase(name);
-        req.onsuccess = () => resolve();
-        req.onerror = () => resolve();
+        req.onsuccess = done;
+        req.onerror = done;
+        // Safari blocks deleteDatabase if another tab/connection holds it open.
+        // Without this handler the Promise hangs forever → infinite loading.
+        req.onblocked = () => {
+            console.warn(`[reset] deleteDatabase("${name}") blocked — continuing`);
+            done();
+        };
     });
 }
 
