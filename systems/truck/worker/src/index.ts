@@ -669,12 +669,18 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     }
 
     // Notify OTHER SSE clients that the doc changed (ADR-0001 cross-browser sync)
-    // Exclude sender's actorId — same-browser tabs already sync via BroadcastChannel
+    // Only broadcast if merge actually introduced new ops — prevents ping-pong:
+    // Browser A syncs → broadcast → Browser B syncs (no-op merge) → broadcast → A syncs → ...
     const senderActorId = c.req.query('actorId') || 'unknown';
     try {
-      const opsJson2 = await syncGetOps(merged);
-      const opCount = JSON.parse(opsJson2).length;
-      broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount } }, senderActorId);
+      const mergedOpsJson = await syncGetOps(merged);
+      const mergedOpCount = JSON.parse(mergedOpsJson).length;
+      const existingOpCount = existing?.doc
+        ? JSON.parse(await syncGetOps(existing.doc)).length
+        : 0;
+      if (mergedOpCount > existingOpCount) {
+        broadcast(modelId, { type: 'doc-changed', data: { actorId: senderActorId, opCount: mergedOpCount } }, senderActorId);
+      }
     } catch { /* best-effort broadcast */ }
 
     // Update manifest actor names from merged doc ops
