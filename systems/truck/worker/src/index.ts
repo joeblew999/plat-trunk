@@ -9,7 +9,7 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStore } from './doc-store';
-import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
 type Bindings = {
@@ -646,18 +646,20 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     let hadNewOps = false;
 
     if (existing?.doc) {
-      // Server has a doc — CRDT merge with diff detection (Rust, no JSON round-trip)
-      const result = await syncMergeDocsWithInfo(existing.doc, browserDoc);
-      merged = result.doc;
-      hadNewOps = result.hadNewOps;
+      // Server has a doc — CRDT merge
+      const serverOpCount = await syncGetOpCount(existing.doc);
+      merged = await syncMergeDocs(existing.doc, browserDoc);
+      const mergedOpCount = await syncGetOpCount(merged);
+      hadNewOps = mergedOpCount > serverOpCount;
       const saved = await storage.saveConditional(modelId, merged, existing.etag);
       if (!saved) {
         // Retry once on etag conflict
         const fresh = await storage.load(modelId);
         if (fresh) {
-          const retryResult = await syncMergeDocsWithInfo(fresh, browserDoc);
-          merged = retryResult.doc;
-          hadNewOps = retryResult.hadNewOps;
+          const freshOpCount = await syncGetOpCount(fresh);
+          merged = await syncMergeDocs(fresh, browserDoc);
+          const retryMergedCount = await syncGetOpCount(merged);
+          hadNewOps = retryMergedCount > freshOpCount;
         } else {
           // Doc disappeared between reads — adopt browser doc
           merged = browserDoc;
@@ -673,7 +675,7 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     }
 
     // Notify OTHER SSE clients that the doc changed (ADR-0001 cross-browser sync)
-    // hadNewOps is computed in Rust (op count comparison) — prevents ping-pong loops
+    // hadNewOps = mergedOpCount > serverOpCount — prevents ping-pong loops
     const senderActorId = c.req.query('actorId') || 'unknown';
     if (hadNewOps) {
       try {
@@ -754,7 +756,6 @@ const sceneRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
 // Health + WASM test (chained for type export)
 const healthRoute = createRoute({ method: 'get', path: '/health', tags: ['system'], summary: 'Health', responses: { 200: { description: 'OK' } } });
 const testWasmRoute = createRoute({ method: 'get', path: '/test-wasm', tags: ['system'], summary: 'Test headless WASM', responses: { 200: { description: 'Result' } } });
-
 const platformRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(healthRoute, (c) => c.json({ status: 'ok', service: cfDeploy.workers.truck.name, version: (cadSchema as ModuleSchema).version }))
   .openapi(testWasmRoute, async (c) => {

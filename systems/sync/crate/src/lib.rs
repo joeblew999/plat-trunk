@@ -447,17 +447,24 @@ mod wasm {
         core::merge_docs(local, remote).map_err(|e| JsValue::from_str(&e))
     }
 
-    /// CRDT merge with diff info. Returns JSON: { doc: number[], localOpCount, mergedOpCount, hadNewOps }.
+    /// CRDT merge with diff info.
+    /// Returns { doc: Uint8Array, localOpCount: number, mergedOpCount: number, hadNewOps: boolean }.
     #[wasm_bindgen]
     pub fn merge_docs_with_info(local: &[u8], remote: &[u8]) -> Result<JsValue, JsValue> {
         let result = core::merge_docs_with_info(local, remote).map_err(|e| JsValue::from_str(&e))?;
-        // Return as a JS object with typed fields
         let obj = js_sys::Object::new();
         let doc_array = js_sys::Uint8Array::from(result.doc.as_slice());
-        js_sys::Reflect::set(&obj, &"doc".into(), &doc_array).unwrap();
-        js_sys::Reflect::set(&obj, &"localOpCount".into(), &JsValue::from(result.local_op_count as u32)).unwrap();
-        js_sys::Reflect::set(&obj, &"mergedOpCount".into(), &JsValue::from(result.merged_op_count as u32)).unwrap();
-        js_sys::Reflect::set(&obj, &"hadNewOps".into(), &JsValue::from(result.had_new_ops())).unwrap();
+        let key_doc = JsValue::from_str("doc");
+        let key_local = JsValue::from_str("localOpCount");
+        let key_merged = JsValue::from_str("mergedOpCount");
+        let key_had = JsValue::from_str("hadNewOps");
+        let val_local = JsValue::from_f64(result.local_op_count as f64);
+        let val_merged = JsValue::from_f64(result.merged_op_count as f64);
+        let val_had = JsValue::from_bool(result.had_new_ops());
+        js_sys::Reflect::set(&obj, &key_doc, &doc_array).unwrap();
+        js_sys::Reflect::set(&obj, &key_local, &val_local).unwrap();
+        js_sys::Reflect::set(&obj, &key_merged, &val_merged).unwrap();
+        js_sys::Reflect::set(&obj, &key_had, &val_had).unwrap();
         Ok(obj.into())
     }
 

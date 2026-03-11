@@ -1,6 +1,6 @@
 import initSyncWasm, {
     create_doc, apply_op, get_ops, get_op_count, get_name, set_name,
-    set_op_enabled, set_group_enabled, rollback_to, merge_docs, merge_docs_with_info,
+    set_op_enabled, set_group_enabled, rollback_to, merge_docs,
 } from './pkg-sync/truck_sync.js';
 import { saveDoc, loadDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
@@ -489,20 +489,23 @@ export class CadDocumentManagerBase {
             const serverDoc = new Uint8Array(await resp.arrayBuffer());
             const localDoc = this._docBytes!;
             const modelId = this._modelId!;
-            const result = merge_docs_with_info(localDoc, serverDoc);
-            this._docBytes = result.doc;
+            const localOpCount = get_op_count(localDoc);
+            const merged = merge_docs(localDoc, serverDoc);
+            const mergedOpCount = get_op_count(merged);
+            const hadNewOps = mergedOpCount > localOpCount;
+            this._docBytes = merged;
             // Sync model name from CRDT doc
-            const docName = get_name(result.doc);
+            const docName = get_name(merged);
             if (docName) {
                 this._meta.name = docName;
                 this._updateDocInfo();
             }
-            await saveDoc(modelId, result.doc);
-            if (result.hadNewOps) {
-                console.log(`[Sync] Server merge: ${result.localOpCount} → ${result.mergedOpCount} ops, replaying...`);
+            await saveDoc(modelId, merged);
+            if (hadNewOps) {
+                console.log(`[Sync] Server merge: ${localOpCount} → ${mergedOpCount} ops, replaying...`);
                 await this._replayScene();
             }
-            this._localOpCount = result.mergedOpCount;
+            this._localOpCount = mergedOpCount;
         } catch (err) {
             console.warn('[Sync] Server sync failed:', err);
         } finally {

@@ -8,7 +8,7 @@
 // sync endpoints with the same sync WASM.
 
 import { describe, it, expect } from 'vitest';
-import { syncCreate, syncSetName, syncApplyOp, syncGetOps, syncMergeDocs } from './sync-wasm.generated';
+import { syncCreate, syncSetName, syncApplyOp, syncGetOps, syncGetOpCount, syncMergeDocs } from './sync-wasm.generated';
 import { req, makeOp } from './test-helpers';
 
 describe('Sync Endpoints', () => {
@@ -520,6 +520,50 @@ describe('Sync Merge', () => {
     const opsRes = await req(`/api/models/${modelId}/ops?since=-1`);
     const ops = await opsRes.json() as any[];
     expect(ops.length).toBe(2);
+  });
+
+  it('re-sync with no new ops does not inflate op count (ping-pong prevention)', async () => {
+    const modelId = `nopingpong-${crypto.randomUUID().slice(0, 8)}`;
+
+    // Browser A creates doc with one op and syncs to server
+    let docA = await syncCreate();
+    docA = await syncApplyOp(docA, JSON.stringify(makeOp('add_cube', { size: 1 }, 'browser-a')));
+
+    await req(`/api/models/${modelId}/sync?actorId=browser-a`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docA,
+    });
+
+    // Browser B syncs empty doc — gets A's op
+    let docB = await syncCreate();
+    const syncB = await req(`/api/models/${modelId}/sync?actorId=browser-b`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: docB,
+    });
+    const mergedB = new Uint8Array(await syncB.arrayBuffer());
+    const countAfterFirstSync = await syncGetOpCount(mergedB);
+    expect(countAfterFirstSync).toBe(1);
+
+    // Browser B re-syncs the SAME merged doc (no new ops added)
+    // This is the ping-pong scenario: B got A's ops, syncs back,
+    // server must NOT see new ops (mergedOpCount === serverOpCount)
+    const resyncB = await req(`/api/models/${modelId}/sync?actorId=browser-b`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: mergedB,
+    });
+    const remergedB = new Uint8Array(await resyncB.arrayBuffer());
+    const countAfterResync = await syncGetOpCount(remergedB);
+
+    // Op count must not grow — if it does, hadNewOps would be true and trigger broadcast loop
+    expect(countAfterResync).toBe(countAfterFirstSync);
+
+    // Verify locally too: merging the re-synced doc with what B already has produces no new ops
+    const localMerged = await syncMergeDocs(mergedB, remergedB);
+    const localCount = await syncGetOpCount(localMerged);
+    expect(localCount).toBe(countAfterFirstSync);
   });
 
   it('POST /sync with multi-actor docs merges all ops', async () => {
