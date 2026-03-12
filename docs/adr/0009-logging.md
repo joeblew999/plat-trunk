@@ -120,22 +120,44 @@ pub fn init() {
 }
 ```
 
-#### WASM backend (`wasm.rs`)
+#### WASM backend (`wasm.rs`) — use `tracing-web` + `tracing-subscriber` json
 
-A minimal `tracing` subscriber that serialises each event to JSON and calls `web_sys::console::log_1()`. Output format matches the TypeScript `LogEntry` schema so CF indexes the same fields:
+**Do not hand-roll a JSON subscriber.** Use `tracing-web` (the crate Cloudflare recommends and uses in their own `workers-rs` examples) combined with `tracing-subscriber`'s built-in `.json()` formatter:
 
-```json
-{"ts":"...","level":"info","system":"sync","operation":"merge","model_id":"m1","op_count":3}
+```rust
+use tracing_subscriber::fmt;
+use tracing_web::MakeConsoleWriter;
+
+pub fn init() {
+    fmt()
+        .json()
+        .with_writer(MakeConsoleWriter::default())
+        .with_ansi(false)
+        .without_time()  // browser/worker has its own timestamps
+        .init();
+}
 ```
 
-Because the worker calls `console.log(JSON.stringify({...}))`, CF Workers Logs auto-indexes every field. No Logpush code, no OTLP code — that's CF config in `wrangler.toml`.
+This emits structured JSON via `console.log` / `console.warn` / `console.error` (level-mapped). CF Workers Logs auto-indexes every field. No Logpush code, no OTLP code — that's CF config in `wrangler.toml`.
+
+```json
+{"level":"INFO","system":"sync","operation":"merge","modelId":"m1","opCount":3,"message":"merge complete"}
+```
+
+**Bundle size note:** this pulls `serde_json` + `tracing-subscriber` fmt into the WASM build. Phase 5 (task 12) measures the impact. If it exceeds the 3 MB worker limit, fall back to a lighter approach — but don't optimise before measuring.
+
+**Crates evaluated and rejected:**
+- `tracing-wasm` / `wasm-tracing` — no JSON output, browser-only (no Workers support)
+- `tracing-worker` — abandoned (1 star, 2023), no JSON
+- `tracing-subscriber-wasm` — writer only, no JSON formatting, unmaintained
+- Hand-rolled JSON subscriber — unnecessary complexity when a CF-recommended solution exists
 
 #### Native backend (`native.rs`)
 
 - `tracing-subscriber` with `EnvFilter` driven by `RUST_LOG` env var
 - `fmt::TestWriter` so output is captured per-test and only shown on failure
 - ANSI colour for interactive sessions
-- No WASM dependencies compiled in — `tracing-subscriber` is `cfg(not(wasm32))` gated
+- No WASM-specific dependencies compiled in — `tracing-web` is `cfg(wasm32)` gated
 
 ```bash
 # See all sync logs during cargo test:
@@ -256,7 +278,7 @@ All changes are validated in the demo before touching any system worker:
 
 **Risks:**
 
-- The WASM JSON subscriber must be lightweight — no `serde_json` (too heavy for WASM). Use manual JSON string building or `miniserde`
+- The WASM backend uses `tracing-web` + `tracing-subscriber` json, which pulls `serde_json` into the WASM build. Phase 5 measures the impact — if it breaches the 3 MB worker limit, fall back to a lighter approach (manual JSON, `miniserde`, or feature-gating `tracing` in consuming crates)
 - `tracing` subscriber setup must be idempotent — `init()` may be called from multiple WASM entry points in the same runtime
 
 -----
@@ -268,7 +290,7 @@ All changes are validated in the demo before touching any system worker:
 Gate: nothing lands until all four tasks compile on both `wasm32` and native.
 
 1. **Create `lib/log/crate/`** with `Cargo.toml`, `src/lib.rs`, `src/wasm.rs`, `src/native.rs`
-2. **Implement WASM backend (`src/wasm.rs`)**: minimal `tracing` subscriber → JSON → `web_sys::console::log_1()`. **No `serde_json`** — use manual JSON string building (or `miniserde` if formatting gets complex). Every byte matters for the 3 MB worker limit.
+2. **Implement WASM backend (`src/wasm.rs`)**: use `tracing-web` (`MakeConsoleWriter`) + `tracing-subscriber` with `.json()` formatter — the combination Cloudflare recommends in their own `workers-rs` examples. Do not hand-roll a JSON subscriber. Bundle size is measured in Phase 5.
 3. **Implement native backend (`src/native.rs`)**: `tracing-subscriber` + `EnvFilter` + `fmt::TestWriter`. Gated behind `cfg(not(target_arch = "wasm32"))` in `Cargo.toml` so none of its deps enter the WASM build.
 4. **`init()` must be idempotent** (`src/lib.rs`): use `std::sync::OnceLock` (or check `tracing::dispatcher::has_been_set()`) before calling `set_global_default()`. Must not panic if called twice — multiple WASM entry points (`WasmApp::new`, `HeadlessController::new`) may both call `pt_log::init()`. Also sets **structured panic hook**: emit `tracing::error!(system = "panic", message = %payload, location = %loc)` with queryable fields, then delegate to the default hook (`console_error_panic_hook` on WASM, default stderr on native). The structured entry must hit the JSON subscriber so CF indexes it.
 
@@ -305,13 +327,41 @@ Gate: do not start until Phase 2 is confirmed working.
 
 -----
 
+## Future considerations
+
+- **CF Workers Automatic Tracing** (open beta since Nov 2025) provides W3C-compliant distributed tracing with zero code changes. If it becomes GA and covers our cross-worker topology, it may obsolete `lib/log/trace.ts` (our custom traceparent generation). Monitor but don't act yet — the TS middleware still adds value for the local dev viewer and browser-side trace correlation.
+- **LogTape** (581 stars, zero-dep TS structured logging) could replace the `LogBuffer` core if we ever need hierarchical log categories. Not worth the migration cost now with 54 tests passing.
+- **@sentry/cloudflare** — complementary error tracking. Worth adding later as an overlay, not a replacement.
+
+-----
+
 ## References
 
-- `lib/log/` TypeScript library (this repo)
+**This repo:**
+- `lib/log/` TypeScript library
 - `lib/log/demo/` working demo (Bun + wrangler)
-- Cloudflare Workers Logs: https://developers.cloudflare.com/workers/observability/logs/
-- Cloudflare Automatic Traces: https://developers.cloudflare.com/workers/observability/traces/
-- Cloudflare OTLP Export: https://developers.cloudflare.com/workers/observability/export/
-- `tracing` crate: https://docs.rs/tracing/
-- `tracing-subscriber` TestWriter: https://docs.rs/tracing-subscriber/latest/tracing_subscriber/fmt/struct.TestWriter.html
+
+**Cloudflare:**
+- Workers Logs: https://developers.cloudflare.com/workers/observability/logs/
+- Automatic Traces: https://developers.cloudflare.com/workers/observability/traces/
+- OTLP Export: https://developers.cloudflare.com/workers/observability/export/
+- Recommended Rust crates: https://developers.cloudflare.com/workers/languages/rust/crates/
+
+**Rust crates (used):**
+- `tracing`: https://docs.rs/tracing/
+- `tracing-subscriber` (json + fmt): https://docs.rs/tracing-subscriber/
+- `tracing-web` (CF-recommended WASM writer): https://github.com/WorldSEnder/tracing-web
 - `console_error_panic_hook`: https://github.com/rustwasm/console_error_panic_hook
+
+**Rust crates (evaluated, rejected):**
+- `tracing-wasm` — unmaintained (2021), no JSON, browser-only
+- `wasm-tracing` — no JSON, browser-only (no Workers support)
+- `tracing-worker` — abandoned (1 star), no JSON
+- `tracing-subscriber-wasm` — writer only, no JSON, unmaintained
+- `tracing-json` — heavy deps (`chrono`, `serde`), no WASM support, 2020
+
+**TypeScript libraries (evaluated, not needed):**
+- `workers-tagged-logger` — AsyncLocalStorage tags, narrower than lib/log
+- `LogTape` — mature structured logging, but doesn't cover browser shipping or viewer
+- `hono-pino` — pino transports don't work in CF Workers runtime
+- `@microlabs/otel-cf-workers` — good OTLP, but CF Automatic Tracing may obsolete it
