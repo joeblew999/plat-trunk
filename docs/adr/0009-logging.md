@@ -142,11 +142,31 @@ Because the worker calls `console.log(JSON.stringify({...}))`, CF Workers Logs a
 RUST_LOG=sync=debug cargo test -p truck-sync
 ```
 
-#### Panic hook
+#### Panic & error capture
 
-`init()` also sets the panic hook:
-- WASM: `console_error_panic_hook` (already used by both crates)
-- Native: `std::panic::set_hook` that emits `tracing::error!`
+All panics and unhandled errors — Rust and TypeScript — must produce **structured entries** with queryable fields, not raw text.
+
+**Rust WASM panics** — `pt_log::init()` sets a custom panic hook that:
+1. Emits a structured `tracing::error!` with `system = "panic"`, `message`, `location` (file + line) — CF indexes these fields
+2. Then delegates to `console_error_panic_hook` for the standard stack trace
+
+```rust
+// What CF Query Builder sees after a boolean op panic:
+{"level":"error","system":"panic","message":"This shell is not oriented and closed","location":"truck-shapeops/src/integrate/mod.rs:142"}
+```
+
+**Rust native panics** — same structured `tracing::error!` then delegates to the default hook. `cargo test` captures it per-test.
+
+**TypeScript worker errors** — already handled by `errorHandler(buffer)` in `lib/log/middleware.ts`. Unhandled throws produce structured entries with `kind: "error"`, `error`, `stack`, `traceId`, `requestId`. CF indexes all fields.
+
+**TypeScript browser errors** — `setupBrowserLog()` should also install `window.onerror` and `window.onunhandledrejection` handlers that emit structured entries via the browser logger. These flush to the worker via the existing offline queue, so CF captures browser crashes too.
+
+```typescript
+// Browser: unhandled promise rejection → structured entry → flush to worker → CF
+{"level":"error","system":"panic","source":"browser","error":"Cannot read properties of null","stack":"...","deviceId":"abc"}
+```
+
+**Net result**: any panic or unhandled error, anywhere in the stack (Rust WASM, Rust native, TS worker, TS browser), produces a structured entry with `system = "panic"` that's queryable in CF and visible in the viewer.
 
 ### Target matrix
 
@@ -250,7 +270,7 @@ Gate: nothing lands until all four tasks compile on both `wasm32` and native.
 1. **Create `lib/log/crate/`** with `Cargo.toml`, `src/lib.rs`, `src/wasm.rs`, `src/native.rs`
 2. **Implement WASM backend (`src/wasm.rs`)**: minimal `tracing` subscriber → JSON → `web_sys::console::log_1()`. **No `serde_json`** — use manual JSON string building (or `miniserde` if formatting gets complex). Every byte matters for the 3 MB worker limit.
 3. **Implement native backend (`src/native.rs`)**: `tracing-subscriber` + `EnvFilter` + `fmt::TestWriter`. Gated behind `cfg(not(target_arch = "wasm32"))` in `Cargo.toml` so none of its deps enter the WASM build.
-4. **`init()` must be idempotent** (`src/lib.rs`): use `std::sync::OnceLock` (or check `tracing::dispatcher::has_been_set()`) before calling `set_global_default()`. Must not panic if called twice — multiple WASM entry points (`WasmApp::new`, `HeadlessController::new`) may both call `pt_log::init()`. Also sets panic hook (WASM: `console_error_panic_hook`, native: `std::panic::set_hook` → `tracing::error!`).
+4. **`init()` must be idempotent** (`src/lib.rs`): use `std::sync::OnceLock` (or check `tracing::dispatcher::has_been_set()`) before calling `set_global_default()`. Must not panic if called twice — multiple WASM entry points (`WasmApp::new`, `HeadlessController::new`) may both call `pt_log::init()`. Also sets **structured panic hook**: emit `tracing::error!(system = "panic", message = %payload, location = %loc)` with queryable fields, then delegate to the default hook (`console_error_panic_hook` on WASM, default stderr on native). The structured entry must hit the JSON subscriber so CF indexes it.
 
 ### Phase 2 — Demo validation (tasks 5–6)
 
@@ -273,7 +293,7 @@ Gate: do not start until Phase 2 is confirmed working.
 8. **Wire `pt-log` into `truck-sync` crate.** This is not a mechanical search-and-replace of `log::info!` → `tracing::info!`. At each call site, **add the relevant structured fields** (`model_id`, `actor_id`, `op_count`, `group_id`, etc.) so they become queryable in CF. Review every log statement and decide which fields matter for debugging sync issues.
 9. **Wire `pt-log` into `truck-cad` crate.** Same approach — add structured fields per call site (`solid_id`, `operation`, `mesh_vertices`, etc.).
 10. **Wire `setupLog()` into truck-cad worker and plat-router** — one-liner each.
-11. **Wire `setupBrowserLog()` into browser frontend** (`systems/truck/web/`).
+11. **Wire `setupBrowserLog()` into browser frontend** (`systems/truck/web/`). Also add `window.onerror` and `window.onunhandledrejection` handlers that emit structured entries via the browser logger with `system = "panic"` — these flush to the worker and into CF like any other browser log.
 
 ### Phase 5 — Size check (task 12)
 
