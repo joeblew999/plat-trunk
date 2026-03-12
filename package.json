@@ -13,7 +13,7 @@
     "gen:adapters:check": "bun scripts/gen-adapters.ts --check",
     "gen:sync-types": "bun scripts/gen-sync-types.ts",
     "gen:sync-types:check": "bun scripts/gen-sync-types.ts --check",
-    "typecheck": "cd systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck",
+    "typecheck": "cd lib/log && bunx tsc --noEmit && cd ../../systems/truck/worker && bunx tsc --noEmit && cd ../web && bun run typecheck",
     "test": "bun scripts/test.mjs",
     "test:crate": "cargo test -p truck-cad --no-default-features --features native --test contract && cargo test -p truck-sync && cargo test --release -p truck-cad --no-default-features --features native",
     "test:api": "cd systems/truck/worker && bun x vitest run",
@@ -34,7 +34,8 @@
     "truck:update:quick": "bash scripts/truck-update.sh --no-build",
     "truck:update:monster": "bash scripts/truck-update.sh --base=monstertruck",
     "truck:update:monster:quick": "bash scripts/truck-update.sh --base=monstertruck --no-build",
-    "truck:status": "bash scripts/truck-update.sh --status"
+    "truck:status": "bash scripts/truck-update.sh --status",
+    "log": "bun lib/log/run.mjs"
   },
   "dependencies": {
     "hono": "4.11.9"
