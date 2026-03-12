@@ -246,6 +246,16 @@ Historical ADRs were removed — their decisions are baked into the codebase and
 11. **ADR context** — read `docs/adr/` before proposing architectural changes
 12. **Plans live in `docs/adr/`** — all implementation plans go in `docs/adr/` as numbered ADRs, never in agent-private folders (`.claude/plans/`, `.cursor/`, etc.). The ADR is the single source of truth shared by all agents and humans
 
+## Logging & Observability (ADR-0009)
+
+**Two-layer architecture** — Rust structured emission + TypeScript transport/UI:
+
+- **`lib/log/`** — TypeScript library: `LogBuffer`, Hono middleware (W3C traceparent), browser offline queue + flush, SSE viewer, debug routes. Isolated and tested, not yet wired into system workers.
+- **`lib/log/crate/`** — Rust `pt-log` crate (planned): `tracing` → structured JSON → `console.log()` on WASM, `tracing-subscriber` on native. CF Workers Logs auto-indexes all JSON fields.
+- **`bun run log demo`** — Bun demo on :3333. `bun run log demo:cf` — wrangler demo on :3335.
+- **`bun run log test`** — 30 unit tests. `bun run log test:int` — 24 integration tests (Playwright + wrangler).
+- All CF observability (Logpush, Automatic Traces, OTLP export) is wrangler.toml config, not code.
+
 ## Library Reference
 - Automerge: `systems/docs/website/public/llms/automerge-llms-full.txt`
 - kkrpc: `systems/docs/website/public/llms/kkrpc-llms-full.txt`

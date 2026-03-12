@@ -258,7 +258,7 @@ Gate: **do not proceed to Phase 3 until all three checks pass.** This is the who
 
 5. **Create demo Rust WASM module** in `lib/log/demo/` that emits structured `tracing` events (a few `info!`, `warn!`, `error!` with realistic fields like `system`, `modelId`, `opCount`). Load it in the demo worker alongside the existing TypeScript logging. **Critical: field names must match the TypeScript `LogEntry` schema exactly** — camelCase (`modelId`, `opCount`, `actorId`), not snake_case. The WASM JSON subscriber in `wasm.rs` must emit the same field names the TypeScript layer uses, so both merge cleanly in CF Query Builder. Reference: `LogEntry` type in `lib/log/index.ts`.
 6. **Verify all three outputs:**
-   - `bun run log demo` → open viewer → structured Rust JSON entries appear with queryable fields (`system`, `model_id`, etc.) merged alongside TypeScript entries
+   - `bun run log demo` → open viewer → structured Rust JSON entries appear with queryable fields (`system`, `modelId`, etc.) merged alongside TypeScript entries
    - `bun run log demo:cf` → `wrangler tail --format json` → same structured entries visible
    - `RUST_LOG=debug cargo test -p pt-log` → readable, coloured output on stderr, captured per-test
 
