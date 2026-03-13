@@ -1,0 +1,193 @@
+[tools]
+bun = "1.3.10"
+node = "25.8.1"
+"cargo:wasm-pack" = "0.14.0"
+
+[env]
+# Desktop default — override in mise.local.toml for prod: OBSERVE_BASE_URL = "https://your-worker.workers.dev"
+OBSERVE_BASE_URL    = "http://localhost"
+# Load secrets from .env.local (gitignored) — e.g. CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN
+_.file              = ".env.local"
+# ── Ports — single source of truth for all of lib/observe ─────────────────────
+DEMO1_PORT          = "3335"
+DEMO1_INSPECTOR     = "9240"
+DEMO2_PORT          = "3336"
+DEMO2_INSPECTOR     = "9241"
+DEMO1_BUN_PORT      = "3333"
+DEMO2_BUN_PORT      = "3334"
+DEMO_LINE_PORT      = "3337"
+ROUTER_PORT         = "8686"
+ROUTER_INSPECTOR    = "9250"
+TEST1_PORT          = "3340"
+TEST1_INSPECTOR     = "9248"
+TEST2_PORT          = "3341"
+TEST2_INSPECTOR     = "9252"
+
+# ── iOS ───────────────────────────────────────────────────────────────────────
+
+[tasks."ios:check"]
+description = "Check iOS 26.x simulator runtime is installed — diagnose before ios:dev"
+run = '''
+  echo "=== Xcode SDKs ==="
+  xcodebuild -showsdks 2>/dev/null | grep -i "ios sim" || echo "  (none)"
+  echo ""
+  echo "=== Simulator Runtimes ==="
+  xcrun simctl runtime list 2>/dev/null || echo "  (none)"
+  echo ""
+  echo "=== Available iPhone 16 Pro devices ==="
+  xcrun simctl list devices available 2>/dev/null | grep "iPhone 16 Pro" || echo "  (none)"
+  echo ""
+  if xcrun simctl runtime list 2>/dev/null | grep -q "iOS 26"; then
+    echo "✓ iOS 26.x runtime ready — run: mise run ios:dev"
+  else
+    echo "✗ iOS 26.x runtime missing — run: mise run ios:runtime  (~8GB, needs fast wifi)"
+  fi
+'''
+
+[tasks."ios:runtime"]
+description = "Download iOS 26.x simulator runtime (~8GB) — run on fast wifi before ios:dev"
+run = "echo 'Starting iOS runtime download (~8GB) …' && xcodebuild -downloadPlatform iOS && echo '✓ Done — run: mise run ios:dev'"
+
+[tasks."ios:dev"]
+description = "Build and launch in iPhone 16 Pro simulator (run ios:runtime first if needed)"
+run = '''
+  if ! xcrun simctl runtime list 2>/dev/null | grep -q "iOS 26"; then
+    echo "✗ iOS 26.x simulator runtime not installed."
+    echo "  Run: mise run ios:runtime  (~8GB download, needs fast wifi)"
+    exit 1
+  fi
+  bun run ios:dev
+'''
+
+[tasks."ios:open"]
+description = "Open Xcode project (fallback when headless build fails)"
+run = "bun run ios:open"
+
+# ── Dev ───────────────────────────────────────────────────────────────────────
+
+[tasks.dev]
+description = "Start router + all demos via wrangler multi-config dev"
+run = "bunx wrangler dev --port $ROUTER_PORT --inspector-port $ROUTER_INSPECTOR --config demo-main/wrangler.toml --config demo1/wrangler.toml --config demo2/wrangler.toml"
+
+[tasks."dev:all"]
+description = "Kill ports, then start router+demos and demo-line in parallel"
+depends = ["kill"]
+run = ["bun run dev", "bun run dev:line"]
+# depends runs kill first (sequential), then run array starts both in parallel
+
+[tasks.demo]
+description = "Start both CF demo workers + tail aggregator — Ctrl-C kills all"
+depends = ["kill"]
+run = '''
+  (cd demo1 && bunx wrangler dev worker.ts --port $DEMO1_PORT --inspector-port $DEMO1_INSPECTOR) &
+  (cd demo2 && bunx wrangler dev worker.ts --port $DEMO2_PORT --inspector-port $DEMO2_INSPECTOR) &
+  trap 'kill $(jobs -p) 2>/dev/null; true' EXIT INT TERM
+  bunx wait-on http://localhost:$DEMO1_PORT http://localhost:$DEMO2_PORT --timeout 30000
+  bun dev/tail.ts --port demo1:$DEMO1_PORT --port demo2:$DEMO2_PORT
+'''
+
+[tasks.tail]
+description = "Stream live logs — local SSE router or remote wrangler tail (set ROUTER_URL for remote)"
+run = '''
+  if [[ -n "${ROUTER_URL:-}" ]]; then
+    bunx wrangler tail --config demo1/wrangler.toml     2>&1 | sed "s/^/[log-demo] /" &
+    bunx wrangler tail --config demo2/wrangler.toml     2>&1 | sed "s/^/[log-demo-2] /" &
+    bunx wrangler tail --config demo-main/wrangler.toml 2>&1 | sed "s/^/[observe-router] /" &
+    trap 'kill $(jobs -p) 2>/dev/null; true' EXIT INT TERM
+    wait
+  else
+    bun dev/tail.ts --port demo1:$ROUTER_PORT/demo1 --port demo2:$ROUTER_PORT/demo2
+  fi
+'''
+
+# ── Generate ──────────────────────────────────────────────────────────────────
+
+[tasks.gen]
+description = "Generate all bindings from Rust types (incremental — skips if types.rs unchanged)"
+sources  = ["crate/src/types.rs", "crate/Cargo.toml"]
+outputs  = ["shared/schemas.json", "shared/log-entry.generated.ts", "shared/schemas.zod.ts", "shared/openapi.json"]
+run      = "bun run gen"
+
+[tasks."check:gen"]
+description = "Verify all generated files are up-to-date (CI staleness check)"
+run = ["bun run check:types", "bun run check:zod", "bun run check:openapi"]
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+[tasks."build:wasm"]
+description = "Build WASM (incremental — skips if crate src unchanged)"
+sources = ["crate/src/**/*.rs", "crate/Cargo.toml"]
+outputs = ["crate/pkg/plat_observe_bg.wasm"]
+run = "bun run build:wasm"
+
+[tasks."watch:wasm"]
+description = "Auto-rebuild WASM on every Rust source change — run: mise watch build:wasm"
+run = "mise watch build:wasm"
+
+# ── Test / CI ─────────────────────────────────────────────────────────────────
+
+[tasks.check]
+description = "Typecheck + Rust unit tests in parallel"
+run = ["bunx tsc --noEmit", "cargo test -p plat-observe --lib"]
+
+[tasks.test]
+description = "Integration tests — starts test workers, waits for ready, runs tests, kills all"
+depends = ["build:wasm"]
+run = '''
+  lsof -ti:$TEST1_PORT,$TEST2_PORT,$TEST1_INSPECTOR,$TEST2_INSPECTOR | xargs kill -9 2>/dev/null; true
+  (cd demo1 && bunx wrangler dev worker.ts --port $TEST1_PORT --inspector-port $TEST1_INSPECTOR) &
+  (cd demo2 && bunx wrangler dev worker.ts --port $TEST2_PORT --inspector-port $TEST2_INSPECTOR) &
+  trap 'kill $(jobs -p) 2>/dev/null; true' EXIT INT TERM
+  bunx wait-on http://localhost:$TEST1_PORT http://localhost:$TEST2_PORT --timeout 30000
+  bun tests/integration.test.ts
+'''
+
+[tasks."test:e2e"]
+description = "E2e tests — kills stale ports, starts both CF workers, waits for ready, runs playwright, kills all"
+depends = ["build:wasm"]
+run = '''
+  lsof -ti:$DEMO1_PORT,$DEMO2_PORT,$DEMO1_INSPECTOR,$DEMO2_INSPECTOR | xargs kill -9 2>/dev/null; true
+  (cd demo1 && bunx wrangler dev worker.ts --port $DEMO1_PORT --inspector-port $DEMO1_INSPECTOR) &
+  (cd demo2 && bunx wrangler dev worker.ts --port $DEMO2_PORT --inspector-port $DEMO2_INSPECTOR) &
+  trap 'kill $(jobs -p) 2>/dev/null; true' EXIT INT TERM
+  bunx wait-on http://localhost:$DEMO1_PORT http://localhost:$DEMO2_PORT --timeout 30000
+  bun tests/e2e.spec.ts
+'''
+
+[tasks.ci]
+description = "Full gate before push — WASM + gen first, then check + tests + staleness in parallel"
+depends = ["build:wasm", "gen"]
+run = ["bunx tsc --noEmit", "cargo test -p plat-observe --lib", "bun run test", "bun run check:gen"]
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+
+[tasks.deploy]
+description = "Deploy demo1 + demo2 then router to CF (service binding order)"
+run = '''
+  echo "▶ [1/3] log-demo (demo1) ..."
+  bunx wrangler deploy --config demo1/wrangler.toml
+  echo "▶ [2/3] log-demo-2 (demo2) ..."
+  bunx wrangler deploy --config demo2/wrangler.toml
+  echo "▶ [3/3] observe-router (demo-main) ..."
+  bunx wrangler deploy --config demo-main/wrangler.toml
+  echo "✓ All three workers deployed."
+'''
+
+[tasks."deploy:safe"]
+description = "CI gate then deploy — safe path to production"
+depends = ["ci"]
+run = "mise run deploy"
+
+# ── Setup / Kill ───────────────────────────────────────────────────────────────
+
+[tasks.setup]
+description = "One-time setup — install JS deps, initial WASM build, then generate all bindings"
+run = ["bun install", "mise run build:wasm", "bun run gen"]
+
+[tasks.kill]
+description = "Kill all lib/observe dev ports"
+run = "lsof -ti:$DEMO1_BUN_PORT,$DEMO2_BUN_PORT,$DEMO1_PORT,$DEMO2_PORT,$DEMO_LINE_PORT,$ROUTER_PORT,$DEMO1_INSPECTOR,$DEMO2_INSPECTOR,$ROUTER_INSPECTOR,$TEST1_PORT,$TEST2_PORT,$TEST1_INSPECTOR,$TEST2_INSPECTOR | xargs kill -9 2>/dev/null; true"
+
+[settings]
+lockfile = true
+# Rust toolchain is managed by ../../rust-toolchain.toml — do not duplicate here.

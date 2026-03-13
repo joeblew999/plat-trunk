@@ -1,0 +1,28 @@
+[package]
+name = "observe-tauri"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "observe_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+# Tauri v2
+tauri          = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+
+# Typed TypeScript bindings generated from Rust command signatures
+tauri-specta      = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+specta            = "=2.0.0-rc.22"
+specta-typescript = "=0.0.9"
+
+# Shared observe primitives — same crate as the WASM target
+plat-observe   = { path = "../../crate" }
+
+# Serialization
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+
+[build-dependencies]
+tauri-build    = { version = "2", features = [] }

@@ -1,0 +1,24 @@
+{
+  "name": "observe-tauri",
+  "private": true,
+  "scripts": {
+    "dev": "cargo tauri dev",
+    "run:prod": "open ../../target/release/bundle/macos/observe-demos.app",
+    "gen:bindings": "cargo build -p observe-tauri",
+    "gen:icons": "cargo tauri icon src-tauri/icons/icon-source.png",
+    "build": "bun run gen:bindings && bun run gen:icons && cargo tauri build",
+    "ios:init": "cargo tauri ios init",
+    "ios:runtime": "echo 'Downloading iOS simulator runtime (~8GB) — needs fast wifi' && xcodebuild -downloadPlatform iOS",
+    "ios:dev": "cargo tauri ios dev 'iPhone 16 Pro'",
+    "ios:build": "bun run gen:bindings && bun run gen:icons && cargo tauri ios build",
+    "ios:open": "open src-tauri/gen/apple/observe-tauri.xcodeproj",
+    "dev:workers": "bun ../dev/kill.ts && (bun ../demo1/bun.ts & bun ../demo2/bun.ts & wait)"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "bun-types": "^1.3.10"
+  }
+}

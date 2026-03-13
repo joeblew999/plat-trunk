@@ -6,6 +6,8 @@ members = [
     "systems/sync/crate",
 ]
 
+# lib/observe is a self-contained workspace — see lib/observe/Cargo.toml
+
 # Exclude vendored upstream workspaces from this workspace
 exclude = [
     ".src",

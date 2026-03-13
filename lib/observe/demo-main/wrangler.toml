@@ -1,0 +1,42 @@
+name = "observe-router"
+main = "worker.ts"
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── CF-native Observability ────────────────────────────────────────
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+# ─── Per-environment overrides ──────────────────────────────────────
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 0.1        # 10% sampling in high-volume production
+
+[env.production.observability.traces]
+enabled = true
+head_sampling_rate = 0.05       # 5% trace sampling in production
+
+# ─── Service bindings ──────────────────────────────────────────────
+[[services]]
+binding = "DEMO1"
+service = "log-demo"
+
+[[services]]
+binding = "DEMO2"
+service = "log-demo-2"

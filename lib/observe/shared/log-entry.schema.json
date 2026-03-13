@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LogEntry",
+  "type": "object",
+  "required": [
+    "event",
+    "kind",
+    "level",
+    "source",
+    "system",
+    "ts"
+  ],
+  "properties": {
+    "cfColo": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cfRay": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "durationMs": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double"
+    },
+    "env": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event": {
+      "type": "string"
+    },
+    "ip": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "$ref": "#/definitions/LogKind"
+    },
+    "level": {
+      "$ref": "#/definitions/LogLevel"
+    },
+    "method": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requestId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "service": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "spanId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stack": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint16",
+      "minimum": 0.0
+    },
+    "system": {
+      "type": "string"
+    },
+    "traceId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ts": {
+      "type": "string"
+    },
+    "userAgent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "LogKind": {
+      "type": "string",
+      "enum": [
+        "http",
+        "app",
+        "error"
+      ]
+    },
+    "LogLevel": {
+      "type": "string",
+      "enum": [
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ]
+    }
+  }
+}

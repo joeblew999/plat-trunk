@@ -13,3 +13,15 @@ name = "sync-tests"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]
+
+# ─── CF-native Observability ────────────────────────────────────────
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1

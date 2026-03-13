@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "observe-demos",
+  "version": "0.1.0",
+  "identifier": "net.ubuntusoftware.observe-demos",
+  "build": {
+    "beforeDevCommand": "bun run dev:workers",
+    "devUrl": "http://localhost:3333"
+  },
+  "app": {
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "iOS": {
+      "developmentTeam": "9Z237BG9S9"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

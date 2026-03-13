@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["@cloudflare/workers-types", "bun-types"],
+    "lib": ["ESNext", "DOM"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["demo*/**", "dev/**", "tests/**", "shared/worker.ts", "tail.ts"]
+}

@@ -44,6 +44,26 @@ service = "auth-worker"
 # Leave unset or "false" to keep MCP open (useful for local dev + AI agent testing).
 MCP_AUTH_ENABLED = "false"
 
+# ─── CF-native Observability ────────────────────────────────────────
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 0.1
+
+[env.production.observability.traces]
+enabled = true
+head_sampling_rate = 0.05
+
 [dev]
 ip = "0.0.0.0"
 port = 8789

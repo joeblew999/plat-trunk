@@ -1,0 +1,53 @@
+name = "log-demo-line"
+main = "worker.ts"
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── Static assets — browser WASM bundle (web target, built by build:wasm:web) ─
+# public/wasm/plat_observe.js + plat_observe_bg.wasm served at /wasm/*
+# Run `bun run build:wasm:web` to populate public/wasm/ before deploying.
+[assets]
+directory = "./public"
+
+# ─── LIFF ID (safe to commit — it is embedded in the HTML served to users) ────
+# Set this before deploying:  edit [vars] below  OR  wrangler deploy --var LIFF_ID:1234567890-xxxxxxxx
+[vars]
+LIFF_ID = ""
+
+# ─── Secrets (never commit values — set via wrangler CLI) ─────────────────────
+# bunx wrangler secret put CHANNEL_ACCESS_TOKEN
+# bunx wrangler secret put CHANNEL_SECRET
+
+# ─── CF-native Observability ──────────────────────────────────────────────────
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+# ─── Production env — set LIFF_ID before deploying ───────────────────────────
+# bunx wrangler deploy --env production
+[env.production.vars]
+LIFF_ID = ""   # fill in: LINE Developers Console → your channel → LIFF → LIFF ID
+
+# ─── Per-environment overrides ────────────────────────────────────────────────
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 0.1
+
+[env.production.observability.traces]
+enabled = true
+head_sampling_rate = 0.05

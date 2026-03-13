@@ -65,8 +65,9 @@ systems/docs/website/public/videos/*.webm
 # Env files — .env is tracked with defaults, .env.local has secrets
 .env.local
 
-# mise local overrides — has Cloudflare credentials, never commit
+# mise local overrides — personal credentials and URL overrides, never committed
 .mise.local.toml
+mise.local.toml
 
 # Local binaries (gh, shape-viewer, etc.)
 .bin/
@@ -93,3 +94,4 @@ systems/docs/website/public/videos/*.webm
 *.tmp
 *.bak
 *.orig
+.playwright-cli/

@@ -1,0 +1,12 @@
+{
+  "name": "observe-line",
+  "private": true,
+  "scripts": {
+    "build:wasm": "cd .. && wasm-pack build crate --out-dir pkg-web --target web --no-pack && mkdir -p demo-line/public/wasm && cp crate/pkg-web/plat_observe.js crate/pkg-web/plat_observe_bg.wasm demo-line/public/wasm/",
+    "dev": "bun run build:wasm && bunx wrangler dev worker.ts --port 3337",
+    "deploy": "bun run build:wasm && bunx wrangler deploy --env production",
+    "tail": "bunx wrangler tail log-demo-line",
+    "secret:token": "bunx wrangler secret put CHANNEL_ACCESS_TOKEN --env production",
+    "secret:secret": "bunx wrangler secret put CHANNEL_SECRET --env production"
+  }
+}

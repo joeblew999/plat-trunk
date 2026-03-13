@@ -1,0 +1,566 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "plat-observe API",
+    "version": "0.1.0",
+    "description": "Structured log buffer API for CF Workers and Bun. Schema generated from Rust structs via schemars."
+  },
+  "tags": [
+    {
+      "name": "logs",
+      "description": "Log buffer operations"
+    },
+    {
+      "name": "mcp",
+      "description": "Model Context Protocol — AI agent access to logs"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "EntryFilter": {
+        "properties": {
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LogKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LogLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "ISO timestamp — return entries with ts >= since",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "system": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "EntryFilter",
+        "type": "object"
+      },
+      "LogEntry": {
+        "properties": {
+          "cfColo": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cfRay": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "durationMs": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "env": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": "string"
+          },
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LogKind"
+          },
+          "level": {
+            "$ref": "#/components/schemas/LogLevel"
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "spanId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stack": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "format": "uint16",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "system": {
+            "type": "string"
+          },
+          "traceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "string"
+          },
+          "userAgent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "event",
+          "kind",
+          "level",
+          "source",
+          "system",
+          "ts"
+        ],
+        "title": "LogEntry",
+        "type": "object"
+      },
+      "LogKind": {
+        "enum": [
+          "http",
+          "app",
+          "error"
+        ],
+        "type": "string"
+      },
+      "LogLevel": {
+        "enum": [
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ],
+        "type": "string"
+      }
+    }
+  },
+  "paths": {
+    "/api/debug/logs": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Query log entries",
+        "description": "Return buffered log entries with optional filters.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by log source (browser, worker, ...)"
+          },
+          {
+            "name": "system",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by subsystem name"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/LogKind"
+            },
+            "description": "Filter by entry kind"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/LogLevel"
+            },
+            "description": "Minimum log level"
+          },
+          {
+            "name": "event",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by event name"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Return entries with ts >= since (ISO 8601)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "description": "Max entries to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Filtered log entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/LogEntry"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Clear log buffer",
+        "responses": {
+          "200": {
+            "description": "Buffer cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cleared": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/debug/logs/ingest": {
+      "post": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Ingest log entries (browser → worker flush)",
+        "description": "Accepts an array of LogEntry objects. Each entry is validated against the Rust-derived schema before ingestion.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/LogEntry"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Entries ingested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ingested": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "issues": {
+                      "type": "array"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/debug/logs/tail": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "SSE log tail (real-time stream)",
+        "description": "Server-Sent Events stream of new log entries. CF Workers safe (poll-based, no setInterval).",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by log source (browser, worker, ...)"
+          },
+          {
+            "name": "system",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by subsystem name"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/LogKind"
+            },
+            "description": "Filter by entry kind"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/LogLevel"
+            },
+            "description": "Minimum log level"
+          },
+          {
+            "name": "event",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by event name"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "description": "Return entries with ts >= since (ISO 8601)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "description": "Max entries to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of LogEntry objects",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/debug/logs/urls": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Get all log URL endpoints",
+        "description": "Returns local, production, and Cloudflare dashboard URLs. Useful for scripts and AI agents.",
+        "responses": {
+          "200": {
+            "description": "URL map",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "Model Context Protocol endpoint",
+        "description": "JSON-RPC 2.0 endpoint for AI agents (Claude, Gemini, Cursor).\n\nMethods: `initialize`, `tools/list`, `tools/call`\n\nTools: `query_logs` (EntryFilter), `get_trace` (traceId), `get_stats`, `clear_logs`\n\nTool inputSchemas are derived from Rust structs via schemars — same source as this spec.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "id",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "enum": [
+                      "2.0"
+                    ]
+                  },
+                  "id": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "initialize",
+                      "tools/list",
+                      "tools/call"
+                    ]
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC 2.0 response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

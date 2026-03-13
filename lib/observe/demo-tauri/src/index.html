@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lib/observe — Tauri shell</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; padding: 20px; max-width: 900px; }
+  h1  { font-size: 16px; margin-bottom: 4px; }
+  h2  { font-size: 13px; color: #a78bfa; margin: 16px 0 8px; }
+  .section { margin: 0 0 12px; padding: 10px 12px; background: #16213e; border-radius: 6px; }
+  .worker { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+  .worker.running .status { color: #4ade80; }
+  .worker.stopped .status { color: #94a3b8; }
+  .name  { width: 100px; font-weight: bold; }
+  .port  { color: #94a3b8; width: 50px; }
+  a { color: #60a5fa; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  button { background: #0f3460; color: #e0e0e0; border: 1px solid #1a4080; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; }
+  button:hover { background: #1a4080; }
+  #parity-log { background: #0a0a1a; border-radius: 4px; padding: 8px; max-height: 200px; overflow-y: auto; font-size: 11px; line-height: 1.5; min-height: 40px; }
+  #native-version { font-size: 11px; color: #94a3b8; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+  <h1>lib/observe — Tauri demo shell</h1>
+  <div id="native-version">loading...</div>
+
+  <div class="section">
+    <h2>Demo workers</h2>
+    <div id="workers">loading...</div>
+    <div class="btn-row" style="margin-top:8px">
+      <button onclick="pingWorkers()">ping all</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Native parity (plat-observe crate — no WASM)</h2>
+    <div class="btn-row">
+      <button onclick="nativeScrub()">native: scrub entry</button>
+      <button onclick="nativeSample(0.5)">native: sample(0.5)</button>
+      <button onclick="nativeSample(0.1)">native: sample(0.1)</button>
+    </div>
+    <div id="parity-log" style="margin-top:8px"></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

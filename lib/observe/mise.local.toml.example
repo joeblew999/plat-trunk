@@ -1,0 +1,12 @@
+# mise.local.toml — copy to mise.local.toml and fill in your values.
+# This file is gitignored. Never commit mise.local.toml.
+#
+# Usage: cp mise.local.toml.example mise.local.toml
+
+[env]
+# Override base URL when testing against prod/staging
+OBSERVE_BASE_URL = "https://your-worker.workers.dev"
+
+# Cloudflare credentials (used by wrangler deploy / tail)
+# CLOUDFLARE_ACCOUNT_ID = "your-account-id"
+# CLOUDFLARE_API_TOKEN = "your-api-token"

@@ -258,10 +258,10 @@ Historical ADRs were removed — their decisions are baked into the codebase and
 
 **Two-layer architecture** — Rust structured emission + TypeScript transport/UI:
 
-- **`lib/log/`** — TypeScript library: `LogBuffer`, Hono middleware (W3C traceparent), browser offline queue + flush, SSE viewer, debug routes. Isolated and tested, not yet wired into system workers.
-- **`lib/log/crate/`** — Rust `pt-log` crate (planned): `tracing` → structured JSON → `console.log()` on WASM, `tracing-subscriber` on native. CF Workers Logs auto-indexes all JSON fields.
-- **`bun run log demo`** — Bun demo on :3333. `bun run log demo:cf` — wrangler demo on :3335.
-- **`bun run log test`** — 30 unit tests. `bun run log test:int` — 24 integration tests (Playwright + wrangler).
+- **`lib/observe/`** — TypeScript library: `LogBuffer`, Hono middleware (W3C traceparent), browser offline queue + flush, SSE tail + terminal aggregator, debug routes. Self-contained with own `package.json`. Isolated and tested, not yet wired into system workers.
+- **`lib/observe/crate/`** — Rust `pt-log` crate (planned): `tracing` → structured JSON → `console.log()` on WASM, `tracing-subscriber` on native. CF Workers Logs auto-indexes all JSON fields.
+- **`cd lib/observe && bun run dev`** — runs both demos (demo1 on :3333, demo2 on :3334) + terminal aggregator.
+- **`cd lib/observe && bun run test`** — unit tests. `bun run test:int` — integration tests (Playwright + wrangler).
 - All CF observability (Logpush, Automatic Traces, OTLP export) is wrangler.toml config, not code.
 
 ## Library Reference
