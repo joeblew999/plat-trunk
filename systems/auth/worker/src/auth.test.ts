@@ -4,6 +4,8 @@
 //
 // These run inside a real Worker via vitest-pool-workers (wrangler.toml bindings active).
 
+/// <reference types="@cloudflare/vitest-pool-workers" />
+
 import { describe, it, expect } from 'vitest';
 import worker from './index';
 import { env } from 'cloudflare:test';

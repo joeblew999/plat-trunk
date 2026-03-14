@@ -2,9 +2,10 @@
 // Auth worker — Hono app wrapping better-auth-cloudflare.
 //
 // Routes:
-//   /auth/api/*   → better-auth handler (sign-in, sign-up, session, etc.)
-//   /auth/*       → static web UI (ASSETS binding — systems/auth/web/dist)
 //   /auth/health  → health check
+//   /auth/api/*   → better-auth handler (basePath: /auth/api)
+//   /auth/*       → static web UI (ASSETS binding — systems/auth/web/dist)
+//   /             → redirect → /auth/sign-in
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -16,9 +17,9 @@ type Bindings = CloudflareBindings & {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// CORS — allow requests from the main CAD app origin
+// CORS — allow the main CAD app to call auth API
 app.use('/auth/api/*', cors({
-  origin: ['https://cad.ubuntusoftware.net', 'http://localhost:8788'],
+  origin: ['https://cad.ubuntusoftware.net', 'http://localhost:8788', 'http://localhost:5174'],
   allowHeaders: ['Content-Type', 'Authorization'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
@@ -27,31 +28,20 @@ app.use('/auth/api/*', cors({
 // Health check
 app.get('/auth/health', (c) => c.json({ ok: true, service: 'auth-worker' }));
 
-// Session endpoint — used by truck UI to check auth state
-app.get('/auth/api/session', async (c) => {
+// better-auth API — forward full request URL, basePath is configured in auth.ts as /auth/api
+app.all('/auth/api/*', async (c) => {
   const auth = createAuth(c.env, c.req.raw.cf as IncomingRequestCfProperties);
   return auth.handler(c.req.raw);
 });
 
-// better-auth handles all /auth/api/* routes
-// Covers: /sign-in/email, /sign-up/email, /sign-out,
-//         /forget-password, /reset-password, /verify-email, /get-session
-app.all('/auth/api/*', async (c) => {
-  // Strip /auth prefix — better-auth expects routes without it
-  const url = new URL(c.req.url);
-  url.pathname = url.pathname.replace(/^\/auth/, '');
-  const auth = createAuth(c.env, c.req.raw.cf as IncomingRequestCfProperties);
-  return auth.handler(new Request(url.toString(), c.req.raw));
-});
-
-// Static web UI — sign-in/sign-up/reset pages
+// Static web UI — sign-in/sign-up/reset/verify pages
 app.all('/auth/*', async (c) => {
   const url = new URL(c.req.url);
   url.pathname = url.pathname.replace(/^\/auth/, '') || '/';
   return c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
 });
 
-// Root redirect → /auth/sign-in
+// Root redirect
 app.get('/', (c) => c.redirect('/auth/sign-in', 302));
 
 export default app;

@@ -49,3 +49,7 @@ ip = "0.0.0.0"
 port = 8790
 inspector_port = 9231
 local_protocol = "http"
+
+[vars]
+BETTER_AUTH_URL = "http://localhost:8788"  # router URL — auth is served at /auth/*
+BETTER_AUTH_SECRET = "hZ8Pekxmd21uT2JaViU8q0Uv+IEnKCrm+9NVAVO4LWc="

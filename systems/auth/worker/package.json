@@ -15,9 +15,11 @@
     "hono": "^4"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.13.0",
     "@cloudflare/workers-types": "^4",
+    "drizzle-kit": "^0.31.4",
     "typescript": "^5",
-    "wrangler": "^3",
-    "drizzle-kit": "^0.30"
+    "vitest": "^4.1.0",
+    "wrangler": "^3"
   }
 }

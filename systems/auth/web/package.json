@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "daisyui": "^5",
-    "@datastar-run/datastar": "^1"
+    "datastar": "^1"
   },
   "devDependencies": {
     "vite": "^6",

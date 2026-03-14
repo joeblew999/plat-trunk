@@ -12,21 +12,29 @@ import * as authSchema from './db/auth.schema';
 export type CloudflareBindings = {
   AUTH_DB: D1Database;
   AUTH_KV: KVNamespace;
+  BETTER_AUTH_URL: string;
+  BETTER_AUTH_SECRET: string;
 };
 
 export function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) {
   const db = env ? drizzle(env.AUTH_DB, { schema: authSchema }) : ({} as ReturnType<typeof drizzle>);
 
   return betterAuth({
+    // Match our URL structure: router serves auth at /auth/api/*
+    // better-auth default is /api/auth — we override to /auth/api
+    basePath: '/auth/api',
+    baseURL: env?.BETTER_AUTH_URL ?? 'http://localhost:8788',
+    secret: env?.BETTER_AUTH_SECRET,
+
     ...withCloudflare(
       {
         autoDetectIpAddress: true,
         geolocationTracking: true,
         cf: cf ?? {},
         d1: env
-          ? { db, options: { usePlural: true } }
+          ? { db: db as any, options: { usePlural: true } }
           : undefined,
-        kv: env?.AUTH_KV,
+        kv: env?.AUTH_KV as any,
       },
       {
         emailAndPassword: { enabled: true },
@@ -41,13 +49,14 @@ export function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfPrope
           window: 60,   // min KV TTL is 60s
           max: 100,
           customRules: {
-            '/sign-in/email':  { window: 60, max: 10 },
-            '/sign-up/email':  { window: 60, max: 5  },
-            '/forget-password':{ window: 60, max: 5  },
+            '/sign-in/email':   { window: 60, max: 10 },
+            '/sign-up/email':   { window: 60, max: 5  },
+            '/forget-password': { window: 60, max: 5  },
           },
         },
       }
     ),
+
     // Drizzle adapter for CLI schema generation (no env)
     ...(env
       ? {}
@@ -60,5 +69,5 @@ export function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfPrope
   });
 }
 
-// For CLI schema generation: `bunx @better-auth/cli generate`
+// For CLI schema generation: `bun run auth:generate`
 export const auth = createAuth();
