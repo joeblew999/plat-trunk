@@ -9,6 +9,7 @@ import { Hono } from 'hono';
 
 type Bindings = {
   DOCS_ASSETS: Fetcher;
+  AUTH: Fetcher;
   TRUCK: Fetcher;
   TEST: Fetcher;
   // Future systems — add binding here + [[services]] in wrangler.toml when worker is deployed:
@@ -73,6 +74,15 @@ app.all('/test/*', async (c) => {
   const stripped = new URL(c.req.url);
   stripped.pathname = stripped.pathname.replace(/^\/test/, '') || '/';
   return c.env.TEST.fetch(new Request(stripped.toString(), c.req.raw));
+});
+
+// ── Auth worker ──────────────────────────────────────────
+// Handles: /auth/api/* (better-auth REST), /auth/* (web UI pages)
+
+app.get('/auth', (c) => c.redirect('/auth/sign-in', 301));
+
+app.all('/auth/*', async (c) => {
+  return c.env.AUTH.fetch(c.req.raw);
 });
 
 // ── System API routes ────────────────────────────────────

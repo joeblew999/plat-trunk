@@ -1,5 +1,11 @@
 {
   "workers": {
+    "auth": {
+      "name": "auth-worker",
+      "domain": "gedw99.workers.dev",
+      "dir": "systems/auth/worker",
+      "production": "https://auth-worker.gedw99.workers.dev"
+    },
     "truck": {
       "name": "truck-cad",
       "domain": "gedw99.workers.dev",
