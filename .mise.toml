@@ -1,0 +1,14 @@
+# .mise.toml — tool version pins for plat-trunk
+#
+# Install: https://mise.jdx.dev
+# Usage:   mise install   (installs all tools at pinned versions)
+#
+# Secrets: copy .mise.local.toml.example → .mise.local.toml and fill in values.
+# .mise.local.toml is gitignored — never commit it.
+#
+# Rust version is pinned separately in rust-toolchain.toml (wasm targets + components).
+# mise respects rust-toolchain.toml automatically.
+
+[tools]
+bun  = "1"      # JS runtime + package manager — https://bun.sh
+node = "22"     # Required by wrangler CLI
