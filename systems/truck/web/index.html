@@ -70,7 +70,8 @@
     sketchRectW: 2, sketchRectH: 1, sketchExtH: 1,
     sketchConType: '', sketchConVal: 1, sketchConVal2: 0,
     statusMode: '',
-    storagePct: 0, presenceCount: 0
+    storagePct: 0, presenceCount: 0,
+    authUser: ''
 }"
 data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
 
@@ -93,6 +94,17 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             <span class="tb-sep"></span>
             <a href="/docs/" class="btn btn-ghost btn-xs opacity-40" title="Documentation">Docs</a>
             <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
+            <span class="tb-sep"></span>
+            <!-- Auth: sign-in link when unauthenticated, avatar + sign-out when authenticated -->
+            <a href="/auth/sign-in" class="btn btn-ghost btn-xs opacity-60"
+               data-show="!$authUser" title="Sign in">Sign in</a>
+            <div class="flex items-center gap-1" data-show="$authUser">
+              <span class="text-xs opacity-50" data-text="$authUser"></span>
+              <button class="btn btn-ghost btn-xs opacity-60" title="Sign out"
+                      data-on:click="window.authSignOut()">
+                <svg xmlns="http://www.w3.org/2000/svg" class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              </button>
+            </div>
         </div>
     </header>
 

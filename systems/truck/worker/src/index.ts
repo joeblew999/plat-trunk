@@ -15,6 +15,7 @@ import { replayModel } from './replay';
 type Bindings = {
   ASSETS: Fetcher;
   MODELS: R2Bucket;
+  AUTH: Fetcher;  // auth-worker service binding — session verification
 };
 
 // app and api are created later via chained .openapi() calls for type export
@@ -786,6 +787,30 @@ const app = new OpenAPIHono<{ Bindings: Bindings }>()
   .use('/api/*', cors())
   .use('/api/*', async (_c, next) => { gcModels(); return next(); })
   .route('/api', api);
+
+// ── Auth session helper ───────────────────────────────────────────────────
+// Call this in any route handler to verify the current session via the
+// AUTH service binding. Returns the session user or null (never throws).
+//
+// Usage:
+//   const user = await getSession(c);
+//   if (!user) return c.json({ error: 'Unauthorized' }, 401);
+//
+async function getSession(c: { env: Bindings; req: { raw: Request } }) {
+  if (!c.env.AUTH) return null; // AUTH binding not wired (local dev without auth worker)
+  try {
+    const res = await c.env.AUTH.fetch(
+      new Request('https://auth/api/get-session', {
+        headers: c.req.raw.headers, // forward cookies + auth headers
+      })
+    );
+    if (!res.ok) return null;
+    const data = await res.json<{ user?: { id: string; email: string; name: string } }>();
+    return data?.user ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // OpenAPI spec + Scalar docs UI (cast needed: .use() returns Hono, not OpenAPIHono)
 (app as unknown as OpenAPIHono<{ Bindings: Bindings }>).doc('/api/openapi.json', {

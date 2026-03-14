@@ -33,6 +33,11 @@ not_found_handling = "none"
 binding = "MODELS"
 bucket_name = "cad-documents"
 
+# Auth worker — session verification via service binding (no public HTTP)
+[[services]]
+binding = "AUTH"
+service = "auth-worker"
+
 [dev]
 ip = "0.0.0.0"
 port = 8789
