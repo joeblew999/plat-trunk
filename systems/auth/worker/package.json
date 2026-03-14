@@ -1,0 +1,23 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "auth:generate": "bunx @better-auth/cli@latest generate --config src/auth.ts --output src/db/auth.schema.ts -y",
+    "auth:migrate:local": "wrangler d1 migrations apply auth-db --local",
+    "auth:migrate:prod": "wrangler d1 migrations apply auth-db --remote",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-auth": "^1",
+    "better-auth-cloudflare": "^0.2",
+    "drizzle-orm": "^0.38",
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "typescript": "^5",
+    "wrangler": "^3",
+    "drizzle-kit": "^0.30"
+  }
+}

@@ -1,0 +1,51 @@
+# ───────────────────────────────────────────────────────
+# auth-worker — Authentication sub-worker
+# ───────────────────────────────────────────────────────
+#
+# better-auth-cloudflare on Hono. Handles:
+#   - REST auth API (/auth/api/*)
+#   - Web UI static assets (/auth/*)
+#
+# Bindings:
+#   AUTH_DB  — D1 SQLite (users, sessions, accounts)
+#   AUTH_KV  — KV namespace (session cache, rate limiting)
+#
+# Accessed via AUTH service binding from plat-router.
+# Direct: http://localhost:8790 (dev)
+#
+# Setup:
+#   wrangler d1 create auth-db
+#   wrangler kv namespace create AUTH_KV
+#   bun run auth:migrate
+# ───────────────────────────────────────────────────────
+
+name = "auth-worker"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+# Auth web UI — static assets served at /auth/*
+# Source: systems/auth/web/dist/ (built by Vite via bun run build)
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "none"
+
+# D1 SQLite — users, sessions, accounts, verifications
+[[d1_databases]]
+binding = "AUTH_DB"
+database_name = "auth-db"
+database_id = "REPLACE_WITH_D1_ID"  # wrangler d1 create auth-db
+
+# KV — session cache + rate limit counters (min TTL 60s)
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "REPLACE_WITH_KV_ID"  # wrangler kv namespace create AUTH_KV
+
+[dev]
+ip = "0.0.0.0"
+port = 8790
+inspector_port = 9231
+local_protocol = "http"
