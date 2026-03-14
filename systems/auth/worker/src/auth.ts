@@ -25,6 +25,11 @@ export function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfPrope
     basePath: '/auth/api',
     baseURL: env?.BETTER_AUTH_URL ?? 'http://localhost:8788',
     secret: env?.BETTER_AUTH_SECRET,
+    trustedOrigins: [
+      'http://localhost:8788',
+      'http://localhost:5174',
+      'https://cad.ubuntusoftware.net',
+    ],
 
     ...withCloudflare(
       {
