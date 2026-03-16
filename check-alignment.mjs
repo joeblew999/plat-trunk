@@ -40,7 +40,9 @@ function outDirs(str) {
 }
 
 const systemsDir = resolve(ROOT, 'systems');
-const systemNames = readdirSync(systemsDir);
+// plugin = plugin engine (no worker); plugins = plugin implementations (no worker)
+const SYSTEM_EXCLUDE = new Set(['plugin', 'plugins']);
+const systemNames = readdirSync(systemsDir).filter(s => !SYSTEM_EXCLUDE.has(s));
 
 // ── 1. Every systems/* has a system.mjs ────────────────────────────────────
 console.log('\n[1] system.mjs presence');
