@@ -42,6 +42,10 @@ sync_repo "$SRC_DIR/truck" "https://github.com/virtualritz/monstertruck.git"
 git -C "$SRC_DIR/truck" submodule update --init --recursive --quiet 2>/dev/null || \
   warn "truck: submodule init failed (golden test resources may be missing)"
 ok "truck submodules initialised"
+# Patch resources: rename old BSplineCurve → BsplineCurve (monstertruck renamed the variant)
+find "$SRC_DIR/truck/resources" -name "*.json" -exec \
+  sed -i 's/"BSplineCurve":/"BsplineCurve":/g' {} \; 2>/dev/null || true
+ok "truck resources patched (BSplineCurve → BsplineCurve)"
 
 # .src/ifc-lite — BIM/IFC parser
 # GIT_LFS_SKIP_SMUDGE=1: skip large test model downloads, only Rust source needed
