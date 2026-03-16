@@ -51,7 +51,16 @@ export async function boot() {
 
     // Plugin system — must come after state.ts sets window.cadCommand
     const { initPluginManager } = await import('./plugin-manager-ui');
-    initPluginManager();
+    const pluginMgr = initPluginManager();
+
+    // Auto-load first-party plugins (served at /plugins/{name}/ by Vite dev / wrangler ASSETS prod)
+    // Failures are non-fatal — a missing or broken plugin should never block the app
+    const BUILTIN_PLUGINS = ['example', 'howick'];
+    for (const name of BUILTIN_PLUGINS) {
+        pluginMgr.loadBuiltin(`/plugins/${name}`).catch(err => {
+            console.warn(`[plugins] Failed to load builtin "${name}":`, err);
+        });
+    }
 
     // ── 3. Wait for WASM SceneController ────────────────────────────
     await waitFor(() => window.sceneController, 6000, 'WASM SceneController');

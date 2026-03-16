@@ -137,6 +137,35 @@ pub struct ObjectIdParam {
     pub object_id: String,
 }
 
+/// Add a B-Rep solid described as a swept polyline cross-section.
+///
+/// Used by plugins (e.g. Howick) that compute geometry in their own WASM kernel
+/// and need to hand the resulting B-Rep description to the host CAD engine.
+///
+/// `geometry` is an opaque JSON object produced by the plugin's WASM kernel.
+/// The host interprets the `type` field to select the construction strategy:
+///
+/// - `"swept_polyline"`: sweep a 2D polyline cross-section along an axis.
+///   Required fields: `cross_section` ([[y,z]…]), `sweep_length` (mm),
+///   `sweep_axis` ([dx,dy,dz]), `origin` ([x,y,z]), `rotation_deg`, `thickness`.
+///
+/// `meta` is stored on the resulting object verbatim and returned in get_state /
+/// export_scene so plugins can recover their domain data (e.g. Howick member params).
+///
+/// NOTE: This command is intentionally duplicated in headless.rs and wasm_app.rs
+/// pending ADR-0002 (GeometryStore). Remove duplication when that lands.
+#[derive(Deserialize, Serialize, JsonSchema)]
+pub struct AddBrepParams {
+    /// Geometry description produced by the plugin WASM kernel.
+    pub geometry: serde_json::Value,
+    /// Domain metadata stored on the object (e.g. Howick member params).
+    #[serde(default)]
+    pub meta: serde_json::Value,
+    /// Human-readable name for the object. Defaults to the geometry type.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 // ─── Schema entries ─────────────────────────────────────────────
 
 pub fn schema_entries() -> Vec<SchemaEntry> {
@@ -149,5 +178,7 @@ pub fn schema_entries() -> Vec<SchemaEntry> {
         ("rotate", "Rotate an object around an axis", schema_for::<RotateParams>(), "success", false, false, "geometry"),
         ("scale", "Scale an object by sx/sy/sz", schema_for::<ScaleParams>(), "success", false, false, "geometry"),
         ("duplicate", "Duplicate an object", schema_for::<ObjectIdParam>(), "objectId", false, false, "geometry"),
+        // NOTE: duplicated in headless.rs + wasm_app.rs — move to GeometryStore in ADR-0002
+        ("add_brep", "Add a B-Rep solid from a plugin geometry description", schema_for::<AddBrepParams>(), "objectId", false, false, "geometry"),
     ]
 }

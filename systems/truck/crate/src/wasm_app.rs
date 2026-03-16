@@ -1169,9 +1169,97 @@ impl SceneController {
         id
     }
 
-    // =====================================================================
-    // Transforms
-    // =====================================================================
+    /// Add a B-Rep from a plugin geometry description (add_brep command).
+    /// NOTE: Intentionally duplicated in headless.rs + wasm_app.rs.
+    /// Will move to GeometryStore when ADR-0002 lands.
+    pub fn add_brep_from_params(&self, params: &AddBrepParams) -> Result<String, String> {
+        let geo = &params.geometry;
+        let geo_type = geo.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
+        match geo_type {
+            "swept_polyline" => self.add_brep_swept_polyline(params),
+            other => Err(format!("add_brep: unknown geometry type '{}'", other)),
+        }
+    }
+
+    fn add_brep_swept_polyline(&self, params: &AddBrepParams) -> Result<String, String> {
+        let geo = &params.geometry;
+
+        let cross_section: Vec<[f64; 2]> = geo.get("cross_section")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .ok_or("add_brep: missing or invalid cross_section")?;
+
+        if cross_section.len() < 3 {
+            return Err("add_brep: cross_section needs at least 3 points".into());
+        }
+
+        let sweep_length: f64 = geo.get("sweep_length")
+            .and_then(|v| v.as_f64())
+            .ok_or("add_brep: missing sweep_length")?;
+
+        if sweep_length <= 0.0 {
+            return Err(format!("add_brep: sweep_length must be positive, got {}", sweep_length));
+        }
+
+        let origin: [f64; 3] = geo.get("origin")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or([0.0, 0.0, 0.0]);
+
+        let rotation_deg: f64 = geo.get("rotation_deg")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        // Scale from mm → metres
+        let scale = 1.0 / 1000.0;
+        let length = sweep_length * scale;
+        let ox = origin[0] * scale;
+        let oy = origin[1] * scale;
+        let oz = origin[2] * scale;
+
+        // Bounding-box approximation of the cross-section (pending ADR-0002)
+        let ys: Vec<f64> = cross_section.iter().map(|p| p[0]).collect();
+        let zs: Vec<f64> = cross_section.iter().map(|p| p[1]).collect();
+        let y_min = ys.iter().cloned().fold(f64::INFINITY, f64::min);
+        let y_max = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let z_min = zs.iter().cloned().fold(f64::INFINITY, f64::min);
+        let z_max = zs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        let width  = (y_max - y_min) * scale;
+        let height = (z_max - z_min) * scale;
+
+        let solid = match make_cube(1.0) {
+            Ok(s) => s,
+            Err(e) => return Err(format!("add_brep: cube primitive failed: {}", e)),
+        };
+        let solid = builder::scaled(&solid, Point3::origin(), Vector3::new(length, width, height));
+        let solid = if rotation_deg.abs() > 1e-6 {
+            builder::rotated(&solid, Point3::origin(), Vector3::new(1.0, 0.0, 0.0),
+                Rad(rotation_deg * std::f64::consts::PI / 180.0))
+        } else { solid };
+        let solid = builder::translated(&solid, Vector3::new(ox, oy, oz));
+
+        let kind = params.name.as_deref().unwrap_or_else(|| {
+            params.meta.get("howick")
+                .and_then(|h| h.get("profile"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("BRep")
+        });
+
+        let bim = if !params.meta.is_null() {
+            let mut props: HashMap<String, String> = HashMap::new();
+            props.insert("plugin_meta".into(), params.meta.to_string());
+            Some(BimMetadata {
+                ifc_type: format!("Plugin:{}", kind),
+                global_id: format!("plugin:{}", kind),
+                properties: props,
+            })
+        } else {
+            None
+        };
+
+        log!("WASM: add_brep swept_polyline kind={} length={}mm", kind, sweep_length);
+        let mut s = self.state.borrow_mut();
+        Ok(add_solid_to_state(&mut s, solid, kind, bim))
+    }
 
     #[wasm_bindgen]
     pub fn translate_object(&self, id: &str, dx: f64, dy: f64, dz: f64) -> bool {
@@ -2463,6 +2551,16 @@ impl SceneController {
                 match params.validate() {
                     Err(e) => serde_json::json!({ "error": e }),
                     Ok(()) => serde_json::json!({ "objectId": self.add_torus(params.major_radius, params.minor_radius) }),
+                }
+            }
+            // NOTE: duplicated in headless.rs + wasm_app.rs — move to GeometryStore in ADR-0002
+            "add_brep" => {
+                match serde_json::from_value::<AddBrepParams>(p) {
+                    Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
+                    Ok(params) => match self.add_brep_from_params(&params) {
+                        Ok(id) => serde_json::json!({ "objectId": id }),
+                        Err(e) => serde_json::json!({ "error": e }),
+                    },
                 }
             }
 

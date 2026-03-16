@@ -24,7 +24,7 @@ use schemars::JsonSchema;
 // Re-export param types so `use crate::commands::*` still works.
 // Use named re-exports to avoid ambiguity on schema_entries().
 pub use geometry::{AddCubeParams, AddSphereParams, AddCylinderParams, AddTorusParams,
-                   TranslateParams, RotateParams, ScaleParams, ObjectIdParam};
+                   TranslateParams, RotateParams, ScaleParams, ObjectIdParam, AddBrepParams};
 pub use booleans::BooleanParams;
 pub use sketch::{BeginSketchParams, SketchAddPointParams, SketchAddEdgeParams,
                  SketchAddConstraintParams, SketchExtrudeParams, QuickRectExtrudeParams};
