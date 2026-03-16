@@ -21,9 +21,11 @@ import { fileURLToPath } from 'url';
 import { building as syncBuilding } from '../systems/sync/system.mjs';
 import { building as truckBuilding } from '../systems/truck/system.mjs';
 import { building as docsBuilding } from '../systems/docs/system.mjs';
+import { building as authBuilding } from '../systems/auth/system.mjs';
 
 const SYSTEMS = [
   syncBuilding,
+  authBuilding,
   truckBuilding,
   docsBuilding,
   // mvtBuilding,   ← add when systems/mvt/system.mjs exists
