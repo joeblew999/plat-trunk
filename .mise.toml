@@ -19,14 +19,49 @@ gh        = "latest"  # GitHub CLI — manage secrets, PRs, releases
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
 run = "bash scripts/src-sync.sh"
 
+# ── Secrets management ────────────────────────────────────────────────────────
+# Secrets live in .mise.local.toml (gitignored).
+# mise run secrets:set  →  pushes them to GitHub Actions.
+# See .mise.local.toml.example for provenance, create URLs, and rotation steps.
+
 [tasks."secrets:set"]
-description = "Push local secrets from .mise.local.toml to GitHub repo secrets via gh"
+description = "Push all secrets from .mise.local.toml → GitHub Actions (run after any rotation)"
 run = """
+: "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN not set — see .mise.local.toml.example}"
+: "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID not set — see .mise.local.toml.example}"
+: "${GITHUB_TOKEN:?GITHUB_TOKEN not set — see .mise.local.toml.example}"
 printf '%s' "$CLOUDFLARE_API_TOKEN"  | gh secret set CLOUDFLARE_API_TOKEN  --repo joeblew999/plat-trunk
 printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | gh secret set CLOUDFLARE_ACCOUNT_ID --repo joeblew999/plat-trunk
-echo "✓ secrets pushed to GitHub"
+echo "✓ secrets pushed to GitHub Actions"
+echo "  Rotate URLs:"
+echo "    Cloudflare token:  https://dash.cloudflare.com/profile/api-tokens"
+echo "    GitHub token:      https://github.com/settings/tokens"
 """
 
 [tasks."secrets:list"]
-description = "List GitHub repo secrets"
+description = "List all GitHub Actions secrets for this repo"
 run = "gh secret list --repo joeblew999/plat-trunk"
+
+[tasks."secrets:rotate"]
+description = "Reminder: open rotation URLs then re-run secrets:set"
+run = """
+echo "── Rotation steps ───────────────────────────────────────────────"
+echo " 1. Cloudflare API token:"
+echo "    https://dash.cloudflare.com/profile/api-tokens  → Roll token"
+echo " 2. GitHub token:"
+echo "    https://github.com/settings/tokens              → Regenerate"
+echo " 3. Update .mise.local.toml with new values"
+echo " 4. mise run secrets:set"
+echo " 5. Revoke old tokens at each provider dashboard"
+echo "────────────────────────────────────────────────────────────────"
+"""
+
+# ── Repo visibility ───────────────────────────────────────────────────────────
+
+[tasks."repo:public"]
+description = "Pre-flight secret scan then make repo public (enables free GitHub Actions CI)"
+run = "bash scripts/repo-public.sh"
+
+[tasks."repo:private"]
+description = "Make repo private"
+run = "gh repo edit joeblew999/plat-trunk --visibility private"

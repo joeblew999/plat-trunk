@@ -1,11 +1,50 @@
-# .mise.local.toml.example — copy to .mise.local.toml and fill in values.
+# .mise.local.toml.example — secrets provenance + rotation guide
 #
-# .mise.local.toml is gitignored. Never commit it.
-# These vars are available to all commands run via mise (wrangler, bun, etc.)
+# ── Setup ────────────────────────────────────────────────────────────────────
+#   cp .mise.local.toml.example .mise.local.toml
+#   # fill in values below, then:
+#   mise run secrets:set       # push all secrets → GitHub Actions
 #
-# Cloudflare API token: https://dash.cloudflare.com/profile/api-tokens
-# Required permissions: Workers (edit), D1 (edit), KV (edit), R2 (edit)
+# ── Rotation ─────────────────────────────────────────────────────────────────
+#   1. Generate a new token at the URL listed below each secret
+#   2. Update the value in .mise.local.toml
+#   3. mise run secrets:set    # re-push to GitHub
+#   4. Revoke the old token at the provider dashboard
+#
+# ── Rules ────────────────────────────────────────────────────────────────────
+#   NEVER commit this file  (.gitignore already blocks it)
+#   Store values in a password manager (1Password, Bitwarden, etc.)
+#   Rotate every 90 days, or immediately after any accidental exposure
+#   After exposure: rotate FIRST, then clean git history if needed
+#
+# ── What lives where ─────────────────────────────────────────────────────────
+#   Local dev  →  .mise.local.toml        (this file, gitignored)
+#   CI         →  GitHub Actions secrets  (mise run secrets:set pushes them)
+#   Agents     →  Claude memory           (token names only, never values)
 
 [env]
-CLOUDFLARE_API_TOKEN  = "your-cloudflare-api-token-here"
+
+# ── Cloudflare ────────────────────────────────────────────────────────────────
+# Account ID
+#   Where:  https://dash.cloudflare.com → right sidebar "Account ID"
+#   Rotate: n/a (stable identifier, not a credential)
 CLOUDFLARE_ACCOUNT_ID = "your-cloudflare-account-id-here"
+
+# API Token
+#   Create:  https://dash.cloudflare.com/profile/api-tokens → Create Token
+#   Template: "Edit Cloudflare Workers", then also add:
+#     Workers KV Storage: Edit
+#     Workers D1: Edit
+#     Workers R2 Storage: Edit
+#     Zone DNS: Edit  (needed for custom domain routing)
+#   Scope:   Account — your account only
+#   Rotate:  https://dash.cloudflare.com/profile/api-tokens → token → Roll
+CLOUDFLARE_API_TOKEN = "your-cloudflare-api-token-here"
+
+# ── GitHub ────────────────────────────────────────────────────────────────────
+# Personal Access Token (classic)
+#   Create:  https://github.com/settings/tokens/new
+#   Scopes:  repo, workflow
+#   Used for: gh CLI auth, mise install rate-limit bypass, git push from agents
+#   Rotate:  https://github.com/settings/tokens → token → Regenerate
+GITHUB_TOKEN = "your-github-token-here"
