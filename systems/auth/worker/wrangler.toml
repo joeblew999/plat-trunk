@@ -1,0 +1,53 @@
+# ───────────────────────────────────────────────────────
+# auth-worker — Authentication sub-worker
+# ───────────────────────────────────────────────────────
+#
+# Base better-auth v1.5 on Hono. Handles:
+#   - REST auth API (/auth/api/*)   — better-auth handler
+#   - Web UI (/auth/*)              — static pages (sign-in, sign-up, etc.)
+#   - Migration (/auth/migrate)     — POST to run DB migrations
+#
+# Bindings:
+#   AUTH_DB  — D1 SQLite (users, sessions, accounts + plugin tables)
+#   AUTH_KV  — KV namespace (secondary storage: session cache, rate limits)
+#
+# Accessed via AUTH service binding from plat-router.
+# Direct: http://localhost:8790 (dev)
+#
+# First-time setup (MacBook):
+#   wrangler d1 create auth-db
+#   wrangler kv namespace create AUTH_KV
+#   → paste IDs below, then: POST /auth/migrate
+# ───────────────────────────────────────────────────────
+
+name = "auth-worker"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "none"
+
+[[d1_databases]]
+binding = "AUTH_DB"
+database_name = "auth-db"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[kv_namespaces]]
+binding = "AUTH_KV"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+BETTER_AUTH_URL    = "http://localhost:8788"
+# BETTER_AUTH_SECRET is a Cloudflare secret — set via: wrangler secret put BETTER_AUTH_SECRET
+# Never put real secrets here. Run: openssl rand -base64 32
+
+[dev]
+ip = "0.0.0.0"
+port = 8790
+inspector_port = 9231
+local_protocol = "http"

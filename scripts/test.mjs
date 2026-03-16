@@ -23,10 +23,12 @@ import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 // To add a system: add one import + push to SYSTEMS
 import { testing as truckTesting } from '../systems/truck/system.mjs';
 import { testing as syncTesting } from '../systems/sync/system.mjs';
+import { testing as authTesting } from '../systems/auth/system.mjs';
 
 const SYSTEMS = [
   truckTesting,
   syncTesting,
+  authTesting,
   // mvtTesting,   ← add when systems/mvt/system.mjs exists
   // ifcTesting,   ← add when systems/ifc/system.mjs exists
 ];

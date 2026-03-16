@@ -88,6 +88,20 @@ export async function boot() {
     await refreshBudget();
 
     // ── 7. Ready ────────────────────────────────────────────────────
+
+    // ── 7. Auth session ─────────────────────────────────────────────
+    // Non-blocking — fetch session in background, populate $authUser signal if logged in.
+    // Fails silently if auth worker is not running (local dev without auth).
+    fetch('/auth/api/get-session', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then((data: any) => {
+            const email = data?.user?.email ?? '';
+            if (email && (window as any).__ds) {
+                (window as any).__ds.signals.authUser = email;
+            }
+        })
+        .catch(() => {}); // auth worker not running — silently ignore
+
     window.__appReady = true;
     document.getElementById('loading-overlay')?.remove();
     console.log('App ready.');

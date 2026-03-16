@@ -16,10 +16,12 @@ import { workers as syncWorkers }                                from './systems
 import { workers as truckWorkers, devServers as truckDevServers } from './systems/truck/system.mjs';
 import { workers as testWorkers }                                from './systems/test/system.mjs';
 import { devServers as docsDevServers }                          from './systems/docs/system.mjs';
+import { workers as authWorkers, devServers as authDevServers }  from './systems/auth/system.mjs';
 
 export const workers = [
   { name: 'plat-router', dir: '.', port: 8788, inspectorPort: 9229 },
   ...syncWorkers,
+  ...authWorkers,
   ...truckWorkers,
   ...testWorkers,
 ];
@@ -27,4 +29,5 @@ export const workers = [
 export const devServers = [
   ...truckDevServers,
   ...docsDevServers,
+  ...authDevServers,
 ];
