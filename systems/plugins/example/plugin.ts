@@ -1,4 +1,4 @@
-/// <reference types="../types/index.d.ts" />
+/// <reference types="../../plugin/types/index.d.ts" />
 /**
  * plugin.ts — Example plat-trunk plugin logic.
  *

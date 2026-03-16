@@ -1,0 +1,18 @@
+{
+  "id": "com.plat-trunk.howick",
+  "name": "Howick",
+  "version": "0.1.0",
+  "description": "Howick cold-formed steel framing — generate members, stud layouts, and export cut lists.",
+  "code": "plugin.js",
+  "ui": "index.html",
+  "wasm": "crate/pkg/howick_bg.wasm",
+  "icon": "icon.svg",
+  "permissions": [
+    "model:read",
+    "model:write",
+    "selection:read",
+    "selection:write",
+    "allow:storage",
+    "allow:export"
+  ]
+}
