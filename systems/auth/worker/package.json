@@ -1,6 +1,7 @@
 {
   "type": "module",
   "scripts": {
+    "postinstall": "bun scripts/patch-better-auth.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "auth:generate": "npx auth@latest generate --output src/db/auth.schema.ts -y",
