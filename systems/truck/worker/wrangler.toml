@@ -34,9 +34,11 @@ binding = "MODELS"
 bucket_name = "cad-documents"
 
 # Auth worker — session verification via service binding (no public HTTP)
+# optional = true: allows tests + local dev to run without auth-worker
 [[services]]
 binding = "AUTH"
 service = "auth-worker"
+optional = true
 
 # Feature flags
 [vars]

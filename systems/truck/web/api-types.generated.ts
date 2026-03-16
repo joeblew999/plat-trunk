@@ -623,6 +623,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cad/{modelId}/async/add_brep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a B-Rep solid from a plugin geometry description */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @example default */
+                    modelId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["add_brepRequest"];
+                };
+            };
+            responses: {
+                /** @description Queued */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommandQueued"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cad/{modelId}/sync/add_brep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a B-Rep solid from a plugin geometry description (waits for result) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @example default */
+                    modelId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["add_brepRequest"];
+                };
+            };
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommandResult"];
+                    };
+                };
+                /** @description Timeout */
+                504: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cad/{modelId}/async/add_cube": {
         parameters: {
             query?: never;
@@ -4582,6 +4675,20 @@ export interface components {
             status: "done" | "error" | "timeout";
             result?: unknown;
             error?: string;
+        };
+        add_brepRequest: {
+            /** @description Geometry description produced by the plugin WASM kernel. */
+            geometry: string;
+            /**
+             * @description Domain metadata stored on the object (e.g. Howick member params).
+             * @default null
+             */
+            meta: string;
+            /**
+             * @description Human-readable name for the object. Defaults to the geometry type.
+             * @default null
+             */
+            name: string | null;
         };
         add_cubeRequest: {
             /** @default 1 */

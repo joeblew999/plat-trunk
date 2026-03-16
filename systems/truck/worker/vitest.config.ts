@@ -9,6 +9,15 @@ export default defineWorkersConfig({
           configPath: './wrangler.toml',
         },
         main: 'src/index.ts',
+        miniflare: {
+          // Provide a stub AUTH service so tests run without auth-worker deployed
+          serviceBindings: {
+            AUTH: async () => new Response(JSON.stringify({ authenticated: false }), {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            }),
+          },
+        },
       },
     },
   },

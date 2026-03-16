@@ -6,6 +6,7 @@
       "truck-geometry": {
         "crate": "truck-cad",
         "exports": [
+          "add_brep",
           "add_cube",
           "add_cylinder",
           "add_sphere",
@@ -80,6 +81,39 @@
     }
   },
   "commands": {
+    "add_brep": {
+      "description": "Add a B-Rep solid from a plugin geometry description",
+      "domain": "geometry",
+      "ephemeral": false,
+      "params": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Add a B-Rep solid described as a swept polyline cross-section.\n\nUsed by plugins (e.g. Howick) that compute geometry in their own WASM kernel and need to hand the resulting B-Rep description to the host CAD engine.\n\n`geometry` is an opaque JSON object produced by the plugin's WASM kernel. The host interprets the `type` field to select the construction strategy:\n\n- `\"swept_polyline\"`: sweep a 2D polyline cross-section along an axis. Required fields: `cross_section` ([[y,z]…]), `sweep_length` (mm), `sweep_axis` ([dx,dy,dz]), `origin` ([x,y,z]), `rotation_deg`, `thickness`.\n\n`meta` is stored on the resulting object verbatim and returned in get_state / export_scene so plugins can recover their domain data (e.g. Howick member params).\n\nNOTE: This command is intentionally duplicated in headless.rs and wasm_app.rs pending ADR-0002 (GeometryStore). Remove duplication when that lands.",
+        "properties": {
+          "geometry": {
+            "description": "Geometry description produced by the plugin WASM kernel."
+          },
+          "meta": {
+            "default": null,
+            "description": "Domain metadata stored on the object (e.g. Howick member params)."
+          },
+          "name": {
+            "default": null,
+            "description": "Human-readable name for the object. Defaults to the geometry type.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "geometry"
+        ],
+        "title": "AddBrepParams",
+        "type": "object"
+      },
+      "readonly": false,
+      "returns": "objectId"
+    },
     "add_cube": {
       "description": "Add a cube primitive",
       "domain": "geometry",
