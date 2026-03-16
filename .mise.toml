@@ -20,6 +20,54 @@ gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
 run = "bash scripts/src-sync.sh"
 
+# ── Install ───────────────────────────────────────────────────────────────────
+
+[tasks.install]
+description = "Install JS deps for root + all sub-packages (parallel)"
+run = [
+  "bun install",
+  "bun install --cwd systems/truck/web",
+  "bun install --cwd systems/truck/worker",
+  "bun install --cwd systems/sync/worker",
+  "bun install --cwd systems/auth/worker",
+  "bun install --cwd systems/auth/web",
+  "bun install --cwd systems/test/worker",
+]
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks."ci:check-secrets"]
+description = "Fail fast if Cloudflare deploy secrets are missing"
+run = '''
+missing=()
+[ -z "${CLOUDFLARE_API_TOKEN:-}" ]  && missing+=("CLOUDFLARE_API_TOKEN")
+[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+if [ ${#missing[@]} -gt 0 ]; then
+  for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
+  exit 1
+fi
+'''
+
+[tasks.ci]
+description = "Full CI gate — install deps, build, test (run locally to replicate CI exactly)"
+depends = ["install"]
+run = "bun run build && bun run test"
+
+# ── Deploy ────────────────────────────────────────────────────────────────────
+
+[tasks.deploy]
+description = "Deploy all workers to Cloudflare (main push — requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)"
+run = "bun scripts/cf-deploy.ts deploy-all"
+
+[tasks."deploy:pr"]
+description = "Upload PR preview versions — requires PR env var and CF secrets"
+run = '''
+: "${PR:?PR env var is required (e.g. PR=42 mise run deploy:pr)}"
+bun scripts/cf-deploy.ts upload --target truck  --tag pr-$PR --preview-alias pr-$PR
+bun scripts/cf-deploy.ts upload --target test   --tag pr-$PR --preview-alias pr-$PR
+bun scripts/cf-deploy.ts upload --target router --tag pr-$PR --preview-alias pr-$PR
+'''
+
 # ── Secrets management ────────────────────────────────────────────────────────
 # Secrets live in .mise.local.toml (gitignored).
 # mise run secrets:set  →  pushes them to GitHub Actions.

@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # mise installs bun, node, wasm-pack, gh from .mise.toml.
+      # mise installs bun, node, gh, wasm-pack from .mise.toml.
       # Rust + wasm targets are handled by rust-toolchain.toml — mise respects it automatically.
       - uses: jdx/mise-action@v2
         env:
@@ -39,53 +39,33 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # Fail fast if deploy secrets are missing
       - name: Check required secrets
-        run: |
-          missing=()
-          [ -z "$CLOUDFLARE_API_TOKEN" ]  && missing+=("CLOUDFLARE_API_TOKEN")
-          [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
-          if [ ${#missing[@]} -gt 0 ]; then
-            for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
-            exit 1
-          fi
+        run: mise run ci:check-secrets
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Install JS/TS dependencies for root + all sub-packages
-      - name: Install dependencies
-        run: |
-          bun install
-          bun install --cwd systems/truck/web
-          bun install --cwd systems/truck/worker
-          bun install --cwd systems/sync/worker
-          bun install --cwd systems/auth/worker
-          bun install --cwd systems/auth/web
-          bun install --cwd systems/test/worker
+      - name: Build + test
+        run: mise run ci
 
-      # Build + test (build includes truck WASM + docs)
-      - run: bun run build && bun run test
-
-      # Main push: deploy all workers (sub-workers first, then router)
+      # Main push: deploy all workers
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: bun scripts/cf-deploy.ts deploy-all
+        name: Deploy
+        run: mise run deploy
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # PR: upload preview versions (sub-workers first, then router)
+      # PR: upload preview versions
       - if: github.event_name == 'pull_request'
-        run: |
-          PR=${{ github.event.pull_request.number }}
-          bun scripts/cf-deploy.ts upload --target truck --tag pr-$PR --preview-alias pr-$PR
-          bun scripts/cf-deploy.ts upload --target test --tag pr-$PR --preview-alias pr-$PR
-          bun scripts/cf-deploy.ts upload --target router --tag pr-$PR --preview-alias pr-$PR
+        name: Deploy PR preview
+        run: mise run deploy:pr
         env:
+          PR: ${{ github.event.pull_request.number }}
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Read config for PR comment URLs
+      # Read config for PR comment URLs (GitHub-specific output — stays in CI)
       - if: github.event_name == 'pull_request'
         id: cfg
         env:
@@ -95,7 +75,7 @@ jobs:
           echo "router_domain=$(bun scripts/cf-deploy.ts config workers.router.domain)" >> $GITHUB_OUTPUT
           echo "router_prod=$(bun scripts/cf-deploy.ts config workers.router.production)" >> $GITHUB_OUTPUT
 
-      # Post preview URLs as PR comment
+      # Post preview URLs as PR comment (GitHub-specific action — stays in CI)
       - if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
