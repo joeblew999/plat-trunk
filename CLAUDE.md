@@ -65,7 +65,7 @@ Run these on your MacBook, then tell Claude the output so it can update config a
 **1. Provision Cloudflare resources (one-time)**
 ```bash
 cd plat-trunk && git checkout feat/auth-system
-export CLOUDFLARE_API_TOKEN=MF39iEfiAnCLmBVcmtMLBO46yb3_2vbK7lfwaLig
+export CLOUDFLARE_API_TOKEN={your-cloudflare-api-token}  # from mise .mise.local.toml or password manager
 
 wrangler d1 create auth-db
 # → paste database_id into systems/auth/worker/wrangler.toml

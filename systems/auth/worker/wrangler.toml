@@ -43,7 +43,8 @@ id = "REPLACE_WITH_KV_ID"
 
 [vars]
 BETTER_AUTH_URL    = "http://localhost:8788"
-BETTER_AUTH_SECRET = "hZ8Pekxmd21uT2JaViU8q0Uv+IEnKCrm+9NVAVO4LWc="
+# BETTER_AUTH_SECRET is a Cloudflare secret — set via: wrangler secret put BETTER_AUTH_SECRET
+# Never put real secrets here. Run: openssl rand -base64 32
 
 [dev]
 ip = "0.0.0.0"
