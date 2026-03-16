@@ -42,7 +42,7 @@ Credentials are in Claude's memory. Write `.mise.local.toml`:
 cat > .mise.local.toml << 'EOF'
 [env]
 CLOUDFLARE_API_TOKEN  = "{CF_API_TOKEN}"
-CLOUDFLARE_ACCOUNT_ID = "7384af54e33b8a54ff240371ea368440"
+CLOUDFLARE_ACCOUNT_ID = "{CF_ACCOUNT_ID}"
 GITHUB_TOKEN          = "{GITHUB_PAT}"
 EOF
 

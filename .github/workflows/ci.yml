@@ -18,9 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # mise installs bun, node, wasm-pack from .mise.toml.
+      # mise installs bun, node, wasm-pack, gh from .mise.toml.
       # Rust + wasm targets are handled by rust-toolchain.toml — mise respects it automatically.
       - uses: jdx/mise-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Clone all vendored .src repos (truck, ifc-lite, ezpz) — idempotent
       - name: Sync .src repos
@@ -40,12 +42,16 @@ jobs:
       # Fail fast if deploy secrets are missing
       - name: Check required secrets
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN secret is not set"
+          missing=()
+          [ -z "$CLOUDFLARE_API_TOKEN" ]  && missing+=("CLOUDFLARE_API_TOKEN")
+          [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          if [ ${#missing[@]} -gt 0 ]; then
+            for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
             exit 1
           fi
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # Build + test (build includes truck WASM + docs)
       - run: bun run build && bun run test
@@ -54,7 +60,8 @@ jobs:
       - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: bun scripts/cf-deploy.ts deploy-all
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # PR: upload preview versions (sub-workers first, then router)
       - if: github.event_name == 'pull_request'
@@ -64,7 +71,8 @@ jobs:
           bun scripts/cf-deploy.ts upload --target test --tag pr-$PR --preview-alias pr-$PR
           bun scripts/cf-deploy.ts upload --target router --tag pr-$PR --preview-alias pr-$PR
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # Read config for PR comment URLs
       - if: github.event_name == 'pull_request'

@@ -25,7 +25,7 @@
       "production": "https://cad.ubuntusoftware.net"
     }
   },
-  "account": "7384af54e33b8a54ff240371ea368440",
+  "account": "set CLOUDFLARE_ACCOUNT_ID env var (via .mise.local.toml or CI secret)",
   "github": "joeblew999/plat-trunk",
   "version": {
     "source": "systems/truck/cad-schema.json"

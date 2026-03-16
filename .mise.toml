@@ -12,8 +12,21 @@
 [tools]
 bun       = "1"       # JS runtime + package manager — https://bun.sh
 node      = "22"      # Required by wrangler CLI
+gh        = "latest"  # GitHub CLI — manage secrets, PRs, releases
 "github:rustwasm/wasm-pack" = "latest"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
 
 [tasks."src:sync"]
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
 run = "bash scripts/src-sync.sh"
+
+[tasks."secrets:set"]
+description = "Push local secrets from .mise.local.toml to GitHub repo secrets via gh"
+run = """
+printf '%s' "$CLOUDFLARE_API_TOKEN"  | gh secret set CLOUDFLARE_API_TOKEN  --repo joeblew999/plat-trunk
+printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | gh secret set CLOUDFLARE_ACCOUNT_ID --repo joeblew999/plat-trunk
+echo "✓ secrets pushed to GitHub"
+"""
+
+[tasks."secrets:list"]
+description = "List GitHub repo secrets"
+run = "gh secret list --repo joeblew999/plat-trunk"
