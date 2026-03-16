@@ -12,4 +12,4 @@
 [tools]
 bun       = "1"       # JS runtime + package manager — https://bun.sh
 node      = "22"      # Required by wrangler CLI
-wasm-pack = "latest"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
+"github:rustwasm/wasm-pack" = "latest"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
