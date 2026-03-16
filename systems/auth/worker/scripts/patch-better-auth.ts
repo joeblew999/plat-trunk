@@ -14,23 +14,38 @@ try {
   process.exit(0);
 }
 
-// Already correctly patched?
-if (content.includes('bun:sqlite')) {
+// Already correctly patched with adaptive version?
+if (content.includes('bun:sqlite') && content.includes('node:sqlite') && content.includes('not bun')) {
   console.log('✓ patch-better-auth: already patched, skipping');
   process.exit(0);
 }
 
-// Normalize: handle both original (node:sqlite) and intermediate (better-sqlite3) states
+// Replacement: runtime-adaptive SQLite — bun:sqlite in bun, node:sqlite in Node 22+
+const replacement = `async function getSqlite() {
+\t\t// Patched by scripts/patch-better-auth.ts: bun:sqlite (bun) or node:sqlite (Node 22+)
+\t\ttry {
+\t\t\tconst { Database } = await import("bun:sqlite");
+\t\t\treturn new Database(":memory:");
+\t\t} catch { /* not bun */ }
+\t\tconst { DatabaseSync } = await import("node:sqlite");
+\t\treturn new DatabaseSync(":memory:");`;
+
+// Normalize: handle original and any previously-patched states
 const patched = content
   // Original: node:sqlite
   .replace(
     `async function getSqlite() {\n\t\tconst { DatabaseSync } = await import("node:sqlite");\n\t\treturn new DatabaseSync(":memory:");`,
-    `async function getSqlite() {\n\t\tconst { Database } = await import("bun:sqlite");\n\t\treturn new Database(":memory:");`,
+    replacement,
   )
-  // Intermediate wrong patch: better-sqlite3
+  // Previous wrong patch: bun:sqlite only
+  .replace(
+    `async function getSqlite() {\n\t\tconst { Database } = await import("bun:sqlite");\n\t\treturn new Database(":memory:");`,
+    replacement,
+  )
+  // Previous wrong patch: better-sqlite3
   .replace(
     `async function getSqlite() {\n\t\tconst { default: BetterSqlite3 } = await import("better-sqlite3");\n\t\treturn new BetterSqlite3(":memory:");`,
-    `async function getSqlite() {\n\t\tconst { Database } = await import("bun:sqlite");\n\t\treturn new Database(":memory:");`,
+    replacement,
   );
 
 if (patched === content) {
@@ -39,4 +54,4 @@ if (patched === content) {
 }
 
 writeFileSync(file, patched);
-console.log('✓ patch-better-auth: node:sqlite → bun:sqlite');
+console.log('✓ patch-better-auth: node:sqlite → adaptive (bun:sqlite + node:sqlite)');
