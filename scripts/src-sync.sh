@@ -37,8 +37,17 @@ sync_repo() {
 }
 
 # .src/truck — our fork of the truck B-Rep kernel (monstertruck base)
+# Uses the 'composite' branch which has monstertruck-* crates.
 # truck-update.sh manages the composite branch; this just ensures it exists.
 sync_repo "$SRC_DIR/truck" "https://github.com/joeblew999/truck.git"
+# Checkout composite branch (has monstertruck-* crates required by Cargo.toml)
+git -C "$SRC_DIR/truck" fetch origin composite --quiet 2>/dev/null || true
+if git -C "$SRC_DIR/truck" rev-parse --verify origin/composite >/dev/null 2>&1; then
+  git -C "$SRC_DIR/truck" checkout -B composite origin/composite --quiet
+  ok "truck branch: composite"
+else
+  warn "truck: composite branch not found on origin, staying on $(git -C "$SRC_DIR/truck" branch --show-current)"
+fi
 git -C "$SRC_DIR/truck" remote get-url upstream >/dev/null 2>&1 || \
   git -C "$SRC_DIR/truck" remote add upstream https://github.com/ricosjp/truck.git
 
