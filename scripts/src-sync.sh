@@ -7,7 +7,7 @@
 #   CI workflow           (single step replaces all ad-hoc clone steps)
 #
 # .src/ repos (all gitignored, all Cargo path deps for systems/truck/crate/):
-#   .src/truck     — joeblew999/truck (our fork of the B-Rep kernel)
+#   .src/truck     — virtualritz/monstertruck (B-Rep kernel, permanently on monstertruck)
 #   .src/ifc-lite  — louistrue/ifc-lite (BIM/IFC parser, LFS skipped)
 #   .src/ezpz      — KittyCAD/ezpz (kcl-ezpz 2D constraint solver)
 
@@ -36,20 +36,12 @@ sync_repo() {
   ok "$(basename "$dir") @ $(git -C "$dir" rev-parse --short HEAD)"
 }
 
-# .src/truck — our fork of the truck B-Rep kernel (monstertruck base)
-# Uses the 'composite' branch which has monstertruck-* crates.
-# truck-update.sh manages the composite branch; this just ensures it exists.
-sync_repo "$SRC_DIR/truck" "https://github.com/joeblew999/truck.git"
-# Checkout composite branch (has monstertruck-* crates required by Cargo.toml)
-git -C "$SRC_DIR/truck" fetch origin composite --quiet 2>/dev/null || true
-if git -C "$SRC_DIR/truck" rev-parse --verify origin/composite >/dev/null 2>&1; then
-  git -C "$SRC_DIR/truck" checkout -B composite origin/composite --quiet
-  ok "truck branch: composite"
-else
-  warn "truck: composite branch not found on origin, staying on $(git -C "$SRC_DIR/truck" branch --show-current)"
-fi
-git -C "$SRC_DIR/truck" remote get-url upstream >/dev/null 2>&1 || \
-  git -C "$SRC_DIR/truck" remote add upstream https://github.com/ricosjp/truck.git
+# .src/truck — monstertruck B-Rep kernel (permanently on monstertruck)
+sync_repo "$SRC_DIR/truck" "https://github.com/virtualritz/monstertruck.git"
+# Init submodules — resources/shape contains golden test fixtures (JSON shapes)
+git -C "$SRC_DIR/truck" submodule update --init --recursive --quiet 2>/dev/null || \
+  warn "truck: submodule init failed (golden test resources may be missing)"
+ok "truck submodules initialised"
 
 # .src/ifc-lite — BIM/IFC parser
 # GIT_LFS_SKIP_SMUDGE=1: skip large test model downloads, only Rust source needed
