@@ -20,13 +20,19 @@ git config user.name "Claude"
 
 GitHub PAT is in Claude's memory. Repo is public — PAT only needed for push.
 
-### 2. Install tools
+### 2. Install mise + tools
 
 ```bash
-# mise not available in container — install manually
-npm install -g wrangler bun
-apt-get install -y rustc cargo
+curl -fsSL https://mise.run | sh
+export PATH="$HOME/.local/bin:$PATH"
+cd /home/claude/plat-trunk
+mise trust
+GITHUB_TOKEN={GITHUB_PAT} mise install
+# installs: bun 1, node 22, wasm-pack 0.14.0
+# GITHUB_TOKEN required to avoid GitHub API rate limits
 ```
+
+Note: wrangler is installed via `bun install` (devDependency), not mise.
 
 ### 3. Cloudflare credentials (if running wrangler commands)
 
@@ -37,6 +43,7 @@ cat > .mise.local.toml << 'EOF'
 [env]
 CLOUDFLARE_API_TOKEN  = "{CF_API_TOKEN}"
 CLOUDFLARE_ACCOUNT_ID = "7384af54e33b8a54ff240371ea368440"
+GITHUB_TOKEN          = "{GITHUB_PAT}"
 EOF
 ```
 
