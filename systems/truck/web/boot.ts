@@ -49,6 +49,10 @@ export async function boot() {
     await import('./keyboard');
     await import('./sketch');
 
+    // Plugin system — must come after state.ts sets window.cadCommand
+    const { initPluginManager } = await import('./plugin-manager-ui');
+    initPluginManager();
+
     // ── 3. Wait for WASM SceneController ────────────────────────────
     await waitFor(() => window.sceneController, 6000, 'WASM SceneController');
     console.log('CAD running.');

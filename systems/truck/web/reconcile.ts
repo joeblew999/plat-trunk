@@ -135,6 +135,15 @@ export function reconcile(result: WasmResult): WasmResult {
 
   reconcileView(r.selectedId, ids);
 
+  // Broadcast to plugins (no-op if plugin manager not yet initialised)
+  if (window.pluginManager) {
+    window.pluginManager.onSelectionChange(r.selectedId ? [r.selectedId] : []);
+    if (result?.objectId || result?.objectIds) {
+      const changed = result.objectIds as string[] ?? (result.objectId ? [result.objectId as string] : []);
+      window.pluginManager.onModelChange(changed, 'browser');
+    }
+  }
+
   return {
     ready: true, objectCount: r.objectCount, objectIds: ids, warmCount: r.warmCount,
     selectedId: r.selectedId, boolSelA: a, boolSelB: b,

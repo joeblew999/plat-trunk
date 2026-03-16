@@ -4,6 +4,7 @@
     "build": "bun scripts/build.mjs",
     "build:sync": "bun scripts/build.mjs sync",
     "build:truck": "bun scripts/build.mjs sync && bun scripts/build.mjs truck",
+    "build:plugins": "bun scripts/build-plugins.ts",
     "build:docs": "bun scripts/build.mjs docs",
     "check:sizes": "bun scripts/check-sizes.ts",
     "check:alignment": "bun check-alignment.mjs",

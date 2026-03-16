@@ -52,6 +52,18 @@ declare global {
 
     // Set by ui.ts
     __applyStyle: (commit: boolean) => void;
+
+    // Set by plugin-manager-ui.ts
+    pluginManager: {
+      togglePanel(): void;
+      load(manifest: unknown): Promise<void>;
+      unload(pluginId: string): void;
+      promptInstall(): Promise<void>;
+      loadBuiltin(basePath: string): Promise<void>;
+      onSelectionChange(objectIds: string[]): void;
+      onModelChange(objectIds: string[], actorId: string): void;
+      onThemeChange(theme: 'dark' | 'light'): void;
+    };
   }
 }
 

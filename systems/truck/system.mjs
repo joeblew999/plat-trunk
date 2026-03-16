@@ -53,6 +53,7 @@ export const building = {
     { name: 'adapters', command: 'bun run gen:adapters' },
     { name: 'sizes', command: 'bun run check:sizes' },
     { name: 'web', command: 'bun run gen:api-types && cd systems/truck/web && bun run build' },
+    { name: 'plugins', command: 'bun run build:plugins' },
   ],
 };
 

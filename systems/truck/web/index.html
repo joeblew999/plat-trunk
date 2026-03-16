@@ -145,7 +145,32 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
                 data-on:click="window.cadCommand('delete', {objectId: $selectedId})">Del</button>
         <button data-testid="clear" class="btn btn-sm btn-ghost" title="Clear all"
                 data-on:click="window.cadCommand('clear')">Clear</button>
+
+        <span class="tb-sep"></span>
+
+        <!-- Plugins -->
+        <button data-testid="plugins-btn" class="btn btn-sm btn-ghost" title="Plugins"
+                onclick="window.pluginManager?.togglePanel()">
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Plugins
+        </button>
     </nav>
+
+    <!-- ═══════════════════ PLUGIN PANELS ═══════════════════ -->\n    <!-- Plugin panels are mounted here by plugin-manager.ts -->\n    <div id="plugin-panel-root" data-testid="plugin-panel-root"></div>
+
+    <!-- ═══════════════════ PLUGIN SIDEBAR ═══════════════════ -->\n    <aside id="plugin-sidebar" class="app-plugin-sidebar" data-testid="plugin-sidebar" style="display:none">
+        <div class="plugin-sidebar__header">
+            <span class="text-xs font-semibold opacity-70 uppercase tracking-widest">Plugins</span>
+            <button class="btn btn-ghost btn-xs" onclick="window.pluginManager?.togglePanel()" title="Close">✕</button>
+        </div>
+        <div id="plugin-sidebar__list" class="plugin-sidebar__list">
+            <div class="text-xs opacity-40 p-3">No plugins loaded.</div>
+        </div>
+        <div class="plugin-sidebar__footer">
+            <button data-testid="install-plugin-btn" class="btn btn-xs btn-outline w-full"
+                    onclick="window.pluginManager?.promptInstall()">+ Install plugin…</button>
+        </div>
+    </aside>
 
     <!-- ═══════════════════ LEFT PANEL: CONTROL PLANE ═══════════════════ -->
     <aside class="app-outliner" data-testid="outliner">
