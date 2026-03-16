@@ -65,6 +65,9 @@ systems/docs/website/public/videos/*.webm
 # Env files — .env is tracked with defaults, .env.local has secrets
 .env.local
 
+# mise local overrides — has Cloudflare credentials, never commit
+.mise.local.toml
+
 # Local binaries (gh, shape-viewer, etc.)
 .bin/
 
