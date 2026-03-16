@@ -24,3 +24,17 @@ ADRs must be implemented in this order — each depends on the one before it.
 | [ADR-0004](0004-wasm-boundary-contracts.md) | Phase 0 Implemented |
 | [ADR-0005](0005-scene-graph-with-assembly-hierarchy.md) | Proposed |
 | [ADR-0006](0006-worker-performance.md) | Proposed |
+| [ADR-0007](0007-ifc-feature-gate.md) | Proposed |
+| [ADR-0008](0008-sync-architecture-redesign.md) | Proposed |
+| [ADR-0009](0009-observability.md) | Proposed |
+| [ADR-0010](0010-auth-architecture.md) | Proposed |
+| [ADR-0011](0011-plugin-directory-contract.md) | Proposed |
+| [ADR-0012](0012-deployment-topologies.md) | Proposed |
+| [ADR-0013](0013-factory-hardware-integration.md) | Proposed |
+
+## New ADRs (March 2026)
+
+| ADR | What | Why |
+|-----|------|-----|
+| [ADR-0012](0012-deployment-topologies.md) | Cloud, LAN (Tauri), Hybrid topologies | First factory customer needs LAN-only option. Same code everywhere via storage adapter abstraction. |
+| [ADR-0013](0013-factory-hardware-integration.md) | Howick FRAMA + OPC UA edge agent | Prin's factory, Si Racha Thailand. FrameBuilderMRD → plat-trunk pipeline. howick-rs crate + opcua-howick edge agent. |
