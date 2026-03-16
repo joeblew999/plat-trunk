@@ -15,14 +15,17 @@ export const DEV_BUILD =
 const OWN_RELEASE_BUILD =
   'cd systems/truck/crate && wasm-pack build --target web --release && rm -rf ../web/pkg-browser-renderer && mv pkg ../web/pkg-browser-renderer && wasm-pack build --target bundler --release --no-default-features && rm -rf ../worker/pkg && mv pkg ../worker/pkg && cargo run --bin generate-schema 2>/dev/null > ../cad-schema.json';
 
+const TRUCK_PORT     = parseInt(process.env.TRUCK_PORT     ?? '8789');
+const TRUCK_INSPECTOR = parseInt(process.env.TRUCK_INSPECTOR ?? '9230');
+
 export const workers = [
   {
     name: 'truck-cad',
     dir: 'systems/truck/worker',
-    port: 8789,
-    inspectorPort: 9230,
+    port: TRUCK_PORT,
+    inspectorPort: TRUCK_INSPECTOR,
     build: DEV_BUILD,
-    healthUrl: 'http://localhost:8789/api/health',
+    healthUrl: `http://localhost:${TRUCK_PORT}/api/health`,
     watch: {
       name: 'watch-wasm',
       paths: ['systems/truck/crate/src', 'systems/sync/crate/src'],

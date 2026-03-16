@@ -14,11 +14,46 @@ bun                = "1.3.10"  # JS runtime + package manager — https://bun.sh
 node               = "25.8.1"  # Required by wrangler CLI
 gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 "cargo:wasm-pack"  = "0.14.0"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
+go                 = "1.26.1"  # Go toolchain — https://go.dev
 # Rust is managed by rust-toolchain.toml (pins version + wasm targets + components) — do not add here
+
+# ── Port registry — single source of truth for all system ports ───────────────
+# Add new systems here. Ports must be unique across all systems.
+# Workers:   8788–8799   Inspector: 9229–9239
+# Dev servers (Vite etc): 5173–5179
+[env]
+# plat-router (root)
+ROUTER_PORT           = "8788"
+ROUTER_INSPECTOR      = "9229"
+# truck-cad worker
+TRUCK_PORT            = "8789"
+TRUCK_INSPECTOR       = "9230"
+# auth-worker
+AUTH_PORT             = "8790"
+AUTH_INSPECTOR        = "9231"
+# test-worker
+TEST_PORT             = "5175"
+TEST_INSPECTOR        = "9232"
+# Dev servers (Vite)
+AUTH_WEB_PORT         = "5174"
+TRUCK_WEB_PORT        = "5173"
+
+# ── Tasks ─────────────────────────────────────────────────────────────────────
 
 [tasks."src:sync"]
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
 run = "bash scripts/src-sync.sh"
+
+# ── Dev ──────────────────────────────────────────────────────────────────────
+
+[tasks.kill]
+description = "Kill all plat-trunk dev ports"
+run = "lsof -ti:$ROUTER_PORT,$TRUCK_PORT,$AUTH_PORT,$TEST_PORT,$AUTH_WEB_PORT,$TRUCK_WEB_PORT,$ROUTER_INSPECTOR,$TRUCK_INSPECTOR,$AUTH_INSPECTOR,$TEST_INSPECTOR | xargs kill -9 2>/dev/null; true"
+
+[tasks.dev]
+description = "Start all workers (router + truck + auth + test + web devservers)"
+depends = ["kill"]
+run = "bun run dev"
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
