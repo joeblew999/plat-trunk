@@ -1,0 +1,11 @@
+# .mise.local.toml.example — copy to .mise.local.toml and fill in values.
+#
+# .mise.local.toml is gitignored. Never commit it.
+# These vars are available to all commands run via mise (wrangler, bun, etc.)
+#
+# Cloudflare API token: https://dash.cloudflare.com/profile/api-tokens
+# Required permissions: Workers (edit), D1 (edit), KV (edit), R2 (edit)
+
+[env]
+CLOUDFLARE_API_TOKEN  = "your-cloudflare-api-token-here"
+CLOUDFLARE_ACCOUNT_ID = "your-cloudflare-account-id-here"
