@@ -38,15 +38,7 @@ run = [
 
 [tasks."ci:check-secrets"]
 description = "Fail fast if Cloudflare deploy secrets are missing"
-run = '''
-missing=()
-[ -z "${CLOUDFLARE_API_TOKEN:-}" ]  && missing+=("CLOUDFLARE_API_TOKEN")
-[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
-if [ ${#missing[@]} -gt 0 ]; then
-  for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
-  exit 1
-fi
-'''
+run = "bash scripts/ci-check-secrets.sh"
 
 [tasks.ci]
 description = "Full CI gate — install deps, build, test (run locally to replicate CI exactly)"
