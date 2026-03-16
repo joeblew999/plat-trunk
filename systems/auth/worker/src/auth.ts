@@ -87,16 +87,17 @@ export function createAuth(env: CloudflareBindings) {
       },
     },
 
-    socialProviders: {
-      google: {
-        clientId: (env as any).GOOGLE_CLIENT_ID ?? '',
-        clientSecret: (env as any).GOOGLE_CLIENT_SECRET ?? '',
-      },
-      github: {
-        clientId: (env as any).GITHUB_CLIENT_ID ?? '',
-        clientSecret: (env as any).GITHUB_CLIENT_SECRET ?? '',
-      },
-    },
+    // socialProviders: uncomment and add env vars when ready
+    // socialProviders: {
+    //   google: {
+    //     clientId: (env as any).GOOGLE_CLIENT_ID ?? '',
+    //     clientSecret: (env as any).GOOGLE_CLIENT_SECRET ?? '',
+    //   },
+    //   github: {
+    //     clientId: (env as any).GITHUB_CLIENT_ID ?? '',
+    //     clientSecret: (env as any).GITHUB_CLIENT_SECRET ?? '',
+    //   },
+    // },
 
     plugins: [
       // ── Multi-factor ──────────────────────────────────────────
