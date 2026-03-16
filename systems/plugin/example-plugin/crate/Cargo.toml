@@ -1,0 +1,21 @@
+[package]
+name = "example-plugin"
+version = "1.0.0"
+edition = "2021"
+description = "Example plat-trunk plugin — pure compute WASM"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Optional better panic messages in browser console:
+# console_error_panic_hook = { version = "0.1", optional = true }
+
+[profile.release]
+# Optimize for size — plugins have the same 3MB limit as host workers
+opt-level = "z"
+lto = true
+codegen-units = 1

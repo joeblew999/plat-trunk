@@ -1,0 +1,17 @@
+{
+  "id": "com.plat-trunk.example-plugin",
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "description": "Demonstrates adding cubes and reading scene state, with optional WASM compute.",
+  "code": "plugin.js",
+  "ui": "index.html",
+  "wasm": "crate/pkg/example_plugin_bg.wasm",
+  "icon": "icon.svg",
+  "permissions": [
+    "model:read",
+    "model:write",
+    "selection:read",
+    "selection:write",
+    "allow:storage"
+  ]
+}

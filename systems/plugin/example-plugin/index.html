@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Example Plugin</title>
+  <style>
+    /*
+     * Plugin UI styles.
+     *
+     * The host injects no CSS. We style ourselves.
+     * The host does set data-theme="dark"|"light" on <html>.
+     *
+     * We use @penpot/plugin-styles conventions so the UI matches
+     * the host's DaisyUI/Tailwind theme. Can also import the
+     * @penpot/plugin-styles package for a full component set.
+     */
+
+    :root {
+      --bg:      #1c1c2e;
+      --surface: #2a2a3d;
+      --border:  #3a3a50;
+      --accent:  #7c6af7;
+      --text:    #e2e2f0;
+      --muted:   #9090a8;
+      --ok:      #4ade80;
+      --err:     #f87171;
+      --radius:  5px;
+      --font:    'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
+    }
+
+    [data-theme="light"] {
+      --bg:      #f5f5fa;
+      --surface: #ffffff;
+      --border:  #dddde8;
+      --accent:  #5b4fcf;
+      --text:    #1c1c2e;
+      --muted:   #6060a0;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      padding: 12px;
+      gap: 10px;
+    }
+
+    section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    h2 {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+    }
+
+    .row { display: flex; gap: 6px; align-items: center; }
+    .row label { color: var(--muted); min-width: 48px; }
+
+    input[type="number"], input[type="text"] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 8px;
+      width: 70px;
+    }
+    input[type="text"] { width: 100%; flex: 1; }
+
+    button {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 5px 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 0.1s, background 0.1s;
+    }
+    button:hover { border-color: var(--accent); }
+    button:active { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover { opacity: 0.9; }
+
+    textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 6px 8px;
+      resize: none;
+      width: 100%;
+    }
+
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+      font-size: 11px;
+    }
+    .log-line { padding: 1px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+    .log-ok   { color: var(--ok); }
+    .log-err  { color: var(--err); }
+    .log-info { color: var(--muted); }
+    .log-data { color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- Scene section -->
+  <section>
+    <h2>Scene</h2>
+    <div class="row">
+      <button id="btnCount">Count objects</button>
+      <span id="countDisplay" style="color:var(--muted)">—</span>
+    </div>
+  </section>
+
+  <!-- Add cube section -->
+  <section>
+    <h2>Add Cube</h2>
+    <div class="row">
+      <label>Size</label>
+      <input type="number" id="cubeSize" value="1.0" min="0.1" max="100" step="0.5">
+      <button class="primary" id="btnAddCube">Add</button>
+    </div>
+  </section>
+
+  <!-- Note storage section -->
+  <section>
+    <h2>Storage</h2>
+    <textarea id="noteText" rows="2" placeholder="Type a note to save…"></textarea>
+    <div class="row">
+      <button id="btnSaveNote">Save note</button>
+      <button id="btnLoadNote">Load note</button>
+    </div>
+  </section>
+
+  <!-- WASM section -->
+  <section>
+    <h2>WASM compute</h2>
+    <button id="btnWasm">Analyze scene (WASM)</button>
+  </section>
+
+  <!-- Log -->
+  <div id="log"></div>
+
+  <script>
+    // ── Logging ─────────────────────────────────────────────────
+    const log = document.getElementById('log')
+    function addLog(text, kind = 'info') {
+      const el = document.createElement('div')
+      el.className = 'log-line log-' + kind
+      el.textContent = '› ' + text
+      log.prepend(el)
+      // Keep log bounded
+      while (log.children.length > 60) log.removeChild(log.lastChild)
+    }
+
+    // ── Receive messages from plugin.ts ──────────────────────────
+    window.addEventListener('message', function(ev) {
+      const msg = ev.data
+      if (!msg || typeof msg !== 'object') return
+
+      switch (msg.type) {
+        case 'COUNT_RESULT':
+          document.getElementById('countDisplay').textContent = msg.count + ' objects'
+          addLog('Count: ' + msg.count, 'ok')
+          break
+
+        case 'ADD_RESULT':
+          if (msg.error) {
+            addLog('Add failed: ' + msg.error, 'err')
+          } else {
+            addLog('Added: ' + (msg.objectId || 'ok'), 'ok')
+          }
+          break
+
+        case 'SELECTION_RESULT':
+          addLog('Selection: ' + JSON.stringify(msg.objectIds), 'data')
+          break
+
+        case 'SELECTION_CHANGED':
+          addLog('Selection → ' + (msg.objectIds.length ? msg.objectIds.join(', ') : 'none'), 'info')
+          break
+
+        case 'MODEL_CHANGED':
+          addLog('Model changed (' + msg.objectIds.length + ' objects, actor: ' + msg.actorId + ')', 'info')
+          break
+
+        case 'WASM_RESULT':
+          if (msg.error) {
+            addLog('WASM: ' + msg.error, 'err')
+          } else {
+            addLog('WASM: ' + JSON.stringify(msg.result), 'data')
+          }
+          break
+
+        case 'NOTE_SAVED':
+          addLog('Note saved', 'ok')
+          break
+
+        case 'NOTE_LOADED':
+          document.getElementById('noteText').value = msg.text
+          addLog('Note loaded', 'ok')
+          break
+      }
+    })
+
+    // ── Send messages to plugin.ts ───────────────────────────────
+    document.getElementById('btnCount').onclick = function() {
+      parent.postMessage({ type: 'GET_COUNT' }, '*')
+    }
+
+    document.getElementById('btnAddCube').onclick = function() {
+      const size = parseFloat(document.getElementById('cubeSize').value) || 1.0
+      parent.postMessage({ type: 'ADD_CUBE', size }, '*')
+    }
+
+    document.getElementById('btnSaveNote').onclick = function() {
+      const text = document.getElementById('noteText').value
+      parent.postMessage({ type: 'SAVE_NOTE', text }, '*')
+    }
+
+    document.getElementById('btnLoadNote').onclick = function() {
+      parent.postMessage({ type: 'LOAD_NOTE' }, '*')
+    }
+
+    document.getElementById('btnWasm').onclick = function() {
+      parent.postMessage({ type: 'WASM_ANALYZE' }, '*')
+    }
+
+    addLog('plugin UI ready', 'ok')
+  </script>
+</body>
+</html>
