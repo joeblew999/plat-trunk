@@ -16,6 +16,7 @@ type Bindings = {
   ASSETS: Fetcher;
   MODELS: R2Bucket;
   AUTH: Fetcher;  // auth-worker service binding — session verification
+  MCP_AUTH_ENABLED: string; // "true" to require auth on /mcp, "false" (default) to keep open
 };
 
 // app and api are created later via chained .openapi() calls for type export
@@ -1036,7 +1037,23 @@ function getMcpToolList(schema: ModuleSchema) {
 }
 
 // Mount MCP endpoint (stateless — fresh server per request, JSON responses)
+//
+// Auth: controlled by MCP_AUTH_ENABLED env var (wrangler.toml [vars]).
+//   "false" (default) — open, no auth required. Good for local dev + agent testing.
+//   "true"            — requires valid session cookie or Bearer token via auth-worker.
+//
+// To enable: set MCP_AUTH_ENABLED = "true" in wrangler.toml [vars]
+// To disable: set MCP_AUTH_ENABLED = "false" (or remove the var)
 app.all('/mcp', async (c) => {
+  if (c.env.MCP_AUTH_ENABLED === 'true') {
+    const user = await getSession(c);
+    if (!user) {
+      return c.json(
+        { error: 'Unauthorized', hint: 'Provide a session cookie or Bearer token' },
+        401
+      );
+    }
+  }
   const server = createMcpServer(c.env);
   const transport = new StreamableHTTPTransport({ enableJsonResponse: true });
   await server.connect(transport);
@@ -1065,7 +1082,7 @@ app.get('/llms-full.txt', async (c) => {
     const asset = await c.env.ASSETS.fetch(new Request(new URL('/llms.txt', c.req.url)));
     if (asset.ok) content = await asset.text();
   } catch {}
-  if (!content) content = `# plat-trunk — Browser CAD on Cloudflare Workers\n\n> Browser-based B-Rep CAD on Cloudflare Workers. Rust/WASM kernel (truck), WebGPU rendering, Automerge CRDT collaboration. 29 MCP tools. No auth required.\n`;
+  if (!content) content = `# plat-trunk — Browser CAD on Cloudflare Workers\n\n> Browser-based B-Rep CAD on Cloudflare Workers. Rust/WASM kernel (truck), WebGPU rendering, Automerge CRDT collaboration. 29 MCP tools. Auth optional (MCP_AUTH_ENABLED flag).\n`;
 
   // Append full tool catalog
   content += `\n## Tool Catalog (${tools.length} tools)\n\n`;

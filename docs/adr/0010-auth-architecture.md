@@ -1,7 +1,8 @@
-# ADR 0010 — Auth Architecture: better-auth-cloudflare as a Dedicated Worker
+# ADR 0010 — Auth Architecture: base better-auth v1.5 as a Dedicated Worker
 
 **Status:** Accepted
 **Date:** 2026-03-14
+**Updated:** 2026-03-16
 **Deciders:** Gerard Webb
 
 ---
@@ -10,26 +11,34 @@
 
 The CAD platform needs authentication — user identity, sessions, and protected routes. The question is how to integrate auth into the existing multi-worker architecture without coupling it to `truck-cad` or the router.
 
-The repo already follows a strict pattern: each system is a separate Cloudflare Worker connected via Service Bindings. Adding auth as a shared concern means it needs to be accessible by any current or future worker without duplicating logic.
+The repo follows a strict pattern: each system is a separate Cloudflare Worker connected via Service Bindings. Auth as a shared concern needs to be accessible by any current or future worker without duplicating logic.
 
 ### Options considered
 
 **Option A: Auth inside truck-cad**
-Add `better-auth` directly to the truck-cad worker alongside the CAD API. Simple to start, but couples auth to CAD logic, breaks the single-responsibility pattern, and makes it impossible for future workers (MVT, IFC, etc.) to share sessions without going through the truck worker.
+Add auth directly to the truck-cad worker. Simple to start, but couples auth to CAD logic, breaks single-responsibility, and makes it impossible for future workers to share sessions.
 
 **Option B: Auth in the root router**
-Handle `/auth/*` in `src/router.ts`. Keeps the router thin contract — the router is meant to be a passthrough, not a business logic layer. Also hits the 3MB worker size limit faster.
+Handle `/auth/*` in `src/router.ts`. The router is meant to be a passthrough, not a business logic layer. Also hits the 3MB worker size limit faster.
 
-**Option C: Dedicated auth-worker with Service Bindings** ✅
-Run `better-auth-cloudflare` as its own isolated worker at `systems/auth/`. Other workers reach it via a Cloudflare Service Binding — zero public HTTP, zero latency overhead, shared sessions across the whole platform.
+**Option C: better-auth-cloudflare wrapper** *(evaluated, rejected)*
+Tried this first. The wrapper adds geolocation fields that caused schema drift, has peer dependency conflicts with drizzle-orm, and doesn't expose the full plugin ecosystem cleanly.
+
+**Option D: Base better-auth v1.5 as a dedicated worker** ✅
+Run `better-auth` directly as its own isolated worker (`systems/auth/`). D1 is passed natively (first-class support since v1.5). No wrapper needed. Full plugin ecosystem available. Other workers reach it via a Cloudflare Service Binding.
+
+This implements the service-bindings pattern described in [zpg6/better-auth-cloudflare#49](https://github.com/zpg6/better-auth-cloudflare/issues/49).
 
 ---
 
 ## Decision
 
-Use `better-auth-cloudflare` as a **dedicated isolated worker** (`systems/auth/`), consistent with the existing system pattern. The router forwards `/auth/*` traffic to it. All other workers verify sessions by calling the `AUTH` service binding directly.
+Use **base better-auth v1.5** as a dedicated isolated worker, consistent with the existing system pattern. The router forwards `/auth/*` traffic to it. All other workers verify sessions via the `AUTH` service binding.
 
-This implements the pattern described in [zpg6/better-auth-cloudflare#49](https://github.com/zpg6/better-auth-cloudflare/issues/49).
+Key properties of better-auth v1.5:
+- D1 binding passed directly — no ORM adapter needed
+- Programmatic migrations via `getMigrations()` — no CLI required in CF Workers
+- Rich plugin ecosystem — add a plugin, run `POST /auth/migrate`, done
 
 ---
 
@@ -38,17 +47,60 @@ This implements the pattern described in [zpg6/better-auth-cloudflare#49](https:
 ```
 Client → plat-router (port 8788)
   /auth/api/*  → auth-worker — better-auth handler (sign-in, sign-up, session, etc.)
-  /auth/*      → auth-worker — static web UI (sign-in, sign-up, reset, verify pages)
+  /auth/*      → auth-worker — static web UI (sign-in, sign-up, reset, verify, consent)
 
 truck-cad → AUTH service binding → auth-worker (getSession — internal only)
 future-worker → AUTH service binding → auth-worker (getSession — internal only)
 ```
 
 Auth worker owns exclusively:
-- `AUTH_DB` — D1 SQLite (users, sessions, accounts, verifications)
-- `AUTH_KV` — KV namespace (session cache, rate limit counters)
+- `AUTH_DB` — D1 SQLite (all plugin tables, auto-managed by better-auth)
+- `AUTH_KV` — KV namespace (session cache, rate limit counters via `secondaryStorage`)
 
-No other worker touches these bindings directly.
+---
+
+## Plugins
+
+Configured in `systems/auth/worker/src/plugins.ts` — single file, comment/uncomment to toggle.
+Schema updates on next `POST /auth/migrate`.
+
+**Enabled by default:**
+
+| Plugin | Purpose |
+|--------|---------|
+| `twoFactor` | TOTP authenticator app |
+| `magicLink` | Passwordless sign-in via email |
+| `emailOTP` | One-time password via email |
+| `organization` | Multi-tenant teams sharing CAD models |
+| `admin` | User management, ban/unban |
+| `multiSession` | Multiple devices per user |
+| `anonymous` | Guest sessions → upgrade to full account |
+| `bearer` | Bearer token auth for MCP + API clients |
+| `jwt` | Stateless tokens |
+| `oauthProvider` | Full OAuth 2.1 + OIDC server — MCP agent auth |
+
+**Commented out (ready to enable):**
+`passkey`, `apiKey`, `phoneNumber`, `oidcProvider`, `oneTimeToken`, `haveibeenpwned`, `username`
+
+**Social providers** (all commented out in `SOCIAL_PROVIDERS`):
+Google, GitHub, Discord, Microsoft
+
+---
+
+## MCP Auth
+
+The `/mcp` endpoint in truck-cad is protected by a feature flag:
+
+```toml
+# systems/truck/worker/wrangler.toml
+[vars]
+MCP_AUTH_ENABLED = "false"  # "true" to require auth, "false" (default) to keep open
+```
+
+**Off (default):** MCP endpoint is open. Best for local dev and AI agent testing.
+**On:** Requires a valid session cookie or Bearer token via the AUTH service binding.
+
+Toggling does not require a code change — only a wrangler var update and redeploy.
 
 ---
 
@@ -57,13 +109,12 @@ No other worker touches these bindings directly.
 Any worker adds auth checking via the `AUTH` service binding:
 
 ```typescript
-// In any consuming worker
 async function getSession(c: { env: { AUTH: Fetcher }; req: { raw: Request } }) {
   if (!c.env.AUTH) return null; // graceful degradation in dev
   try {
     const res = await c.env.AUTH.fetch(
       new Request('https://auth/api/get-session', {
-        headers: c.req.raw.headers, // forward cookies
+        headers: c.req.raw.headers, // forward cookies + Bearer token
       })
     );
     if (!res.ok) return null;
@@ -75,10 +126,23 @@ async function getSession(c: { env: { AUTH: Fetcher }; req: { raw: Request } }) 
 }
 ```
 
-Adding to a new worker:
-1. Add `[[services]] binding = "AUTH" service = "auth-worker"` to its `wrangler.toml`
-2. Add `AUTH: Fetcher` to its `Bindings` type
-3. Call `getSession(c)` in middleware
+Adding to a new worker: add `[[services]] binding = "AUTH" service = "auth-worker"` to its `wrangler.toml` and `AUTH: Fetcher` to its `Bindings` type.
+
+---
+
+## Migrations
+
+better-auth manages its own schema. No hand-written SQL needed.
+
+```bash
+# Programmatic — works in CF Workers, no CLI needed
+curl -X POST https://cad.ubuntusoftware.net/auth/migrate
+
+# Or via wrangler CLI (MacBook)
+bun run auth:migrate:prod
+```
+
+Adding a plugin: uncomment in `plugins.ts`, then `POST /auth/migrate` — new tables/fields added automatically.
 
 ---
 
@@ -86,67 +150,38 @@ Adding to a new worker:
 
 | Concern | Choice | Reason |
 |---------|--------|--------|
-| Auth framework | `better-auth` | First-class Cloudflare support, email/password + social, built-in rate limiting |
-| CF integration | `better-auth-cloudflare` | Wraps better-auth with D1, KV, R2, geolocation |
+| Auth framework | `better-auth v1.5` | D1 native, rich plugins, active development |
+| DB | D1 (SQLite) | Native CF, no external dep, auto-managed schema |
+| Session cache | KV (`secondaryStorage`) | Fast session lookup, rate limiting |
 | HTTP layer | Hono | Consistent with truck-cad and router |
-| DB | D1 (SQLite) | Native Cloudflare, no external dependency, Drizzle ORM |
-| Session cache | KV | Secondary storage for rate limiting (min TTL 60s) |
 | Web UI | Vite + Datastar + DaisyUI | Consistent with truck web UI pattern |
-
----
-
-## Web UI
-
-Four pages served as static assets from `systems/auth/web/dist/`:
-
-| Page | Route | Purpose |
-|------|-------|---------|
-| Sign In | `/auth/sign-in` | Email + password login |
-| Sign Up | `/auth/sign-up` | Registration |
-| Reset Password | `/auth/reset-password` | Forgot + reset via token (dual-mode) |
-| Verify Email | `/auth/verify-email` | Auto-verifies token from URL |
-
-The truck-cad UI header shows a sign-in link or user email + sign-out button based on the `$authUser` Datastar signal, populated non-blocking on boot via `/auth/api/get-session`.
-
----
-
-## Rate Limits
-
-KV enforces a minimum 60s TTL. All rate limit windows are configured at ≥ 60s:
-
-| Route | Window | Max |
-|-------|--------|-----|
-| `/sign-in/email` | 60s | 10 |
-| `/sign-up/email` | 60s | 5 |
-| `/forget-password` | 60s | 5 |
-| Global | 60s | 100 |
 
 ---
 
 ## Consequences
 
 **Good:**
-- Auth is isolated — D1 schema, KV, session logic all owned by one worker
-- Any new system worker gets session checking for free with two lines of config
+- Auth isolated — D1, KV, session logic all owned by one worker
+- Any new system worker gets session checking with two lines of config
 - Service Bindings are in-process — no latency, no egress cost
-- Auth worker is never publicly reachable except via the router's `/auth/*` prefix
-- Graceful degradation — `getSession()` returns `null` if AUTH binding is absent (local dev)
+- MCP auth is a flag, not hardwired — easy to toggle per environment
+- Programmatic migrations — no CLI dependency in prod
+- Full plugin ecosystem — add a plugin, migrate, done
 
 **Tradeoffs:**
 - One more worker to deploy and maintain
-- D1 + KV resources must be provisioned before first run (`wrangler d1 create`, `wrangler kv namespace create`)
-- Schema must be regenerated after any auth config change (`bun run auth:generate`)
+- D1 + KV must be provisioned before first run
+- `POST /auth/migrate` must be called after each plugin addition
 
 ---
 
-## Setup (one-time)
+## Setup (one-time, MacBook)
 
 ```bash
 wrangler d1 create auth-db
 wrangler kv namespace create AUTH_KV
 # Paste IDs into systems/auth/worker/wrangler.toml
 
-bun run auth:generate        # Generate D1 schema from auth.ts config
-bun run auth:migrate:local   # Apply to local D1 (dev)
-bun run auth:migrate:prod    # Apply to Cloudflare D1 (prod)
+bun run deploy
+curl -X POST https://cad.ubuntusoftware.net/auth/migrate
 ```

@@ -38,6 +38,12 @@ bucket_name = "cad-documents"
 binding = "AUTH"
 service = "auth-worker"
 
+# Feature flags
+[vars]
+# Set to "true" to require authentication on the /mcp endpoint.
+# Leave unset or "false" to keep MCP open (useful for local dev + AI agent testing).
+MCP_AUTH_ENABLED = "false"
+
 [dev]
 ip = "0.0.0.0"
 port = 8789

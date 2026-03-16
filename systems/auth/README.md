@@ -1,42 +1,65 @@
 # auth
 
-Authentication worker for plat-trunk. [better-auth](https://github.com/better-auth/better-auth) via [better-auth-cloudflare](https://github.com/zpg6/better-auth-cloudflare) running as a dedicated isolated worker, consumed by other workers via Cloudflare Service Bindings.
+Authentication worker for plat-trunk. Base [better-auth v1.5](https://github.com/better-auth/better-auth) running as a dedicated isolated worker, consumed by other workers via Cloudflare Service Bindings.
 
-Implements the pattern described in [zpg6/better-auth-cloudflare#49](https://github.com/zpg6/better-auth-cloudflare/issues/49).
+Implements the service-bindings pattern from [zpg6/better-auth-cloudflare#49](https://github.com/zpg6/better-auth-cloudflare/issues/49).
 
-**Stack**: better-auth · better-auth-cloudflare · Hono · Drizzle ORM · D1 · KV · Datastar · DaisyUI
+**Stack**: better-auth v1.5 · Hono · D1 (native) · KV (secondaryStorage) · Datastar · DaisyUI
 
 ## Architecture
 
 ```
 Client → plat-router (port 8788)
   /auth/api/*  → auth-worker (port 8790) — better-auth handler
-  /auth/*      → auth-worker (port 8790) — static web UI (Vite dist)
+  /auth/*      → auth-worker (port 8790) — static web UI
 
 Other workers → auth-worker via Service Binding (no public HTTP)
-  AUTH.fetch("https://auth/api/auth/get-session", { headers })
+  AUTH.fetch("https://auth/api/get-session", { headers })
 ```
-
-Auth is never publicly reachable on its own — only via the router (`/auth/*`) and internal service bindings. D1 and KV are owned exclusively by this worker.
 
 ## Quick Start
 
 ```bash
-# 1. Provision Cloudflare resources (one-time)
+# 1. Provision Cloudflare resources (MacBook, one-time)
 wrangler d1 create auth-db
 wrangler kv namespace create AUTH_KV
-# → paste the IDs into systems/auth/worker/wrangler.toml
+# → paste IDs into systems/auth/worker/wrangler.toml
 
-# 2. Generate DB schema from auth config
-cd systems/auth/worker && bun run auth:generate
+# 2. Deploy
+bun run deploy
 
-# 3. Run migrations
-bun run auth:migrate:local    # local dev D1
-bun run auth:migrate:prod     # Cloudflare D1
+# 3. Run migrations (creates all tables automatically)
+curl -X POST https://cad.ubuntusoftware.net/auth/migrate
 
-# 4. Start dev (from repo root)
+# 4. Local dev (from repo root)
 bun run dev    # auth-worker at http://localhost:8790, web at http://localhost:5174
 ```
+
+## Plugins
+
+All plugins configured in `worker/src/plugins.ts` — single file, comment/uncomment to toggle.
+Adding a plugin: uncomment it, then `POST /auth/migrate` — schema updates automatically.
+
+**Enabled:**
+`twoFactor` · `magicLink` · `emailOTP` · `organization` · `admin` · `multiSession` · `anonymous` · `bearer` · `jwt` · `oauthProvider`
+
+**Commented out (ready to enable):**
+`passkey` · `apiKey` · `phoneNumber` · `oneTimeToken` · `haveibeenpwned`
+
+**Social providers** (in `SOCIAL_PROVIDERS` object, all commented out):
+Google · GitHub · Discord · Microsoft
+
+## MCP Auth
+
+The `/mcp` endpoint in truck-cad is gated by a flag:
+
+```toml
+# systems/truck/worker/wrangler.toml
+[vars]
+MCP_AUTH_ENABLED = "false"   # "true" to require auth
+```
+
+No code change needed — just update the var and redeploy.
 
 ## URLs
 
@@ -47,8 +70,10 @@ bun run dev    # auth-worker at http://localhost:8790, web at http://localhost:5
 | Sign Up | http://localhost:8788/auth/sign-up |
 | Reset Password | http://localhost:8788/auth/reset-password |
 | Verify Email | http://localhost:8788/auth/verify-email |
+| OAuth Consent | http://localhost:8788/auth/consent |
 | Session API | http://localhost:8788/auth/api/get-session |
 | Health | http://localhost:8788/auth/health |
+| Migrate | http://localhost:8788/auth/migrate (POST) |
 | **Production** | |
 | Sign In | https://cad.ubuntusoftware.net/auth/sign-in |
 | Auth API | https://cad.ubuntusoftware.net/auth/api/* |
@@ -58,24 +83,26 @@ bun run dev    # auth-worker at http://localhost:8790, web at http://localhost:5
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/auth/health` | Health check |
-| `GET` | `/auth/api/get-session` | Current session (forward cookies) |
-| `POST` | `/auth/api/sign-in/email` | Sign in with email + password |
-| `POST` | `/auth/api/sign-up/email` | Register with name + email + password |
-| `POST` | `/auth/api/sign-out` | Sign out (clears session) |
-| `POST` | `/auth/api/forget-password` | Request password reset email |
-| `POST` | `/auth/api/reset-password` | Reset password via token |
+| `POST` | `/auth/migrate` | Run DB migrations (call after deploy or plugin change) |
+| `GET` | `/auth/api/get-session` | Current session |
+| `POST` | `/auth/api/sign-up/email` | Register |
+| `POST` | `/auth/api/sign-in/email` | Sign in |
+| `POST` | `/auth/api/sign-out` | Sign out |
+| `POST` | `/auth/api/forget-password` | Request reset email |
+| `POST` | `/auth/api/reset-password` | Reset via token |
 | `POST` | `/auth/api/verify-email` | Verify email via token |
+| `POST` | `/auth/api/sign-in/magic-link` | Send magic link |
+| `POST` | `/auth/api/sign-in/anonymous` | Guest session |
+| `GET/POST` | `/auth/api/oauth/*` | OAuth 2.1 flows |
 
 ## Service Binding Usage
 
-Any worker in plat-trunk can check auth by forwarding the request headers to the auth worker via its service binding:
-
 ```typescript
-// In any consuming worker (e.g. truck-cad)
+// In any consuming worker
 app.use('/api/*', async (c, next) => {
   const res = await c.env.AUTH.fetch(
     new Request('https://auth/api/get-session', {
-      headers: c.req.raw.headers,  // forward cookies
+      headers: c.req.raw.headers, // forward cookies + Bearer
     })
   );
   const session = await res.json<{ user?: { id: string; email: string } }>();
@@ -86,75 +113,33 @@ app.use('/api/*', async (c, next) => {
 ```
 
 Add to the consuming worker's `wrangler.toml`:
-
 ```toml
 [[services]]
 binding = "AUTH"
 service = "auth-worker"
 ```
 
-## Web UI Pages
-
-| Page | Path | Description |
-|------|------|-------------|
-| Sign In | `/auth/sign-in` | Email + password login |
-| Sign Up | `/auth/sign-up` | Register with name + email + password |
-| Reset Password | `/auth/reset-password` | Forgot password flow (email) + reset via token |
-| Verify Email | `/auth/verify-email` | Auto-verifies token from URL query param |
-
-All pages use Datastar signals for reactive state, DaisyUI dark theme, served as static assets from Vite build.
-
-## Configuration
-
-| File | Description |
-|------|-------------|
-| `worker/wrangler.toml` | D1 + KV bindings, port 8790 |
-| `worker/src/auth.ts` | better-auth config — `createAuth()` + `withCloudflare()` |
-| `worker/src/index.ts` | Hono app — routes `/auth/api/*` and `/auth/*` |
-| `worker/src/db/auth.schema.ts` | Auto-generated by `bun run auth:generate` |
-| `web/vite.config.ts` | Multi-page Vite build, proxies `/auth/api/*` to `:8790` in dev |
-| `web/src/main.ts` | Shared auth API client functions (Datastar-friendly) |
-| `system.mjs` | Worker registry + build/test pipeline |
-
-## Commands
-
-```bash
-# Schema + migrations
-bun run auth:generate          # Regenerate DB schema from auth.ts config
-bun run auth:migrate:local     # Apply migrations to local D1
-bun run auth:migrate:prod      # Apply migrations to Cloudflare D1
-
-# Dev
-bun run dev                    # Worker at :8790, web dev server at :5174
-
-# Build
-cd systems/auth/web && bun run build   # Vite build → web/dist
-
-# Test
-cd systems/auth/worker && bun x vitest run
-```
-
 ## Bindings
 
 | Binding | Type | Purpose |
 |---------|------|---------|
-| `AUTH_DB` | D1 (SQLite) | Users, sessions, accounts, verifications |
-| `AUTH_KV` | KV namespace | Session cache + rate limit counters (min TTL 60s) |
-| `ASSETS` | Static assets | Web UI (sign-in, sign-up, reset, verify pages) |
+| `AUTH_DB` | D1 (SQLite) | All auth tables (auto-managed by better-auth) |
+| `AUTH_KV` | KV namespace | Session cache + rate limit counters |
+| `ASSETS` | Static assets | Web UI pages |
 
-## Rate Limits
+## Commands
 
-KV has a minimum TTL of 60s — all rate limit windows must be ≥ 60s.
+```bash
+bun run auth:generate          # Regenerate Drizzle schema (MacBook — needs npx)
+bun run auth:migrate:local     # Apply migrations to local D1
+bun run auth:migrate:prod      # Apply migrations to Cloudflare D1
+bun x vitest run               # Run unit tests (in-memory SQLite, no credentials needed)
+```
 
-| Route | Window | Max requests |
-|-------|--------|-------------|
-| `/sign-in/email` | 60s | 10 |
-| `/sign-up/email` | 60s | 5 |
-| `/forget-password` | 60s | 5 |
-| Global | 60s | 100 |
+## Tests
 
-## Adding to a New Worker
+16 unit tests covering all active plugins. Uses `better-auth/test` `getTestInstance()` with in-memory SQLite — no wrangler, no credentials, runs anywhere including CI.
 
-1. Add `[[services]] binding = "AUTH" service = "auth-worker"` to the worker's `wrangler.toml`
-2. Add `AUTH: Fetcher` to the worker's `Bindings` type
-3. Use the session check pattern above in middleware
+```bash
+cd systems/auth/worker && bun x vitest run
+```
