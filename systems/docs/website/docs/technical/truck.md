@@ -42,53 +42,17 @@ The coplanar face bug (issue #57) is **not fixed in truck source** — it's work
 
 Solids serialize to JSON via serde. This preserves full B-Rep precision (no tessellation loss).
 
-## Source Repositories
+## Source Repository
 
-We track three repos (virtualritz/truck is dead — superseded by monstertruck):
+We use [virtualritz/monstertruck](https://github.com/virtualritz/monstertruck) — a ground-up restructure of the original [ricosjp/truck](https://github.com/ricosjp/truck):
 
-| Repo | URL | Status |
-|---|---|---|
-| **ricosjp/truck** | https://github.com/ricosjp/truck | Original upstream. Effectively unmaintained. Reference only. |
-| **virtualritz/monstertruck** | https://github.com/virtualritz/monstertruck | **Active development.** Ground-up restructure by Moritz Moeller. Fillet, T-splines, parallel mesh, new boolean ops, 16+ modular crates. |
-| **joeblew999/truck** | https://github.com/joeblew999/truck | **Our fork.** Currently uses truck-* crate names. Composite branch built by `truck-update.sh`. |
-
-### Monstertruck
-
-[virtualritz/monstertruck](https://github.com/virtualritz/monstertruck) is a ground-up restructure of truck:
-- All crate names change: `truck-*` → `monstertruck-*`
-- Modular split: 16+ crates (core, derive, traits, geometry, topology, modeling, solid, assembly, mesh, meshing, gpu, render, step, wasm)
+- All crate names: `monstertruck-*` (e.g. `monstertruck-modeling`, `monstertruck-solid`)
+- Robust boolean ops returning `Result<Solid, ShapeOpsError>` (no panics)
+- Fillet engine, T-splines, parallel tessellation
+- `difference()` + `symmetric_difference()` boolean ops
 - Idiomatic Rust naming with industry-standard CAD terminology
-- Improved build times via smaller crates
-- New boolean ops: `difference()` and `symmetric_difference()`
 
-#### Crate Name Mapping
-
-| truck | monstertruck |
-|---|---|
-| `truck-modeling` | `monstertruck-modeling` |
-| `truck-shapeops` | `monstertruck-solid` |
-| `truck-meshalgo` | `monstertruck-meshing` |
-| `truck-rendimpl` | `monstertruck-render` |
-| `truck-platform` | `monstertruck-gpu` |
-| `truck-base` | `monstertruck-core` |
-| `truck-stepio` | `monstertruck-step` |
-| `truck-polymesh` | `monstertruck-mesh` |
-| `truck-topology` | `monstertruck-topology` |
-| *(new)* | `monstertruck-traits`, `monstertruck-derive`, `monstertruck-assembly` |
-
-#### API Changes
-
-Core types are **unchanged**: `Solid`, `Wire`, `Face`, `Edge`, `Vertex`, `Point3`, `Vector3`.
-
-Function renames:
-
-| truck | monstertruck | Call sites in our code |
-|---|---|---|
-| `builder::tsweep()` | `builder::extrude()` | ~5 |
-| `builder::rsweep()` | `builder::revolve()` | ~2 |
-| `Curve::BSplineCurve` | `Curve::BsplineCurve` | 1 (pattern match in `lib.rs`) |
-
-**Migration is automated**: `bun run truck:update:monster` checks out monstertruck source into `.src/truck/` and auto-patches our crate code (Cargo.toml deps + Rust imports + API renames). `bun run truck:update` switches back.
+Source is vendored in `.src/truck/` via `mise run src:sync`.
 
 ## Upstream Issues & Feature Gaps
 
@@ -104,57 +68,6 @@ Key upstream issues that affect us:
 | [#37](https://github.com/ricosjp/truck/issues/37) | 2D sketching / constraint solving | Open |
 | [#79](https://github.com/ricosjp/truck/issues/79) | Helix / screw modeling | Open |
 | [#68](https://github.com/ricosjp/truck/issues/68) | Boolean operations slow | Open |
-
-## Fork Management
-
-The `scripts/truck-update.sh` script manages our fork. It tracks 3 repos as git remotes in `.src/truck/` and **auto-patches our crate code** when switching between truck and monstertruck.
-
-### Commands
-
-```sh
-# joeblew999/truck (current base — truck-* crate names)
-bun run truck:update              # Full: fetch → composite → auto-patch → build + test
-bun run truck:update:quick        # Git only, skip build/test
-
-# monstertruck (auto-patches code to monstertruck-* crate names)
-bun run truck:update:monster      # Full: fetch → composite-monstertruck → auto-patch → build + test
-bun run truck:update:monster:quick # Git only
-
-# Status (read-only)
-bun run truck:status              # Show all remotes, active base, monstertruck crate count
-```
-
-### How It Works
-
-1. **Ensures 3 remotes** in `.src/truck/`: `origin` (joeblew999/truck), `upstream` (ricosjp/truck), `monstertruck` (virtualritz/monstertruck)
-2. **Fetches all remotes**
-3. **Creates composite branch** from selected base:
-   - Default: `composite` from `origin/master` (our fork, truck-* names)
-   - With `--base=monstertruck`: `composite-monstertruck` from `monstertruck/main`
-4. **Auto-patches `systems/truck/crate/`**:
-   - `truck:update` → ensures truck-* crate names in Cargo.toml + Rust source
-   - `truck:update:monster` → rewrites to monstertruck-* names + API renames (`tsweep`→`extrude`, etc.)
-5. **Runs 5-step verification** (unless `--no-build`):
-   - `cargo check` — type-check our crate against the composite
-   - `cargo test` — kernel's own tests (adapts package names per base)
-   - `wasm-pack build` — verify WASM compilation
-   - `cargo run --bin generate-schema` — regenerate cad-schema.json
-   - `bun x vitest run` — API tests against the new WASM
-
-### Status Output
-
-```
-=== Truck Fork Status ===
-Current branch: composite → abc1234 Latest commit message
-Active base: joeblew999/truck
-Remotes:
-  origin         https://github.com/joeblew999/truck.git
-  upstream       https://github.com/ricosjp/truck.git
-  monstertruck   https://github.com/virtualritz/monstertruck.git
-Monstertruck (active development):
-  monstertruck/master → ghi9012 2026-02-15 Latest commit
-  Crates: 16 monstertruck-* modules
-```
 
 ### Other Forks & PRs
 
