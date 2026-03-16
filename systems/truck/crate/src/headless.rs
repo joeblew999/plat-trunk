@@ -276,12 +276,14 @@ impl HeadlessController {
     ///
     /// NOTE: Intentionally duplicated in headless.rs + wasm_app.rs.
     /// Will move to GeometryStore when ADR-0002 lands.
-    pub fn add_brep(&mut self, params: &AddBrepParams) -> std::result::Result<String, String> {
+    pub fn add_brep(&mut self, params_json: &str) -> std::result::Result<String, String> {
+        let params: AddBrepParams = serde_json::from_str(params_json)
+            .map_err(|e| format!("add_brep: invalid params JSON: {}", e))?;
         let geo = &params.geometry;
         let geo_type = geo.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
 
         match geo_type {
-            "swept_polyline" => self.add_brep_swept_polyline(params),
+            "swept_polyline" => self.add_brep_swept_polyline(&params),
             other => Err(format!("add_brep: unknown geometry type '{}'", other)),
         }
     }
@@ -698,9 +700,9 @@ impl HeadlessController {
             }
             // NOTE: duplicated in headless.rs + wasm_app.rs — move to GeometryStore in ADR-0002
             "add_brep" => {
-                Some(match serde_json::from_value::<AddBrepParams>(p) {
+                Some(match serde_json::to_string(&p) {
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                    Ok(params) => match self.add_brep(&params) {
+                    Ok(params_json) => match self.add_brep(&params_json) {
                         Ok(id) => serde_json::json!({ "objectId": id }),
                         Err(e) => serde_json::json!({ "error": e }),
                     },
