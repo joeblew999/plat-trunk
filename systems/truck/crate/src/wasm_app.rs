@@ -1170,31 +1170,35 @@ impl SceneController {
     }
 
     /// Add a B-Rep from a plugin geometry description (add_brep command).
+    /// Takes a JSON string (serialized AddBrepParams) to avoid wasm-bindgen
+    /// limitations on complex structs with serde_json::Value fields.
     /// NOTE: Intentionally duplicated in headless.rs + wasm_app.rs.
     /// Will move to GeometryStore when ADR-0002 lands.
-    pub fn add_brep_from_params(&self, params: &AddBrepParams) -> Result<String, String> {
+    pub fn add_brep_from_params(&self, params_json: &str) -> std::result::Result<String, String> {
+        let params: AddBrepParams = serde_json::from_str(params_json)
+            .map_err(|e| format!("add_brep: invalid params JSON: {}", e))?;
         let geo = &params.geometry;
         let geo_type = geo.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
         match geo_type {
-            "swept_polyline" => self.add_brep_swept_polyline(params),
+            "swept_polyline" => self.add_brep_swept_polyline(&params),
             other => Err(format!("add_brep: unknown geometry type '{}'", other)),
         }
     }
 
-    fn add_brep_swept_polyline(&self, params: &AddBrepParams) -> Result<String, String> {
+    fn add_brep_swept_polyline(&self, params: &AddBrepParams) -> std::result::Result<String, String> {
         let geo = &params.geometry;
 
         let cross_section: Vec<[f64; 2]> = geo.get("cross_section")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .ok_or("add_brep: missing or invalid cross_section")?;
+            .ok_or_else(|| "add_brep: missing or invalid cross_section".to_string())?;
 
         if cross_section.len() < 3 {
-            return Err("add_brep: cross_section needs at least 3 points".into());
+            return Err("add_brep: cross_section needs at least 3 points".to_string());
         }
 
         let sweep_length: f64 = geo.get("sweep_length")
             .and_then(|v| v.as_f64())
-            .ok_or("add_brep: missing sweep_length")?;
+            .ok_or_else(|| "add_brep: missing sweep_length".to_string())?;
 
         if sweep_length <= 0.0 {
             return Err(format!("add_brep: sweep_length must be positive, got {}", sweep_length));
@@ -1228,7 +1232,7 @@ impl SceneController {
 
         let solid = match make_cube(1.0) {
             Ok(s) => s,
-            Err(e) => return Err(format!("add_brep: cube primitive failed: {}", e)),
+            Err(e) => return Err(format!("add_brep: cube primitive failed: {:?}", e)),
         };
         let solid = builder::scaled(&solid, Point3::origin(), Vector3::new(length, width, height));
         let solid = if rotation_deg.abs() > 1e-6 {
@@ -2555,9 +2559,9 @@ impl SceneController {
             }
             // NOTE: duplicated in headless.rs + wasm_app.rs — move to GeometryStore in ADR-0002
             "add_brep" => {
-                match serde_json::from_value::<AddBrepParams>(p) {
+                match serde_json::to_string(&p) {
                     Err(e) => serde_json::json!({ "error": format!("Invalid params: {}", e) }),
-                    Ok(params) => match self.add_brep_from_params(&params) {
+                    Ok(params_json) => match self.add_brep_from_params(&params_json) {
                         Ok(id) => serde_json::json!({ "objectId": id }),
                         Err(e) => serde_json::json!({ "error": e }),
                     },

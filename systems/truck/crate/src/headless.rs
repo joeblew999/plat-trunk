@@ -276,7 +276,7 @@ impl HeadlessController {
     ///
     /// NOTE: Intentionally duplicated in headless.rs + wasm_app.rs.
     /// Will move to GeometryStore when ADR-0002 lands.
-    pub fn add_brep(&mut self, params: &AddBrepParams) -> Result<String, String> {
+    pub fn add_brep(&mut self, params: &AddBrepParams) -> std::result::Result<String, String> {
         let geo = &params.geometry;
         let geo_type = geo.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
 
@@ -286,21 +286,21 @@ impl HeadlessController {
         }
     }
 
-    fn add_brep_swept_polyline(&mut self, params: &AddBrepParams) -> Result<String, String> {
+    fn add_brep_swept_polyline(&mut self, params: &AddBrepParams) -> std::result::Result<String, String> {
         let geo = &params.geometry;
 
         // Parse cross section points [[y, z], ...]
         let cross_section: Vec<[f64; 2]> = geo.get("cross_section")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .ok_or("add_brep: missing or invalid cross_section")?;
+            .ok_or_else(|| "add_brep: missing or invalid cross_section".to_string())?;
 
         if cross_section.len() < 3 {
-            return Err("add_brep: cross_section needs at least 3 points".into());
+            return Err("add_brep: cross_section needs at least 3 points".to_string());
         }
 
         let sweep_length: f64 = geo.get("sweep_length")
             .and_then(|v| v.as_f64())
-            .ok_or("add_brep: missing sweep_length")?;
+            .ok_or_else(|| "add_brep: missing sweep_length".to_string())?;
 
         if sweep_length <= 0.0 {
             return Err(format!("add_brep: sweep_length must be positive, got {}", sweep_length));
@@ -341,7 +341,7 @@ impl HeadlessController {
         // make_cube gives a unit cube; we scale to the section bounding box
         let solid = match make_cube(1.0) {
             Ok(s) => s,
-            Err(e) => return Err(format!("add_brep: cube primitive failed: {}", e)),
+            Err(e) => return Err(format!("add_brep: cube primitive failed: {:?}", e)),
         };
 
         // Scale the unit cube to [length × width × height]
