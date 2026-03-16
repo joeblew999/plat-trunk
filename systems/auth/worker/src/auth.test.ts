@@ -17,6 +17,8 @@ import {
   jwt,
   multiSession,
   anonymous,
+  oneTimeToken,
+  haveIBeenPwned,
 } from 'better-auth/plugins';
 import {
   twoFactorClient,
@@ -29,8 +31,8 @@ import { oauthProvider } from '@better-auth/oauth-provider';
 
 // ── Shared instance ───────────────────────────────────────────────────────────
 
-type TestInstance = Awaited<ReturnType<typeof getTestInstance>>;
-let inst: TestInstance;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let inst: any;
 
 const USER = { email: 'joe@example.com', password: 'supersecret1234', name: 'Joe' };
 
@@ -48,6 +50,7 @@ beforeAll(async () => {
         bearer(),
         jwt(),
         oauthProvider({ loginPage: '/auth/sign-in', consentPage: '/auth/consent' }),
+        oneTimeToken(),
       ],
       emailAndPassword: { enabled: true },
     },
@@ -112,14 +115,14 @@ describe('session', () => {
   });
 
   it('get-session returns user after sign-in', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const session = await inst.client.getSession({ fetchOptions: { headers } });
       expect(session.data?.user.email).toBe(USER.email);
     });
   });
 
   it('sign-out clears session', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const res = await inst.client.signOut({ fetchOptions: { headers } });
       expect(res.error).toBeNull();
     });
@@ -176,7 +179,7 @@ describe('anonymous', () => {
 
 describe('organization', () => {
   it('creates an organization', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const res = await inst.client.organization.create(
         { name: 'Acme CAD', slug: 'acme-cad' },
         { fetchOptions: { headers } }
@@ -187,7 +190,7 @@ describe('organization', () => {
   });
 
   it('lists organizations for member', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const res = await inst.client.organization.list({ fetchOptions: { headers } });
       expect(res.error).toBeNull();
       expect(Array.isArray(res.data)).toBe(true);
@@ -199,7 +202,7 @@ describe('organization', () => {
 
 describe('twoFactor', () => {
   it('enable 2FA returns TOTP URI', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const res = await inst.client.twoFactor.enable(
         { password: USER.password },
         { fetchOptions: { headers } }
@@ -223,7 +226,7 @@ describe('admin', () => {
 
 describe('multiSession', () => {
   it('lists active sessions', async () => {
-    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+    await inst.runWithUser(USER.email, USER.password, async (headers: Headers) => {
       const res = await inst.client.multiSession.listDeviceSessions({
         fetchOptions: { headers },
       });
