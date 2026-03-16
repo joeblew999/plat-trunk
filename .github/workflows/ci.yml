@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # mise installs bun, node, gh, wasm-pack from .mise.toml.
+      # mise installs bun, gh, wasm-pack from .mise.toml.
       # Rust + wasm targets are handled by rust-toolchain.toml — mise respects it automatically.
       - uses: jdx/mise-action@v2
         env:
