@@ -1,73 +1,234 @@
 // systems/auth/worker/src/auth.test.ts
-// Auth route contract tests — verifies the worker responds correctly
-// to sign-in, sign-up, session, and health endpoints.
 //
-// These run inside a real Worker via vitest-pool-workers (wrangler.toml bindings active).
+// Unit tests using better-auth's getTestInstance().
+// Runs in Node with in-memory SQLite — no wrangler, no D1, no credentials needed.
+//
+// Run: bun x vitest run   (or: cd systems/auth/worker && npx vitest run)
 
-/// <reference types="@cloudflare/vitest-pool-workers" />
+import { describe, it, expect, beforeAll } from 'vitest';
+import { getTestInstance } from 'better-auth/test';
+import {
+  twoFactor,
+  magicLink,
+  emailOTP,
+  organization,
+  admin,
+  bearer,
+  jwt,
+  multiSession,
+  anonymous,
+} from 'better-auth/plugins';
+import {
+  twoFactorClient,
+  organizationClient,
+  adminClient,
+  multiSessionClient,
+  anonymousClient,
+} from 'better-auth/client/plugins';
+import { oauthProvider } from '@better-auth/oauth-provider';
 
-import { describe, it, expect } from 'vitest';
-import worker from './index';
-import { env } from 'cloudflare:test';
+// ── Shared instance ───────────────────────────────────────────────────────────
 
-const BASE = 'http://localhost';
+type TestInstance = Awaited<ReturnType<typeof getTestInstance>>;
+let inst: TestInstance;
 
-function req(path: string, options?: RequestInit) {
-  return new Request(`${BASE}${path}`, options);
-}
+const USER = { email: 'joe@example.com', password: 'supersecret1234', name: 'Joe' };
 
-describe('health', () => {
-  it('GET /auth/health returns ok', async () => {
-    const res = await worker.fetch(req('/auth/health'), env, {} as ExecutionContext);
-    expect(res.status).toBe(200);
-    const body = await res.json<{ ok: boolean; service: string }>();
-    expect(body.ok).toBe(true);
-    expect(body.service).toBe('auth-worker');
+beforeAll(async () => {
+  inst = await getTestInstance(
+    {
+      plugins: [
+        twoFactor(),
+        magicLink({ sendMagicLink: async () => {} }),
+        emailOTP({ sendVerificationOTP: async () => {} }),
+        organization(),
+        admin(),
+        multiSession(),
+        anonymous(),
+        bearer(),
+        jwt(),
+        oauthProvider({ loginPage: '/auth/sign-in', consentPage: '/auth/consent' }),
+      ],
+      emailAndPassword: { enabled: true },
+    },
+    {
+      testWith: 'sqlite',
+      disableTestUser: true,
+      clientOptions: {
+        plugins: [
+          twoFactorClient(),
+          organizationClient(),
+          adminClient(),
+          multiSessionClient(),
+          anonymousClient(),
+        ],
+      },
+    }
+  );
+  // Create test user once
+  await inst.client.signUp.email(USER);
+});
+
+// ── Email + Password ──────────────────────────────────────────────────────────
+
+describe('emailAndPassword', () => {
+  it('sign-up creates a user', async () => {
+    const res = await inst.client.signUp.email({
+      email: 'new@example.com',
+      password: 'password1234',
+      name: 'New User',
+    });
+    expect(res.error).toBeNull();
+    expect(res.data?.user.email).toBe('new@example.com');
+  });
+
+  it('sign-in returns token', async () => {
+    const res = await inst.client.signIn.email(USER);
+    expect(res.error).toBeNull();
+    expect(res.data?.token).toBeTruthy();
+  });
+
+  it('sign-in rejects wrong password', async () => {
+    const res = await inst.client.signIn.email({
+      email: USER.email,
+      password: 'wrongpassword',
+    });
+    expect(res.error).not.toBeNull();
+    expect(res.error?.status).toBe(401);
+  });
+
+  it('sign-up rejects duplicate email', async () => {
+    const res = await inst.client.signUp.email(USER);
+    expect(res.error).not.toBeNull();
   });
 });
+
+// ── Session ───────────────────────────────────────────────────────────────────
 
 describe('session', () => {
-  it('GET /auth/api/get-session returns null session when unauthenticated', async () => {
-    const res = await worker.fetch(req('/auth/api/get-session'), env, {} as ExecutionContext);
-    // better-auth returns 200 with null session, or 401 — both are valid unauthenticated responses
-    expect([200, 401]).toContain(res.status);
+  it('get-session returns null when unauthenticated', async () => {
+    const res = await inst.client.getSession();
+    expect(res.data).toBeNull();
+  });
+
+  it('get-session returns user after sign-in', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const session = await inst.client.getSession({ fetchOptions: { headers } });
+      expect(session.data?.user.email).toBe(USER.email);
+    });
+  });
+
+  it('sign-out clears session', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const res = await inst.client.signOut({ fetchOptions: { headers } });
+      expect(res.error).toBeNull();
+    });
   });
 });
 
-describe('sign-up', () => {
-  it('POST /auth/api/sign-up/email rejects missing fields', async () => {
-    const res = await worker.fetch(
-      req('/auth/api/sign-up/email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'bad' }), // missing name + password
-      }),
-      env,
-      {} as ExecutionContext
-    );
-    expect(res.status).toBeGreaterThanOrEqual(400);
+// ── Magic Link ────────────────────────────────────────────────────────────────
+
+describe('magicLink', () => {
+  it('sends magic link without error', async () => {
+    const res = await inst.client.signIn.magicLink({ email: USER.email });
+    expect(res.error).toBeNull();
   });
 });
 
-describe('sign-in', () => {
-  it('POST /auth/api/sign-in/email rejects unknown user', async () => {
-    const res = await worker.fetch(
-      req('/auth/api/sign-in/email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'nobody@example.com', password: 'wrong' }),
-      }),
-      env,
-      {} as ExecutionContext
-    );
-    expect(res.status).toBeGreaterThanOrEqual(400);
+// ── Email OTP ─────────────────────────────────────────────────────────────────
+
+describe('emailOTP', () => {
+  it('sends OTP without error', async () => {
+    const res = await inst.client.emailOtp.sendVerificationOtp({
+      email: USER.email,
+      type: 'sign-in',
+    });
+    expect(res.error).toBeNull();
   });
 });
 
-describe('routing', () => {
-  it('GET /auth redirects to /auth/sign-in', async () => {
-    const res = await worker.fetch(req('/auth'), env, {} as ExecutionContext);
-    expect([301, 302]).toContain(res.status);
-    expect(res.headers.get('location')).toContain('/auth/sign-in');
+// ── Bearer ────────────────────────────────────────────────────────────────────
+
+describe('bearer', () => {
+  it('session valid with bearer token', async () => {
+    const signIn = await inst.client.signIn.email(USER);
+    const token = signIn.data?.token;
+    expect(token).toBeTruthy();
+
+    const session = await inst.client.getSession({
+      fetchOptions: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    expect(session.data?.user.email).toBe(USER.email);
+  });
+});
+
+// ── Anonymous ─────────────────────────────────────────────────────────────────
+
+describe('anonymous', () => {
+  it('creates an anonymous session', async () => {
+    const res = await inst.client.signIn.anonymous();
+    expect(res.error).toBeNull();
+    expect(res.data?.user.isAnonymous).toBe(true);
+  });
+});
+
+// ── Organization ──────────────────────────────────────────────────────────────
+
+describe('organization', () => {
+  it('creates an organization', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const res = await inst.client.organization.create(
+        { name: 'Acme CAD', slug: 'acme-cad' },
+        { fetchOptions: { headers } }
+      );
+      expect(res.error).toBeNull();
+      expect(res.data?.name).toBe('Acme CAD');
+    });
+  });
+
+  it('lists organizations for member', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const res = await inst.client.organization.list({ fetchOptions: { headers } });
+      expect(res.error).toBeNull();
+      expect(Array.isArray(res.data)).toBe(true);
+    });
+  });
+});
+
+// ── Two Factor ────────────────────────────────────────────────────────────────
+
+describe('twoFactor', () => {
+  it('enable 2FA returns TOTP URI', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const res = await inst.client.twoFactor.enable(
+        { password: USER.password },
+        { fetchOptions: { headers } }
+      );
+      expect(res.error).toBeNull();
+      expect(res.data?.totpURI).toMatch(/^otpauth:\/\/totp\//);
+    });
+  });
+});
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+describe('admin', () => {
+  it('admin client plugin is registered', () => {
+    expect(inst.client.admin).toBeDefined();
+    expect(typeof inst.client.admin.listUsers).toBe('function');
+  });
+});
+
+// ── Multi Session ─────────────────────────────────────────────────────────────
+
+describe('multiSession', () => {
+  it('lists active sessions', async () => {
+    await inst.runWithUser(USER.email, USER.password, async (headers) => {
+      const res = await inst.client.multiSession.listDeviceSessions({
+        fetchOptions: { headers },
+      });
+      expect(res.error).toBeNull();
+      expect(Array.isArray(res.data)).toBe(true);
+    });
   });
 });
