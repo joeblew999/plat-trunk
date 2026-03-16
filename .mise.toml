@@ -3,11 +3,11 @@
 # Install: https://mise.jdx.dev
 # Usage:   mise install   (installs all tools at pinned versions)
 #
-# Secrets: managed via Doppler (doppler.yaml links this repo to project "plat-trunk")
-#   Human devs:       doppler login         (one-time browser OAuth)
-#   Claude container: DOPPLER_TOKEN=<token> mise run ...
-#   CI (GitHub):      DOPPLER_TOKEN set as Actions secret
-#   Rotate:           mise run secrets:rotate
+# Secrets: managed via Doppler → .env (gitignored, loaded by mise [env] _.file)
+#   Setup (one-time): brew install dopplerhq/cli/doppler && doppler login
+#                     mise run secrets:pull     ← generates .env from Doppler
+#   CI/container:     DOPPLER_TOKEN=<service token> mise run secrets:pull
+#   After rotation:   update in Doppler dashboard, then mise run secrets:pull
 #
 # Rust version is pinned separately in rust-toolchain.toml (wasm targets + components).
 # mise respects rust-toolchain.toml automatically.
@@ -24,7 +24,7 @@ gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 # Workers:   8788–8799   Inspector: 9229–9239
 # Dev servers (Vite etc): 5173–5179
 [env]
-_.source = "scripts/mise-doppler-env.sh"
+_.file = ".env"
 # plat-router (root)
 ROUTER_PORT           = "8788"
 ROUTER_INSPECTOR      = "9229"
@@ -96,6 +96,17 @@ bun scripts/cf-deploy.ts upload --target router --tag pr-$PR --preview-alias pr-
 # mise run secrets:set  →  syncs Doppler secrets → GitHub Actions.
 # mise run secrets:list →  shows all secrets in Doppler + GitHub Actions.
 # mise run secrets:rotate → prints rotation URLs.
+
+[tasks."secrets:pull"]
+description = "Pull secrets from Doppler → .env (run after setup or rotation)"
+run = """
+if [ -n "${DOPPLER_TOKEN:-}" ]; then
+  doppler secrets download --no-file --format env --project plat-trunk --config dev --token "$DOPPLER_TOKEN" > .env
+else
+  doppler secrets download --no-file --format env --project plat-trunk --config dev > .env
+fi
+echo "✓ .env updated from Doppler"
+"""
 
 [tasks."secrets:set"]
 description = "Sync Doppler secrets → GitHub Actions (run after any rotation in Doppler)"

@@ -1,50 +1,34 @@
-# .mise.local.toml.example — secrets provenance + rotation guide
+# .mise.local.toml.example
 #
-# ── Setup ────────────────────────────────────────────────────────────────────
-#   cp .mise.local.toml.example .mise.local.toml
-#   # fill in values below, then:
-#   mise run secrets:set       # push all secrets → GitHub Actions
+# ── Secrets are now managed via Doppler ──────────────────────────────────────
 #
-# ── Rotation ─────────────────────────────────────────────────────────────────
-#   1. Generate a new token at the URL listed below each secret
-#   2. Update the value in .mise.local.toml
-#   3. mise run secrets:set    # re-push to GitHub
-#   4. Revoke the old token at the provider dashboard
+# Human devs (one-time setup):
+#   mise install          # installs doppler + all tools
+#   doppler login         # browser OAuth — links your machine to Doppler
+#   # Done. Secrets inject automatically when you cd into this repo.
 #
-# ── Rules ────────────────────────────────────────────────────────────────────
-#   NEVER commit this file  (.gitignore already blocks it)
-#   Store values in a password manager (1Password, Bitwarden, etc.)
-#   Rotate every 90 days, or immediately after any accidental exposure
-#   After exposure: rotate FIRST, then clean git history if needed
+# Claude / CI container:
+#   Generate a service token at:
+#     https://dashboard.doppler.com/workplace/plat-trunk/configs/dev/access
+#   Then pass it as an env var:
+#     DOPPLER_TOKEN=dp.st.dev.xxxx mise run deploy
 #
-# ── What lives where ─────────────────────────────────────────────────────────
-#   Local dev  →  .mise.local.toml        (this file, gitignored)
-#   CI         →  GitHub Actions secrets  (mise run secrets:set pushes them)
-#   Agents     →  Claude memory           (token names only, never values)
-
-[env]
-
-# ── Cloudflare ────────────────────────────────────────────────────────────────
-# Account ID
-#   Where:  https://dash.cloudflare.com → right sidebar "Account ID"
-#   Rotate: n/a (stable identifier, not a credential)
-CLOUDFLARE_ACCOUNT_ID = "your-cloudflare-account-id-here"
-
-# API Token
-#   Create:  https://dash.cloudflare.com/profile/api-tokens → Create Token
-#   Template: "Edit Cloudflare Workers", then also add:
-#     Workers KV Storage: Edit
-#     Workers D1: Edit
-#     Workers R2 Storage: Edit
-#     Zone DNS: Edit  (needed for custom domain routing)
-#   Scope:   Account — your account only
-#   Rotate:  https://dash.cloudflare.com/profile/api-tokens → token → Roll
-CLOUDFLARE_API_TOKEN = "your-cloudflare-api-token-here"
-
-# ── GitHub ────────────────────────────────────────────────────────────────────
-# Personal Access Token (classic)
-#   Create:  https://github.com/settings/tokens/new
-#   Scopes:  repo, workflow
-#   Used for: gh CLI auth, mise install rate-limit bypass, git push from agents
-#   Rotate:  https://github.com/settings/tokens → token → Regenerate
-GITHUB_TOKEN = "your-github-token-here"
+# ── You only need this file if you can't use Doppler ─────────────────────────
+# (e.g. offline, or Doppler is down — unlikely but possible)
+#
+# cp .mise.local.toml.example .mise.local.toml  and fill in values below.
+# .mise.local.toml is gitignored — never commit it.
+#
+# [env]
+#
+# # Cloudflare API Token
+# #   Create:  https://dash.cloudflare.com/profile/api-tokens
+# CLOUDFLARE_API_TOKEN = ""
+#
+# # Cloudflare Account ID
+# #   Find:    https://dash.cloudflare.com → right sidebar
+# CLOUDFLARE_ACCOUNT_ID = ""
+#
+# # GitHub Personal Access Token
+# #   Create:  https://github.com/settings/tokens  (scopes: repo, workflow)
+# GITHUB_TOKEN = ""
