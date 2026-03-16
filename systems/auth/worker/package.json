@@ -3,23 +3,23 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "auth:generate": "bunx @better-auth/cli@latest generate --config src/auth.ts --output src/db/auth.schema.ts -y",
+    "auth:generate": "npx auth@latest generate --output src/db/auth.schema.ts -y",
     "auth:migrate:local": "wrangler d1 migrations apply auth-db --local",
     "auth:migrate:prod": "wrangler d1 migrations apply auth-db --remote",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "better-auth": "^1",
-    "better-auth-cloudflare": "^0.2",
+    "@better-auth/oauth-provider": "^1.5",
+    "better-auth": "^1.5",
     "drizzle-orm": "^0.38",
     "hono": "^4"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.13.0",
+    "@cloudflare/vitest-pool-workers": "^0.8",
     "@cloudflare/workers-types": "^4",
-    "drizzle-kit": "^0.31.4",
+    "drizzle-kit": "^0.31",
     "typescript": "^5",
-    "vitest": "^4.1.0",
-    "wrangler": "^3"
+    "vitest": "^3",
+    "wrangler": "^4"
   }
 }

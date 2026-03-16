@@ -112,3 +112,26 @@ declare global {
     __ds?: { signals: AuthSignals };
   }
 }
+
+// ── OAuth Consent ────────────────────────────────────────
+window.oauthConsent = async function (allow: boolean) {
+  const s = window.__ds?.signals as any;
+  if (s) s.loading = true;
+  const params = (window as any).__oauthParams ?? {};
+  const { error } = await post('/oauth/consent', {
+    allow,
+    clientId: params.clientId,
+    redirectUri: params.redirectUri,
+    scope: params.scope,
+    state: params.state,
+  });
+  if (s) s.loading = false;
+  if (error) { if (s) s.error = error; return; }
+  // Redirect handled server-side via Location header
+};
+
+declare global {
+  interface Window {
+    oauthConsent: (allow: boolean) => Promise<void>;
+  }
+}

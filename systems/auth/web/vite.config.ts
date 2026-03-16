@@ -12,6 +12,7 @@ export default defineConfig({
         'sign-up':        'sign-up.html',
         'reset-password': 'reset-password.html',
         'verify-email':   'verify-email.html',
+        'consent':        'consent.html',
       },
     },
   },

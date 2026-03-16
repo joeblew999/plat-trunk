@@ -74,16 +74,24 @@ wrangler kv namespace create AUTH_KV
 # → paste id into systems/auth/worker/wrangler.toml
 ```
 
-**2. Generate canonical auth schema**
+**2. Generate canonical auth schema** (optional but recommended)
 ```bash
 cd systems/auth/worker
 bun install
 bun run auth:generate
-# → commits src/db/auth.schema.ts (replaces hand-written version)
-# → tell Claude what changed so migrations can be updated if needed
+# → regenerates src/db/auth.schema.ts with all plugin tables
+# → commit and push, then Claude can review
 ```
 
-**3. Apply migrations to Cloudflare D1**
+**3. Apply migrations**
+
+Option A — programmatic (no CLI needed, works anywhere):
+```bash
+curl -X POST https://cad.ubuntusoftware.net/auth/migrate
+# → better-auth detects and runs all pending migrations automatically
+```
+
+Option B — via wrangler CLI:
 ```bash
 bun run auth:migrate:prod
 ```

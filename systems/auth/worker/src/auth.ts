@@ -1,13 +1,41 @@
 // systems/auth/worker/src/auth.ts
-// better-auth configuration, wrapped with withCloudflare for D1 + KV bindings.
-// Exported as `auth` for CLI schema generation (no env), and `createAuth` for runtime.
+//
+// Base better-auth v1.5 — no better-auth-cloudflare wrapper.
+// D1 passed directly (first-class support since v1.5).
+// KV used as secondary storage for session caching.
+//
+// One auth instance per request via createAuth(env) factory.
+// Never create a singleton — D1 bindings are request-scoped in CF Workers.
+//
+// Plugins included:
+//   twoFactor     — TOTP for secure accounts
+//   magicLink     — passwordless sign-in via email
+//   emailOTP      — one-time password via email
+//   organization  — multi-tenant teams (sharing CAD models)
+//   admin         — user management, ban/unban
+//   multiSession  — multiple devices per user
+//   anonymous     — guest sessions → upgrade to full account
+//   bearer        — Bearer token auth for MCP + API clients
+//   jwt           — stateless tokens
+//   oauthProvider — full OAuth 2.1 server (MCP agent auth)
+//
+// Plugins requiring separate packages (add when ready):
+//   passkey  → @better-auth/passkey  (WebAuthn)
+//   apiKey   → @better-auth/api-key  (API key management)
 
-import type { D1Database } from '@cloudflare/workers-types';
 import { betterAuth } from 'better-auth';
-import { withCloudflare } from 'better-auth-cloudflare';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { drizzle } from 'drizzle-orm/d1';
-import * as authSchema from './db/auth.schema';
+import {
+  twoFactor,
+  magicLink,
+  organization,
+  admin,
+  bearer,
+  jwt,
+  multiSession,
+  anonymous,
+  emailOTP,
+} from 'better-auth/plugins';
+import { oauthProvider } from '@better-auth/oauth-provider';
 
 export type CloudflareBindings = {
   AUTH_DB: D1Database;
@@ -16,63 +44,97 @@ export type CloudflareBindings = {
   BETTER_AUTH_SECRET: string;
 };
 
-export function createAuth(env?: CloudflareBindings, cf?: IncomingRequestCfProperties) {
-  const db = env ? drizzle(env.AUTH_DB, { schema: authSchema }) : ({} as ReturnType<typeof drizzle>);
-
+export function createAuth(env: CloudflareBindings) {
   return betterAuth({
-    // Match our URL structure: router serves auth at /auth/api/*
-    // better-auth default is /api/auth — we override to /auth/api
+    // D1 binding — first-class support in better-auth v1.5
+    database: env.AUTH_DB,
+
+    baseURL: env.BETTER_AUTH_URL,
     basePath: '/auth/api',
-    baseURL: env?.BETTER_AUTH_URL ?? 'http://localhost:8788',
-    secret: env?.BETTER_AUTH_SECRET,
+    secret: env.BETTER_AUTH_SECRET,
+
     trustedOrigins: [
       'http://localhost:8788',
       'http://localhost:5174',
       'https://cad.ubuntusoftware.net',
     ],
 
-    ...withCloudflare(
-      {
-        autoDetectIpAddress: true,
-        geolocationTracking: true,
-        cf: cf ?? {},
-        d1: env
-          ? { db: db as any, options: { usePlural: true } }
-          : undefined,
-        kv: env?.AUTH_KV as any,
+    // KV as secondary storage — session cache + rate limiting
+    secondaryStorage: {
+      get: async (key) => {
+        const val = await env.AUTH_KV.get(key);
+        return val ? JSON.parse(val) : null;
       },
-      {
-        emailAndPassword: { enabled: true },
-        emailVerification: {
-          sendVerificationEmail: async ({ user, url }) => {
-            // TODO: wire up Cloudflare Email or a transactional provider
-            console.log(`[auth] verify email for ${user.email}: ${url}`);
-          },
-        },
-        rateLimit: {
-          enabled: true,
-          window: 60,   // min KV TTL is 60s
-          max: 100,
-          customRules: {
-            '/sign-in/email':   { window: 60, max: 10 },
-            '/sign-up/email':   { window: 60, max: 5  },
-            '/forget-password': { window: 60, max: 5  },
-          },
-        },
-      }
-    ),
+      set: async (key, value, ttl) => {
+        await env.AUTH_KV.put(key, JSON.stringify(value), {
+          expirationTtl: ttl ?? 86400,
+        });
+      },
+      delete: async (key) => {
+        await env.AUTH_KV.delete(key);
+      },
+    },
 
-    // Drizzle adapter for CLI schema generation (no env)
-    ...(env
-      ? {}
-      : {
-          database: drizzleAdapter({} as D1Database, {
-            provider: 'sqlite',
-            usePlural: true,
-          }),
-        }),
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+    },
+
+    emailVerification: {
+      sendVerificationEmail: async ({ user, url }) => {
+        // TODO: wire Cloudflare Email Routing or Resend
+        console.log(`[auth] verify: ${user.email} → ${url}`);
+      },
+    },
+
+    socialProviders: {
+      google: {
+        clientId: (env as any).GOOGLE_CLIENT_ID ?? '',
+        clientSecret: (env as any).GOOGLE_CLIENT_SECRET ?? '',
+      },
+      github: {
+        clientId: (env as any).GITHUB_CLIENT_ID ?? '',
+        clientSecret: (env as any).GITHUB_CLIENT_SECRET ?? '',
+      },
+    },
+
+    plugins: [
+      // ── Multi-factor ──────────────────────────────────────────
+      twoFactor(),
+
+      // ── Passwordless ──────────────────────────────────────────
+      magicLink({
+        sendMagicLink: async ({ email, url }) => {
+          console.log(`[auth] magic link: ${email} → ${url}`);
+        },
+      }),
+      emailOTP({
+        sendVerificationOTP: async ({ email, otp }) => {
+          console.log(`[auth] OTP: ${email} → ${otp}`);
+        },
+      }),
+
+      // ── Multi-tenant ──────────────────────────────────────────
+      // Teams sharing CAD models — critical for collaboration
+      organization(),
+
+      // ── Access control ────────────────────────────────────────
+      admin(),
+      multiSession(),
+      anonymous(),
+
+      // ── API / agent access ────────────────────────────────────
+      // MCP clients + service-to-service calls
+      bearer(),
+      jwt(),
+
+      // ── OAuth 2.1 provider ────────────────────────────────────
+      // Turns this auth worker into a full OAuth 2.1 server.
+      // MCP agents authenticate against your CAD platform via this.
+      oauthProvider({
+        loginPage: '/auth/sign-in',
+        consentPage: '/auth/consent',
+      }),
+    ],
   });
 }
-
-// For CLI schema generation: `bun run auth:generate`
-export const auth = createAuth();
