@@ -53,6 +53,17 @@ jobs:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      # Install JS/TS dependencies for root + all sub-packages
+      - name: Install dependencies
+        run: |
+          bun install
+          bun install --cwd systems/truck/web
+          bun install --cwd systems/truck/worker
+          bun install --cwd systems/sync/worker
+          bun install --cwd systems/auth/worker
+          bun install --cwd systems/auth/web
+          bun install --cwd systems/test/worker
+
       # Build + test (build includes truck WASM + docs)
       - run: bun run build && bun run test
 
