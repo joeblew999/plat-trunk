@@ -213,6 +213,28 @@ if (totalTestFiles === 0) {
   warn('No testFiles registries found in any system.mjs');
 }
 
+// ── 9. Port conflict detection ─────────────────────────────────────────────
+console.log('\n[9] Port conflicts');
+{
+  const portMap = new Map(); // port → first owner name
+  const allEntries = [
+    ...workers.map(w => ({ name: w.name, ports: [w.port, w.inspectorPort].filter(Boolean) })),
+    ...devServers.map(s => ({ name: s.name, ports: [s.port].filter(Boolean) })),
+  ];
+  let conflicts = 0;
+  for (const { name, ports } of allEntries) {
+    for (const port of ports) {
+      if (portMap.has(port)) {
+        fail(`Port ${port} used by both "${portMap.get(port)}" and "${name}"`);
+        conflicts++;
+      } else {
+        portMap.set(port, name);
+      }
+    }
+  }
+  if (conflicts === 0) ok(`No port conflicts across ${portMap.size} registered ports`);
+}
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('');
 if (errors === 0 && warnings === 0) {

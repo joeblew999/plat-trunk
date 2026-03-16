@@ -34,9 +34,10 @@ AUTH_INSPECTOR        = "9231"
 # test-worker
 TEST_PORT             = "5175"
 TEST_INSPECTOR        = "9232"
-# Dev servers (Vite)
+# Dev servers (Vite / VitePress)
 AUTH_WEB_PORT         = "5174"
 TRUCK_WEB_PORT        = "5173"
+DOCS_PORT             = "5176"
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
@@ -58,16 +59,8 @@ run = "bun run dev"
 # ── Install ───────────────────────────────────────────────────────────────────
 
 [tasks.install]
-description = "Install JS deps for root + all sub-packages (parallel)"
-run = [
-  "bun install",
-  "bun install --cwd systems/truck/web",
-  "bun install --cwd systems/truck/worker",
-  "bun install --cwd systems/sync/worker",
-  "bun install --cwd systems/auth/worker",
-  "bun install --cwd systems/auth/web",
-  "bun install --cwd systems/test/worker",
-]
+description = "Install JS deps for root + all systems (auto-discovers package.json dirs)"
+run = "bun scripts/install-all.mjs"
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 

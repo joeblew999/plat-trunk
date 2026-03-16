@@ -1,0 +1,16 @@
+# systems/test/.mise.toml — test-worker tasks
+#
+# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+#
+# Usage (from systems/test/):
+#   mise run dev    Start test worker
+#   mise run kill   Kill test worker port
+
+[tasks.kill]
+description = "Kill test worker port"
+run = "lsof -ti:$TEST_PORT,$TEST_INSPECTOR | xargs kill -9 2>/dev/null; true"
+
+[tasks.dev]
+description = "Start test worker (kill first)"
+depends = ["kill"]
+run = "cd ../.. && bunx wrangler dev --config systems/test/worker/wrangler.toml"

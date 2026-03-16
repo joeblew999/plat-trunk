@@ -1,0 +1,28 @@
+# systems/sync/.mise.toml — sync WASM library tasks
+#
+# Sync has no deployed worker — it's a WASM lib consumed by truck.
+# Ports + tool versions inherited from root .mise.toml.
+#
+# Usage (from systems/sync/):
+#   mise run build:wasm   Build all 3 WASM targets (incremental)
+#   mise run test         Run Rust CRDT tests + TS boundary tests
+
+[tasks."build:wasm"]
+description = "Build sync WASM — 3 targets (incremental — skips if Rust src unchanged)"
+sources = [
+  "crate/src/**/*.rs",
+  "crate/Cargo.toml",
+]
+outputs = [
+  "../truck/web/pkg-sync/truck_sync_bg.wasm",
+  "../truck/worker/pkg-sync/truck_sync_bg.wasm",
+  "worker/pkg-sync/truck_sync_bg.wasm",
+]
+run = "cd ../.. && bun run build:sync"
+
+[tasks.test]
+description = "Run sync Rust CRDT tests + TS boundary tests in parallel"
+run = [
+  "cargo test -p truck-sync",
+  "cd worker && bunx vitest run",
+]

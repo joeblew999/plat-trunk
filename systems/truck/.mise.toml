@@ -1,0 +1,54 @@
+# systems/truck/.mise.toml — truck-cad system tasks
+#
+# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+# Run from repo root OR from systems/truck/ — both work.
+#
+# Usage (from systems/truck/):
+#   mise run dev          Start truck worker + Vite web dev server
+#   mise run build:wasm   Build WASM (incremental — skips if Rust unchanged)
+#   mise run test         Run Rust + TS tests
+#   mise run kill         Kill truck dev ports
+
+[tasks.kill]
+description = "Kill truck dev ports"
+run = "lsof -ti:$TRUCK_PORT,$TRUCK_INSPECTOR,$TRUCK_WEB_PORT | xargs kill -9 2>/dev/null; true"
+
+[tasks."build:wasm"]
+description = "Build truck WASM (incremental — skips if Rust src unchanged)"
+sources = [
+  "crate/src/**/*.rs",
+  "crate/Cargo.toml",
+  "../sync/crate/src/**/*.rs",
+  "../sync/crate/Cargo.toml",
+]
+outputs = [
+  "web/pkg-browser-renderer/truck_cad_bg.wasm",
+  "worker/pkg/truck_cad_bg.wasm",
+]
+run = "cd ../.. && bun run build:truck"
+
+[tasks."build:wasm:watch"]
+description = "Auto-rebuild WASM on Rust changes"
+run = "mise watch build:wasm"
+
+[tasks.dev]
+description = "Start truck-cad worker + Vite web dev (kill first)"
+depends = ["kill"]
+run = [
+  "cd ../.. && bunx wrangler dev --config systems/truck/worker/wrangler.toml",
+  "cd web && bunx vite --port $TRUCK_WEB_PORT",
+]
+
+[tasks.test]
+description = "Run truck Rust + TS tests in parallel"
+run = [
+  "cargo test --release -p truck-cad --no-default-features --features native",
+  "cd worker && bunx vitest run",
+]
+
+[tasks.typecheck]
+description = "Typecheck worker + web"
+run = [
+  "cd worker && bunx tsc --noEmit",
+  "cd web && bun run typecheck",
+]

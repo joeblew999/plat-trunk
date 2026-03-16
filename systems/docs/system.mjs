@@ -2,10 +2,12 @@
 
 export const workers = [];
 
+const DOCS_PORT = parseInt(process.env.DOCS_PORT ?? '5176');
+
 export const devServers = [
   {
     name: 'docs-dev',
-    command: 'cd systems/docs/website && bun x vitepress dev --port 5176',
+    command: `cd systems/docs/website && bun x vitepress dev --port ${DOCS_PORT}`,
   },
 ];
 

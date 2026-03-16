@@ -1,0 +1,15 @@
+# systems/docs/.mise.toml — docs system tasks
+#
+# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+#
+# Usage (from systems/docs/):
+#   mise run dev    Start VitePress dev server
+#   mise run build  Build VitePress site
+
+[tasks.dev]
+description = "Start VitePress dev server"
+run = "cd website && bunx vitepress dev --port $DOCS_PORT"
+
+[tasks.build]
+description = "Build VitePress docs site"
+run = "cd website && bun install --silent && bun run build"
