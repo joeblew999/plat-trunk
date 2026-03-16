@@ -22,6 +22,10 @@ use monstertruck_meshing::prelude::*;
 use monstertruck_modeling::*;
 use monstertruck_gpu::*;
 use monstertruck_render::*;
+// Re-shadow monstertruck_modeling::Result<T> (1-arg alias) with the standard 2-arg Result.
+// Without this, wasm_bindgen macros see the wrong Result type for fn signatures.
+#[allow(unused_imports)]
+use std::result::Result;
 
 use ifc_lite_core as ifc;
 
@@ -1184,7 +1188,11 @@ impl SceneController {
             other => Err(format!("add_brep: unknown geometry type '{}'", other)),
         }
     }
+}
 
+// Private helpers that take non-wasm types — must be outside #[wasm_bindgen] impl
+// to avoid wasm-bindgen trying to generate JS bindings for them.
+impl SceneController {
     fn add_brep_swept_polyline(&self, params: &AddBrepParams) -> std::result::Result<String, String> {
         let geo = &params.geometry;
 
@@ -1264,7 +1272,10 @@ impl SceneController {
         let mut s = self.state.borrow_mut();
         Ok(add_solid_to_state(&mut s, solid, kind, bim))
     }
+}
 
+#[wasm_bindgen]
+impl SceneController {
     #[wasm_bindgen]
     pub fn translate_object(&self, id: &str, dx: f64, dy: f64, dz: f64) -> bool {
         let mut s = self.state.borrow_mut();
