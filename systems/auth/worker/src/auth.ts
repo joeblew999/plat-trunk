@@ -1,41 +1,13 @@
 // systems/auth/worker/src/auth.ts
 //
-// Base better-auth v1.5 — no better-auth-cloudflare wrapper.
-// D1 passed directly (first-class support since v1.5).
-// KV used as secondary storage for session caching.
+// Base better-auth v1.5 — D1 native, KV secondary storage.
+// One instance per request via createAuth(env) — never a singleton.
 //
-// One auth instance per request via createAuth(env) factory.
-// Never create a singleton — D1 bindings are request-scoped in CF Workers.
-//
-// Plugins included:
-//   twoFactor     — TOTP for secure accounts
-//   magicLink     — passwordless sign-in via email
-//   emailOTP      — one-time password via email
-//   organization  — multi-tenant teams (sharing CAD models)
-//   admin         — user management, ban/unban
-//   multiSession  — multiple devices per user
-//   anonymous     — guest sessions → upgrade to full account
-//   bearer        — Bearer token auth for MCP + API clients
-//   jwt           — stateless tokens
-//   oauthProvider — full OAuth 2.1 server (MCP agent auth)
-//
-// Plugins requiring separate packages (add when ready):
-//   passkey  → @better-auth/passkey  (WebAuthn)
-//   apiKey   → @better-auth/api-key  (API key management)
+// To add/remove plugins: edit src/plugins.ts
+// To add social providers: uncomment in SOCIAL_PROVIDERS in src/plugins.ts
 
 import { betterAuth } from 'better-auth';
-import {
-  twoFactor,
-  magicLink,
-  organization,
-  admin,
-  bearer,
-  jwt,
-  multiSession,
-  anonymous,
-  emailOTP,
-} from 'better-auth/plugins';
-import { oauthProvider } from '@better-auth/oauth-provider';
+import { SOCIAL_PROVIDERS, getPlugins } from './plugins';
 
 export type CloudflareBindings = {
   AUTH_DB: D1Database;
@@ -46,7 +18,7 @@ export type CloudflareBindings = {
 
 export function createAuth(env: CloudflareBindings) {
   return betterAuth({
-    // D1 binding — first-class support in better-auth v1.5
+    // D1 — first-class support in better-auth v1.5, no adapter needed
     database: env.AUTH_DB,
 
     baseURL: env.BETTER_AUTH_URL,
@@ -77,65 +49,18 @@ export function createAuth(env: CloudflareBindings) {
 
     emailAndPassword: {
       enabled: true,
-      requireEmailVerification: false,
+      requireEmailVerification: false, // set true once email sending is wired
     },
 
     emailVerification: {
       sendVerificationEmail: async ({ user, url }) => {
-        // TODO: wire Cloudflare Email Routing or Resend
+        // TODO: wire email provider (Resend, Cloudflare Email Routing)
         console.log(`[auth] verify: ${user.email} → ${url}`);
       },
     },
 
-    // socialProviders: uncomment and add env vars when ready
-    // socialProviders: {
-    //   google: {
-    //     clientId: (env as any).GOOGLE_CLIENT_ID ?? '',
-    //     clientSecret: (env as any).GOOGLE_CLIENT_SECRET ?? '',
-    //   },
-    //   github: {
-    //     clientId: (env as any).GITHUB_CLIENT_ID ?? '',
-    //     clientSecret: (env as any).GITHUB_CLIENT_SECRET ?? '',
-    //   },
-    // },
+    socialProviders: SOCIAL_PROVIDERS,
 
-    plugins: [
-      // ── Multi-factor ──────────────────────────────────────────
-      twoFactor(),
-
-      // ── Passwordless ──────────────────────────────────────────
-      magicLink({
-        sendMagicLink: async ({ email, url }) => {
-          console.log(`[auth] magic link: ${email} → ${url}`);
-        },
-      }),
-      emailOTP({
-        sendVerificationOTP: async ({ email, otp }) => {
-          console.log(`[auth] OTP: ${email} → ${otp}`);
-        },
-      }),
-
-      // ── Multi-tenant ──────────────────────────────────────────
-      // Teams sharing CAD models — critical for collaboration
-      organization(),
-
-      // ── Access control ────────────────────────────────────────
-      admin(),
-      multiSession(),
-      anonymous(),
-
-      // ── API / agent access ────────────────────────────────────
-      // MCP clients + service-to-service calls
-      bearer(),
-      jwt(),
-
-      // ── OAuth 2.1 provider ────────────────────────────────────
-      // Turns this auth worker into a full OAuth 2.1 server.
-      // MCP agents authenticate against your CAD platform via this.
-      oauthProvider({
-        loginPage: '/auth/sign-in',
-        consentPage: '/auth/consent',
-      }),
-    ],
+    plugins: getPlugins(),
   });
 }
