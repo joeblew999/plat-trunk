@@ -4,6 +4,8 @@ resolver = "2"
 members = [
     "systems/truck/crate",
     "systems/sync/crate",
+    "systems/plugins/howick/crate",
+    "systems/plugins/example/crate",
 ]
 
 # lib/observe is a self-contained workspace — see lib/observe/Cargo.toml
