@@ -15,7 +15,6 @@ node      = "22"      # Required by wrangler CLI
 rust      = "latest"  # Rust toolchain — version pinned by rust-toolchain.toml
 gh        = "latest"  # GitHub CLI — manage secrets, PRs, releases
 "github:rustwasm/wasm-pack" = "latest"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
-rust = "latest"
 
 [tasks."src:sync"]
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
