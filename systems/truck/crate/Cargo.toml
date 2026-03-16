@@ -48,7 +48,7 @@ ifc-lite-core = { path = "../../../.src/ifc-lite/rust/core" }
 ifc-lite-geometry = { path = "../../../.src/ifc-lite/rust/geometry" }
 
 # 2D constraint solver for parametric sketching
-kcl-ezpz = { path = "../../../.src/ezpz/kcl-ezpz" }
+kcl-ezpz = { package = "ezpz", path = "../../../.src/ezpz/ezpz" }
 
 # Optional features
 geozero = { version = "0.15.1", features = ["with-mvt"], optional = true }
