@@ -15,19 +15,22 @@ try {
 }
 
 // Already correctly patched with adaptive version?
-if (content.includes('bun:sqlite') && content.includes('node:sqlite') && content.includes('not bun')) {
+if (content.includes('bun:sqlite') && content.includes('not bun') && content.includes('nodeSqlite')) {
   console.log('✓ patch-better-auth: already patched, skipping');
   process.exit(0);
 }
 
 // Replacement: runtime-adaptive SQLite — bun:sqlite in bun, node:sqlite in Node 22+
+// Uses dynamic string concatenation so bun's static resolver won't pre-resolve node:sqlite.
 const replacement = `async function getSqlite() {
 \t\t// Patched by scripts/patch-better-auth.ts: bun:sqlite (bun) or node:sqlite (Node 22+)
 \t\ttry {
 \t\t\tconst { Database } = await import("bun:sqlite");
 \t\t\treturn new Database(":memory:");
-\t\t} catch { /* not bun */ }
-\t\tconst { DatabaseSync } = await import("node:sqlite");
+\t\t} catch { /* not bun — try node:sqlite below */ }
+\t\t// Dynamic string prevents bun's static pre-resolver from failing on "node:sqlite"
+\t\tconst nodeSqlite = "node" + ":" + "sqlite";
+\t\tconst { DatabaseSync } = await import(nodeSqlite);
 \t\treturn new DatabaseSync(":memory:");`;
 
 // Normalize: handle original and any previously-patched states
@@ -45,6 +48,11 @@ const patched = content
   // Previous wrong patch: better-sqlite3
   .replace(
     `async function getSqlite() {\n\t\tconst { default: BetterSqlite3 } = await import("better-sqlite3");\n\t\treturn new BetterSqlite3(":memory:");`,
+    replacement,
+  )
+  // Previous adaptive patch (without nodeSqlite variable — bun static resolve issue)
+  .replace(
+    `async function getSqlite() {\n\t\t// Patched by scripts/patch-better-auth.ts: bun:sqlite (bun) or node:sqlite (Node 22+)\n\t\ttry {\n\t\t\tconst { Database } = await import("bun:sqlite");\n\t\t\treturn new Database(":memory:");\n\t\t} catch { /* not bun */ }\n\t\tconst { DatabaseSync } = await import("node:sqlite");\n\t\treturn new DatabaseSync(":memory:");`,
     replacement,
   );
 
