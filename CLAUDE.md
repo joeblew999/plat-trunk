@@ -34,7 +34,7 @@ GITHUB_TOKEN={GITHUB_PAT} mise install
 
 Note: wrangler is installed via `bun install` (devDependency), not mise.
 
-### 3. Cloudflare credentials (if running wrangler commands)
+### 3. Cloudflare credentials + sync .src repos
 
 Credentials are in Claude's memory. Write `.mise.local.toml`:
 
@@ -45,6 +45,9 @@ CLOUDFLARE_API_TOKEN  = "{CF_API_TOKEN}"
 CLOUDFLARE_ACCOUNT_ID = "7384af54e33b8a54ff240371ea368440"
 GITHUB_TOKEN          = "{GITHUB_PAT}"
 EOF
+
+# Clone all vendored Rust sources (.src/ is gitignored)
+mise run src:sync
 ```
 
 Note: `api.cloudflare.com` is blocked in Claude's container — wrangler deploy/provision must run on MacBook.

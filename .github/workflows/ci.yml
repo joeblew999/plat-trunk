@@ -22,9 +22,9 @@ jobs:
       # Rust + wasm targets are handled by rust-toolchain.toml — mise respects it automatically.
       - uses: jdx/mise-action@v2
 
-      # Clone vendored Rust kernel sources (.src/ is gitignored, must be present for cargo)
-      - name: Clone .src/truck
-        run: git clone --depth=1 https://github.com/joeblew999/truck.git .src/truck
+      # Clone all vendored .src repos (truck, ifc-lite, ezpz) — idempotent
+      - name: Sync .src repos
+        run: mise run src:sync
 
       - uses: actions/cache@v4
         with:
@@ -32,6 +32,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .src/truck/target
+            .src/ifc-lite/target
+            .src/ezpz/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
