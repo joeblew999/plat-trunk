@@ -54,3 +54,10 @@ run = [
   "cd worker && bunx tsc --noEmit",
   "cd web && bun run typecheck",
 ]
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+# Single source of truth for what CI runs on the truck system.
+
+[tasks.ci]
+description = "Full CI gate — build WASM + typecheck + test in parallel"
+depends = ["build:wasm", "typecheck", "test"]

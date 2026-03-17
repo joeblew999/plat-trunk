@@ -71,6 +71,31 @@ run = "bun run dev"
 description = "Install JS deps for root + all systems (auto-discovers package.json dirs)"
 run = "bun scripts/install-all.mjs"
 
+# ── Build ─────────────────────────────────────────────────────────────────────
+# Builds all systems in dependency order — incremental via sources/outputs.
+
+[tasks.build]
+description = "Build all systems — sync WASM → truck WASM → auth web → docs → plugins"
+depends = ["install"]
+run = """
+mise --cd systems/sync run build:wasm
+mise --cd systems/truck run build:wasm
+mise --cd systems/auth run build
+mise --cd systems/docs run build
+mise run build:plugins
+"""
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run all system tests in parallel (build first)"
+depends = ["build"]
+run = [
+  "mise --cd systems/sync run test",
+  "mise --cd systems/truck run test",
+  "mise --cd systems/auth run test",
+]
+
 # ── CI ────────────────────────────────────────────────────────────────────────
 
 [tasks."ci:check-secrets"]
@@ -78,20 +103,30 @@ description = "Fail fast if Cloudflare deploy secrets are missing"
 run = "bash scripts/ci-check-secrets.sh"
 
 [tasks.ci]
-description = "Full CI gate — install deps, build, test (run locally to replicate CI exactly)"
+description = "Full CI gate — all systems in order: install → build → test"
 depends = ["install"]
-run = "bun run build && bun run test"
+run = [
+  "mise --cd systems/sync run ci",
+  "mise --cd systems/truck run ci",
+  "mise --cd systems/auth run ci",
+  "mise --cd systems/docs run ci",
+  "mise --cd systems/plugins/howick run ci",
+]
 
 # ── Plugins ───────────────────────────────────────────────────────────────────
 
 [tasks."build:plugins"]
 description = "Build all first-party plugins (bundle TS + wasm-pack WASM → public/)"
 depends = ["install"]
+sources = ["systems/plugins/*/crate/src/**/*.rs", "systems/plugins/**/*.ts", "systems/plugins/**/Cargo.toml"]
+outputs = ["systems/plugins/*/public/plugin.js", "systems/plugins/*/public/index.html"]
 run = "bun run build:plugins"
 
 [tasks."build:plugins:howick"]
 description = "Build just the Howick plugin (WASM + TS bundle)"
 depends = ["install"]
+sources = ["systems/plugins/howick/crate/src/**/*.rs", "systems/plugins/howick/plugin.ts", "systems/plugins/howick/crate/Cargo.toml"]
+outputs = ["systems/plugins/howick/public/plugin.js"]
 run = "bun run build:plugins howick"
 
 [tasks."build:plugins:dev"]

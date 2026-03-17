@@ -15,3 +15,9 @@ description = "Build VitePress docs site (incremental — skips if source unchan
 sources = ["website/docs/**/*", "website/.vitepress/**/*", "website/package.json"]
 outputs = ["website/.vitepress/dist/index.html"]
 run = "cd website && bun install --silent && bun run build"
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Full CI gate — build docs"
+depends = ["build"]

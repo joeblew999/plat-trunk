@@ -28,3 +28,9 @@ description = "Build auth web (incremental — skips if source unchanged)"
 sources = ["web/src/**/*", "web/index.html", "web/package.json"]
 outputs = ["web/dist/index.html"]
 run = "cd web && bun run build"
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Full CI gate — build web + test"
+depends = ["build", "test"]

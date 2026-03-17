@@ -27,3 +27,9 @@ run = [
   "cargo test -p truck-sync",
   "cd worker && bunx vitest run",
 ]
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Full CI gate — build WASM + test"
+depends = ["build:wasm", "test"]
