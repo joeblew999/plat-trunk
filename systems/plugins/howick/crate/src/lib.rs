@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 pub mod frame_extractor;
 pub use frame_extractor::{
     ExtractParams, ExtractedMember, ExtractError, FrameExtractor,
-    ParametricWallExtractor, WallOpening, members_to_frameset, derive_operations,
+    ParametricWallExtractor, WallOpening, members_to_frameset,
 };
 
 // ── Public WASM entry point ───────────────────────────────────────────────────
@@ -405,16 +405,19 @@ fn cut_list(p: &CutListParams) -> Result<serde_json::Value, String> {
 
 // ── CSV export ────────────────────────────────────────────────────────────────
 
-/// Params for CSV generation: takes a stud_layout result + frameset metadata.
+/// Params for CSV generation: wall dimensions + frameset metadata.
+///
+/// The generate_csv WASM command delegates to ParametricWallExtractor
+/// (from frame_extractor module) so all operation logic is in one place.
 #[derive(Debug, Deserialize)]
 pub struct GenerateCsvParams {
-    /// Frameset name — e.g. "W1", "T1". Used as FRAMESET header in CSV.
+    /// Frameset name — e.g. "W1", "T1"
     pub frameset_name: String,
     /// Steel profile code — e.g. "S8908"
     pub profile_code: String,
-    /// Members from stud_layout output
+    /// Members from stud_layout output (JSON array)
     pub members: Vec<serde_json::Value>,
-    /// Stud spacing in mm (for dimple pair calculation)
+    /// Stud spacing in mm
     #[serde(default = "default_stud_spacing")]
     pub stud_spacing_mm: f64,
 }
@@ -423,103 +426,41 @@ fn default_stud_spacing() -> f64 { 600.0 }
 
 /// Generate a Howick FRAMA CSV string from a stud layout.
 ///
-/// Maps the internal member representation produced by `stud_layout` into
-/// `howick_rs::Frameset` structs, then serialises to the Howick CSV format.
+/// Delegates to ParametricWallExtractor + members_to_frameset from
+/// frame_extractor module — single source of truth for operation rules.
 ///
 /// Returns: `{ "csv": "UNIT,MILLIMETRE\n..." }` or `{ "error": "..." }`
 fn generate_csv(params: &GenerateCsvParams) -> Result<serde_json::Value, String> {
-    use howick_rs::types::{
-        Component, Frameset, LabelOrientation, Operation, Profile, Unit,
+    use crate::frame_extractor::{ExtractedMember, ExtractParams, members_to_frameset};
+
+    let extract_params = ExtractParams {
+        frameset_name:             params.frameset_name.clone(),
+        profile_code:              params.profile_code.clone(),
+        stud_spacing_mm:           params.stud_spacing_mm,
+        orientation_tolerance_deg: 5.0,
     };
 
-    let mut components: Vec<Component> = Vec::new();
+    // Convert stud_layout JSON members to ExtractedMember structs
+    let extracted: Vec<ExtractedMember> = params.members.iter().enumerate()
+        .filter_map(|(i, m)| {
+            let length_mm  = m.get("length").and_then(|v| v.as_f64())?;
+            let profile_id = m.get("profile").and_then(|v| v.as_str()).unwrap_or("C");
+            let rotation   = m.get("rotation").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let position   = m.get("x").and_then(|v| v.as_f64()).unwrap_or((i as f64) * params.stud_spacing_mm);
 
-    for (i, member) in params.members.iter().enumerate() {
-        let length_mm = member.get("length")
-            .and_then(|v| v.as_f64())
-            .ok_or_else(|| format!("member {i}: missing length"))?;
+            // rotation 90° = vertical stud, 0° = horizontal track
+            let is_vertical = (rotation - 90.0).abs() < 5.0 || profile_id == "C";
 
-        let profile_id = member.get("profile")
-            .and_then(|v| v.as_str())
-            .unwrap_or("C");
+            Some(ExtractedMember { length_mm, is_vertical, position_mm: position })
+        })
+        .collect();
 
-        let _x = member.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let rotation = member.get("rotation").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-        // Determine member type from profile + rotation
-        // rotation 90 = vertical stud, 0 = horizontal track
-        let is_stud = (rotation - 90.0).abs() < 1.0 || profile_id == "C";
-        let is_track = profile_id == "U" || (rotation.abs() < 1.0 && profile_id != "C");
-
-        // Build operations for this member
-        let mut operations: Vec<Operation> = Vec::new();
-
-        if is_stud {
-            // Dimple pairs at each connection point
-            // Standard: pair at 20.65mm from each end, then at stud_spacing intervals
-            let dimple_offset = 20.65_f64;
-            let dimple_pair_gap = 50.0_f64;
-
-            // Near end dimple pair
-            operations.push(Operation::Dimple(dimple_offset));
-            operations.push(Operation::Dimple(dimple_offset + dimple_pair_gap));
-
-            // Far end dimple pair
-            operations.push(Operation::Dimple(length_mm - dimple_offset - dimple_pair_gap));
-            operations.push(Operation::Dimple(length_mm - dimple_offset));
-
-            // Lip cuts at each end (connect to track)
-            operations.push(Operation::LipCut(23.0));
-            operations.push(Operation::LipCut(length_mm - 23.0));
-
-            // Standard service hole at mid-height for services routing
-            if length_mm > 600.0 {
-                operations.push(Operation::ServiceHole(length_mm / 2.0));
-            }
-
-        } else if is_track {
-            // Track (U section): dimples at each stud position
-            let mut pos = params.stud_spacing_mm;
-            while pos < length_mm - 20.0 {
-                operations.push(Operation::Dimple(pos));
-                operations.push(Operation::Dimple(pos + 50.0));
-                pos += params.stud_spacing_mm;
-            }
-
-            // Lip cuts at each end
-            operations.push(Operation::LipCut(23.0));
-            operations.push(Operation::LipCut(length_mm - 23.0));
-        }
-
-        // Each member comes as an INV/NRM pair (C-section faces both directions)
-        // Component ID: frameset_name + sequential number
-        let base_id = i + 1;
-
-        components.push(Component {
-            id: format!("{}-{}", params.frameset_name, base_id * 2 - 1),
-            label: LabelOrientation::Inverted,
-            quantity: 1,
-            length_mm,
-            operations: operations.clone(),
-        });
-        components.push(Component {
-            id: format!("{}-{}", params.frameset_name, base_id * 2),
-            label: LabelOrientation::Normal,
-            quantity: 1,
-            length_mm,
-            operations,
-        });
+    if extracted.is_empty() {
+        return Err("no valid members found in input".into());
     }
 
-    let frameset = Frameset {
-        name: params.frameset_name.clone(),
-        unit: Unit::Millimetre,
-        profile: Profile {
-            code: params.profile_code.clone(),
-            description: "Standard Profile".to_string(),
-        },
-        components,
-    };
+    // members_to_frameset + derive_operations: single source of truth
+    let frameset = members_to_frameset(&extracted, &extract_params);
 
     let csv = howick_rs::csv::serialize(&frameset)
         .map_err(|e| format!("CSV serialisation failed: {e}"))?;
