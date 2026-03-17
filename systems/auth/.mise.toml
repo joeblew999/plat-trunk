@@ -24,5 +24,7 @@ description = "Run auth TS tests"
 run = "cd worker && bunx vitest run"
 
 [tasks.build]
-description = "Build auth web"
+description = "Build auth web (incremental — skips if source unchanged)"
+sources = ["web/src/**/*", "web/index.html", "web/package.json"]
+outputs = ["web/dist/index.html"]
 run = "cd web && bun run build"

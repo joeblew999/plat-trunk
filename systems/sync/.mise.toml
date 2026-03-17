@@ -21,7 +21,8 @@ outputs = [
 run = "cd ../.. && bun run build:sync"
 
 [tasks.test]
-description = "Run sync Rust CRDT tests + TS boundary tests in parallel"
+description = "Run sync Rust CRDT tests + TS boundary tests in parallel (WASM built first)"
+depends = ["build:wasm"]
 run = [
   "cargo test -p truck-sync",
   "cd worker && bunx vitest run",

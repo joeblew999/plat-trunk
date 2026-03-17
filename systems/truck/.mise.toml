@@ -32,22 +32,24 @@ description = "Auto-rebuild WASM on Rust changes"
 run = "mise watch build:wasm"
 
 [tasks.dev]
-description = "Start truck-cad worker + Vite web dev (kill first)"
-depends = ["kill"]
+description = "Start truck-cad worker + Vite web dev (WASM built first, then kill, then start)"
+depends = ["build:wasm", "kill"]
 run = [
   "cd ../.. && bunx wrangler dev --config systems/truck/worker/wrangler.toml",
   "cd web && bunx vite --port $TRUCK_WEB_PORT",
 ]
 
 [tasks.test]
-description = "Run truck Rust + TS tests in parallel"
+description = "Run truck Rust + TS tests in parallel (WASM built first)"
+depends = ["build:wasm"]
 run = [
   "cargo test --release -p truck-cad --no-default-features --features native",
   "cd worker && bunx vitest run",
 ]
 
 [tasks.typecheck]
-description = "Typecheck worker + web"
+description = "Typecheck worker + web (WASM built first — web types depend on pkg/)"
+depends = ["build:wasm"]
 run = [
   "cd worker && bunx tsc --noEmit",
   "cd web && bun run typecheck",

@@ -11,5 +11,7 @@ description = "Start VitePress dev server"
 run = "cd website && bunx vitepress dev --port $DOCS_PORT"
 
 [tasks.build]
-description = "Build VitePress docs site"
+description = "Build VitePress docs site (incremental — skips if source unchanged)"
+sources = ["website/docs/**/*", "website/.vitepress/**/*", "website/package.json"]
+outputs = ["website/.vitepress/dist/index.html"]
 run = "cd website && bun install --silent && bun run build"
