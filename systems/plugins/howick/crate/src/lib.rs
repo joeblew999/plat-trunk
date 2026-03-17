@@ -431,7 +431,7 @@ fn generate_csv(params: &GenerateCsvParams) -> Result<serde_json::Value, String>
             .and_then(|v| v.as_str())
             .unwrap_or("C");
 
-        let x = member.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let _x = member.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let rotation = member.get("rotation").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
         // Determine member type from profile + rotation
