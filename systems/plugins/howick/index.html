@@ -138,6 +138,45 @@
     }
     .status.ok  { color: var(--ok); }
     .status.err { color: var(--err); }
+    /* ── Machine status ── */
+    .machine-status {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px;
+      font-size: 11px;
+    }
+    .machine-status .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .machine-status .value { font-weight: 600; margin-top: 2px; }
+    .machine-status .ok    { color: var(--ok); }
+    .machine-status .err   { color: var(--err); }
+    .machine-status .idle  { color: var(--accent); }
+
+    /* ── CSV preview ── */
+    .csv-preview {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+      font-family: monospace;
+      font-size: 10px;
+      color: var(--muted);
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre;
+      word-break: break-all;
+    }
+
+    /* ── Job history ── */
+    .job-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 8px;
+      font-size: 11px;
+    }
+    .job-item .jid   { font-weight: 600; }
+    .job-item .jsub  { color: var(--muted); font-size: 10px; }
   </style>
 </head>
 <body>
@@ -147,6 +186,7 @@
     <div class="tab active" data-tab="member">Member</div>
     <div class="tab" data-tab="wall">Wall</div>
     <div class="tab" data-tab="cutlist">Cut List</div>
+    <div class="tab" data-tab="machine">Machine</div>
     <div class="tab" data-tab="scene">Scene</div>
   </div>
 
@@ -271,6 +311,65 @@
       <div id="cutListTable" style="font-size:11px;margin-top:6px;"></div>
       <button class="btn full" style="margin-top:8px;" id="btnExportCutList">Export CSV</button>
     </div>
+  </div>
+
+  <!-- ── Tab: Machine (CSV export + job submission) ── -->
+  <div class="panel" id="tab-machine">
+
+    <h3>Machine Job</h3>
+    <div class="row2">
+      <div class="field">
+        <label>Frameset name</label>
+        <input type="text" id="framesetName" value="W1" maxlength="10">
+      </div>
+      <div class="field">
+        <label>Profile code</label>
+        <input type="text" id="profileCode" value="S8908" maxlength="10">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Wall length (mm)</label>
+      <input type="number" id="machineWallLength" value="4800" min="600" step="100">
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label>Wall height (mm)</label>
+        <input type="number" id="machineWallHeight" value="2700" min="600" step="100">
+      </div>
+      <div class="field">
+        <label>Stud spacing (mm)</label>
+        <select id="machineSpacing">
+          <option value="300">300</option>
+          <option value="400">400</option>
+          <option value="450">450</option>
+          <option value="600" selected>600</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn full" id="btnGenerateCSV">Generate Howick CSV</button>
+
+    <div id="csvPreviewSection" style="display:none;">
+      <h3>CSV Preview</h3>
+      <div class="csv-preview" id="csvPreview"></div>
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <button class="btn" id="btnDownloadCSV" style="flex:1;">Download CSV</button>
+        <button class="btn primary" id="btnSubmitJob" style="flex:1;">Send to Machine</button>
+      </div>
+    </div>
+
+    <h3>Machine Status</h3>
+    <div class="machine-status" id="machineStatus">
+      <div class="label">Status</div>
+      <div class="value idle" id="machineStatusValue">—</div>
+    </div>
+
+    <h3>Job History</h3>
+    <div id="jobHistory" style="display:flex;flex-direction:column;gap:4px;">
+      <div style="color:var(--muted);font-size:11px;">No jobs submitted yet.</div>
+    </div>
+
   </div>
 
   <!-- ── Tab: Scene objects ── -->
@@ -464,6 +563,111 @@
           break
       }
     })
+
+    // ── Machine tab ─────────────────────────────────────────────────────────
+
+    let _currentCSV = null
+    let _currentFramesetName = 'W1'
+    const jobs = []
+
+    document.getElementById('btnGenerateCSV').addEventListener('click', () => {
+      _currentFramesetName = document.getElementById('framesetName').value.trim() || 'W1'
+      send({
+        type: 'GENERATE_CSV',
+        framesetName: _currentFramesetName,
+        profileCode:  document.getElementById('profileCode').value.trim() || 'S8908',
+        params: {
+          wall_length: parseFloat(document.getElementById('machineWallLength').value),
+          wall_height: parseFloat(document.getElementById('machineWallHeight').value),
+          spacing:     parseFloat(document.getElementById('machineSpacing').value),
+          gauge:       0.75,
+          profile:     'C',
+          openings:    []
+        }
+      })
+      setStatus('Generating CSV…')
+    })
+
+    document.getElementById('btnDownloadCSV').addEventListener('click', () => {
+      if (!_currentCSV) return
+      const blob = new Blob([_currentCSV], { type: 'text/csv' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = _currentFramesetName + '.csv'
+      a.click()
+      setStatus('CSV downloaded', 'ok')
+    })
+
+    document.getElementById('btnSubmitJob').addEventListener('click', () => {
+      if (!_currentCSV) return
+      send({ type: 'SUBMIT_JOB', csv: _currentCSV, framesetName: _currentFramesetName })
+      setStatus('Submitting job to machine…')
+      document.getElementById('btnSubmitJob').disabled = true
+    })
+
+    function addJobToHistory(jobId, framesetName) {
+      jobs.unshift({ jobId, framesetName, at: new Date().toLocaleTimeString() })
+      renderJobHistory()
+    }
+
+    function renderJobHistory() {
+      const el = document.getElementById('jobHistory')
+      if (!jobs.length) {
+        el.innerHTML = '<div style="color:var(--muted);font-size:11px;">No jobs submitted yet.</div>'
+        return
+      }
+      el.innerHTML = jobs.slice(0, 10).map(j => `
+        <div class="job-item">
+          <div class="jid">${j.framesetName} <span style="color:var(--muted);font-weight:400;font-size:10px;">${j.jobId}</span></div>
+          <div class="jsub">Queued ${j.at}</div>
+        </div>
+      `).join('')
+    }
+
+    // ── Inbound: additional messages for machine tab ─────────────────────────
+
+    // Extend the existing message handler (already set up above)
+    window.addEventListener('message', function(ev) {
+      const msg = ev.data
+      if (!msg || typeof msg !== 'object') return
+
+      switch (msg.type) {
+        case 'CSV_READY': {
+          _currentCSV = msg.csv
+          _currentFramesetName = msg.framesetName || _currentFramesetName
+          const preview = document.getElementById('csvPreview')
+          // Show first 8 lines of CSV
+          preview.textContent = msg.csv.split('\n').slice(0, 8).join('\n') + '\n…'
+          document.getElementById('csvPreviewSection').style.display = 'block'
+          document.getElementById('btnSubmitJob').disabled = false
+          setStatus('CSV ready — ' + (msg.csv.match(/^COMPONENT/gm) || []).length + ' components', 'ok')
+          break
+        }
+
+        case 'JOB_SUBMITTED': {
+          addJobToHistory(msg.jobId, msg.framesetName)
+          document.getElementById('btnSubmitJob').disabled = false
+          setStatus('Job queued: ' + msg.jobId, 'ok')
+          break
+        }
+
+        case 'MACHINE_STATUS': {
+          const el = document.getElementById('machineStatusValue')
+          el.textContent = msg.status || '—'
+          el.className = 'value ' + (
+            msg.status === 'Running' ? 'ok' :
+            msg.status === 'Idle'    ? 'idle' :
+            msg.status === 'Error'   ? 'err' : ''
+          )
+          break
+        }
+      }
+    })
+
+    // Request machine status on load
+    send({ type: 'GET_MACHINE_STATUS' })
+
+    // ── End machine tab ──────────────────────────────────────────────────────
 
     // Request initial scene on load
     send({ type: 'GET_HOWICK_OBJECTS' })

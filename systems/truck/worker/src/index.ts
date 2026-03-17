@@ -802,6 +802,20 @@ const howickJobRoute = createRoute({
   },
 });
 
+const howickStatusRoute = createRoute({
+  method:  'get',
+  path:    '/jobs/howick/status',
+  tags:    ['manufacturing'],
+  summary: 'Get Howick machine status (proxied from opcua-howick)',
+  responses: {
+    200: { description: 'Machine status', content: { 'application/json': { schema: z.object({
+      status:        z.string(),
+      current_job:   z.string().optional(),
+      queue_depth:   z.number().optional(),
+    }) } } },
+  },
+});
+
 const jobRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
   .openapi(howickJobRoute, async (c) => {
     const { frameset_name, csv } = c.req.valid('json');
@@ -815,6 +829,20 @@ const jobRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
       return c.json({ job_id, frameset_name, status: 'queued' as const });
     } catch (err: any) {
       return c.json({ error: err.message ?? 'R2 write failed' }, 500);
+    }
+  })
+  .openapi(howickStatusRoute, async (c) => {
+    // In production: forward to opcua-howick HTTP status endpoint.
+    // For now: check R2 for recent jobs as a proxy for machine activity.
+    try {
+      const list = await c.env.MODELS.list({ prefix: 'jobs/howick/', limit: 1 });
+      const hasJobs = list.objects.length > 0;
+      return c.json({
+        status:      hasJobs ? 'Idle' : 'Offline',
+        queue_depth: 0,
+      });
+    } catch {
+      return c.json({ status: 'Offline' });
     }
   });
 
