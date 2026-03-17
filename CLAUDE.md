@@ -34,17 +34,13 @@ GITHUB_TOKEN={GITHUB_PAT} mise install
 
 Note: wrangler is installed via `bun install` (devDependency), not mise.
 
-### 3. Cloudflare credentials + sync .src repos
+### 3. Pull secrets from Doppler + sync .src repos
 
-Credentials are in Claude's memory. Write `.mise.local.toml`:
+Doppler personal token is in Claude's memory. This pulls ALL secrets (Cloudflare, GitHub, etc.) into `.env` in one step:
 
 ```bash
-cat > .mise.local.toml << 'EOF'
-[env]
-CLOUDFLARE_API_TOKEN  = "{CF_API_TOKEN}"
-CLOUDFLARE_ACCOUNT_ID = "{CF_ACCOUNT_ID}"
-GITHUB_TOKEN          = "{GITHUB_PAT}"
-EOF
+DOPPLER_TOKEN={DOPPLER_PERSONAL_TOKEN} mise run secrets:pull
+# → writes .env (gitignored), loaded automatically by mise via _.file = ".env"
 
 # Clone all vendored Rust sources (.src/ is gitignored)
 mise run src:sync
@@ -152,5 +148,5 @@ Once working in prod — tell Claude and it will merge the PR.
 
 ## Memory
 
-Claude stores across sessions: repo URL, GitHub PAT, Cloudflare API token + account ID.
+Claude stores across sessions: repo URL, GitHub PAT, Cloudflare API token + account ID, Doppler personal token.
 If memory seems stale, ask Claude to view its memory.
