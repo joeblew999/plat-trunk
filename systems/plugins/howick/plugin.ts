@@ -216,3 +216,34 @@ plat.ui.onMessage(async (msg: any) => {
   }
 
 })
+
+// ── Machine status polling ─────────────────────────────────────────────────────
+// Polls /api/jobs/howick/status (backed by opcua-howick OPC UA server)
+// Works in all topologies — same endpoint on CF or Tauri local server.
+
+plat.ui.onMessage(async (msg: any) => {
+  if (msg.type === 'GET_MACHINE_STATUS') {
+    try {
+      const response = await fetch('/api/jobs/howick/status')
+      if (response.ok) {
+        const data = await response.json() as any
+        plat.ui.sendMessage({ type: 'MACHINE_STATUS', status: data.status ?? 'Unknown' })
+      } else {
+        plat.ui.sendMessage({ type: 'MACHINE_STATUS', status: 'Offline' })
+      }
+    } catch {
+      plat.ui.sendMessage({ type: 'MACHINE_STATUS', status: 'Offline' })
+    }
+  }
+})
+
+// Poll machine status every 10 seconds
+setInterval(async () => {
+  try {
+    const response = await fetch('/api/jobs/howick/status')
+    if (response.ok) {
+      const data = await response.json() as any
+      plat.ui.sendMessage({ type: 'MACHINE_STATUS', status: data.status ?? 'Unknown' })
+    }
+  } catch { /* ignore — machine may be offline */ }
+}, 10_000)
