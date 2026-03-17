@@ -317,13 +317,14 @@
   <div class="panel" id="tab-machine">
 
     <h3>Machine Job</h3>
-    <div class="row2">
-      <div class="field">
+    <div style="display:flex;gap:6px;margin-bottom:8px;">
+      <button class="btn" id="btnFromScene" style="flex:1;font-size:11px;">↑ From Scene</button>
+      <div style="flex:2;" class="field">
         <label>Frameset name</label>
         <input type="text" id="framesetName" value="W1" maxlength="10">
       </div>
-      <div class="field">
-        <label>Profile code</label>
+      <div style="flex:2;" class="field">
+        <label>Profile</label>
         <input type="text" id="profileCode" value="S8908" maxlength="10">
       </div>
     </div>
@@ -348,7 +349,7 @@
       </div>
     </div>
 
-    <button class="btn full" id="btnGenerateCSV">Generate Howick CSV</button>
+    <button class="btn primary full" id="btnGenerateCSV">Generate Howick CSV</button>
 
     <div id="csvPreviewSection" style="display:none;">
       <h3>CSV Preview</h3>
@@ -570,6 +571,11 @@
     let _currentFramesetName = 'W1'
     const jobs = []
 
+    document.getElementById('btnFromScene').addEventListener('click', () => {
+      send({ type: 'GET_WALL_DIMS_FROM_SCENE' })
+      setStatus('Reading dimensions from scene…')
+    })
+
     document.getElementById('btnGenerateCSV').addEventListener('click', () => {
       _currentFramesetName = document.getElementById('framesetName').value.trim() || 'W1'
       send({
@@ -648,6 +654,35 @@
           addJobToHistory(msg.jobId, msg.framesetName)
           document.getElementById('btnSubmitJob').disabled = false
           setStatus('Job queued: ' + msg.jobId, 'ok')
+          // Start polling to detect when opcua-howick picks up the job
+          send({ type: 'POLL_JOB_STATUS', jobId: msg.jobId, framesetName: msg.framesetName })
+          break
+        }
+
+        case 'JOB_PICKED_UP': {
+          setStatus('✓ ' + msg.framesetName + ' received by machine agent', 'ok')
+          // Update the most recent job item in history
+          const firstJob = document.querySelector('#jobHistory .job-item')
+          if (firstJob) {
+            const sub = firstJob.querySelector('.jsub')
+            if (sub) sub.textContent = '✓ Picked up by opcua-howick'
+          }
+          break
+        }
+
+        case 'JOB_TIMEOUT': {
+          setStatus('⚠ ' + msg.message, 'err')
+          break
+        }
+
+        case 'WALL_DIMS': {
+          if (msg.found) {
+            document.getElementById('machineWallLength').value = msg.wallLength
+            document.getElementById('machineWallHeight').value = msg.wallHeight
+            setStatus('Dimensions loaded from scene', 'ok')
+          } else {
+            setStatus('No Howick members in scene — enter dimensions manually', '')
+          }
           break
         }
 

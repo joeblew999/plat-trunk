@@ -247,3 +247,85 @@ setInterval(async () => {
     }
   } catch { /* ignore — machine may be offline */ }
 }, 10_000)
+
+// ── Scene → Machine tab sync ───────────────────────────────────────────────────
+// When the designer switches to the Machine tab, auto-populate dimensions
+// from any Howick wall members already in the scene.
+
+plat.ui.onMessage(async (msg: any) => {
+
+  if (msg.type === 'GET_WALL_DIMS_FROM_SCENE') {
+    // Find the longest track member (= wall length) and tallest stud (= wall height)
+    const all = await plat.model.getObjects()
+    const howick = all.filter((o: any) => o.meta?.howick)
+
+    if (!howick.length) {
+      plat.ui.sendMessage({ type: 'WALL_DIMS', found: false })
+      return
+    }
+
+    const lengths = howick.map((o: any) => o.meta?.howick?.length ?? 0)
+    const maxLen  = Math.max(...lengths)
+
+    // Studs are rotation=90, tracks are rotation=0
+    const studs  = howick.filter((o: any) => Math.abs((o.meta?.howick?.rotation ?? 0) - 90) < 5)
+    const tracks = howick.filter((o: any) => Math.abs((o.meta?.howick?.rotation ?? 0)) < 5)
+
+    const wallHeight = studs.length  ? Math.max(...studs.map((o: any)  => o.meta?.howick?.length ?? 0)) : 2700
+    const wallLength = tracks.length ? Math.max(...tracks.map((o: any) => o.meta?.howick?.length ?? 0)) : maxLen
+
+    plat.ui.sendMessage({
+      type:       'WALL_DIMS',
+      found:      true,
+      wallLength: Math.round(wallLength),
+      wallHeight: Math.round(wallHeight),
+    })
+  }
+
+  // ── Job status polling with backoff ─────────────────────────────────────────
+  // After a job is submitted, poll the pending endpoint to detect when
+  // opcua-howick has picked it up (job disappears from pending list).
+
+  if (msg.type === 'POLL_JOB_STATUS') {
+    const { jobId, framesetName } = msg
+    let attempts = 0
+    const maxAttempts = 24  // 2 minutes at 5s intervals
+
+    const poll = async () => {
+      try {
+        const resp = await fetch('/api/jobs/howick/pending')
+        if (!resp.ok) return
+        const data = await resp.json() as any
+        const stillPending = (data.jobs ?? []).some((j: any) => j.job_id === jobId)
+
+        if (!stillPending) {
+          // Job has been picked up by opcua-howick
+          plat.ui.sendMessage({
+            type:         'JOB_PICKED_UP',
+            jobId,
+            framesetName,
+            message:      `${framesetName} picked up by machine agent`,
+          })
+          return
+        }
+
+        attempts++
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 5_000)
+        } else {
+          plat.ui.sendMessage({
+            type:    'JOB_TIMEOUT',
+            jobId,
+            message: 'Machine agent did not pick up job within 2 minutes — check opcua-howick is running',
+          })
+        }
+      } catch {
+        // Ignore network errors during polling
+      }
+    }
+
+    // Start polling after 3s (give opcua-howick time to poll)
+    setTimeout(poll, 3_000)
+  }
+
+})
