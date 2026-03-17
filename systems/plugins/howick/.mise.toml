@@ -1,16 +1,20 @@
 # systems/plugins/howick/.mise.toml
 #
-# Tool versions and tasks for the Howick plugin.
-# Inherits tool versions from root .mise.toml.
+# Howick steel framing plugin — WASM kernel + TypeScript plugin + Machine tab UI.
+# Tool versions (bun, wasm-pack, Rust) inherited from root .mise.toml + rust-toolchain.toml.
 # Run from repo root OR from systems/plugins/howick/ — both work.
 #
 # Usage:
-#   mise run build:wasm    Build howick WASM kernel (includes howick-rs CSV)
-#   mise run test          Run Rust tests
-#   mise run check         Clippy + fmt check
+#   mise run build:wasm        Build WASM kernel (incremental)
+#   mise run build:wasm:watch  Auto-rebuild on Rust changes
+#   mise run check             Clippy + fmt check
+#   mise run test              Rust unit tests
+#   mise run ci                Full CI gate
+
+# ── Build ─────────────────────────────────────────────────────────────────────
 
 [tasks."build:wasm"]
-description = "Build howick plugin WASM (includes howick-rs CSV serialiser)"
+description = "Build Howick WASM kernel — includes howick-rs CSV serialiser (incremental)"
 sources = [
   "crate/src/**/*.rs",
   "crate/Cargo.toml",
@@ -18,29 +22,57 @@ sources = [
 outputs = [
   "crate/pkg/howick_bg.wasm",
   "crate/pkg/howick.js",
+  "crate/pkg/howick_bg.wasm.d.ts",
 ]
 run = "cd crate && wasm-pack build --target web --release"
 
+[tasks."build:wasm:dev"]
+description = "Build Howick WASM kernel (debug — faster, larger)"
+run = "cd crate && wasm-pack build --target web --dev"
+
 [tasks."build:wasm:watch"]
-description = "Watch + rebuild howick WASM on Rust changes"
+description = "Auto-rebuild WASM on Rust source changes"
 run = "mise watch build:wasm"
 
+# ── Code quality ──────────────────────────────────────────────────────────────
+
 [tasks.check]
-description = "Clippy + fmt check on howick crate"
+description = "Clippy + fmt check on howick crate (WASM target)"
 run = """
 cd crate
 cargo clippy --target wasm32-unknown-unknown -- -D warnings
 cargo fmt --check
 """
 
-[tasks.test]
-description = "Run howick Rust unit tests (native target — WASM tests via build:wasm)"
-run = "cd crate && cargo test"
-
 [tasks.fmt]
 description = "Format howick crate"
 run = "cd crate && cargo fmt"
 
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run howick Rust unit tests (native — WASM tested via build:wasm)"
+run = "cd crate && cargo test"
+
+[tasks."test:size"]
+description = "Check WASM binary size (must stay under 3MB CF Worker limit)"
+run = """
+mise run build:wasm
+SIZE=$(wc -c < crate/pkg/howick_bg.wasm)
+echo "WASM size: ${SIZE} bytes ($(( SIZE / 1024 ))KB)"
+if [ $SIZE -gt 3145728 ]; then
+  echo "ERROR: WASM exceeds 3MB CF Worker limit"
+  exit 1
+fi
+echo "OK — within 3MB limit"
+"""
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
 [tasks.ci]
-description = "Full CI: check + test"
-depends = ["check", "test"]
+description = "Full CI gate — check + test + WASM build + size check"
+depends     = ["check", "test", "build:wasm", "test:size"]
+
+# ── Companion repos ───────────────────────────────────────────────────────────
+# howick-rs crate (CSV parser/serialiser): https://github.com/joeblew999/howick-rs
+# opcua-howick edge agent:                 https://github.com/joeblew999/opcua-howick
