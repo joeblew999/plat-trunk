@@ -12,8 +12,8 @@ description = "Kill auth dev ports"
 run = "lsof -ti:$AUTH_PORT,$AUTH_INSPECTOR,$AUTH_WEB_PORT | xargs kill -9 2>/dev/null; true"
 
 [tasks.dev]
-description = "Start auth worker + Vite web dev (kill first)"
-depends = ["kill"]
+description = "Start auth worker + Vite web dev (build web first, then kill, then start)"
+depends = ["build", "kill"]
 run = [
   "cd ../.. && bunx wrangler dev --config systems/auth/worker/wrangler.toml",
   "cd web && bunx vite --port $AUTH_WEB_PORT",

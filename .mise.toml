@@ -62,7 +62,7 @@ run = "lsof -ti:$ROUTER_PORT,$TRUCK_PORT,$AUTH_PORT,$TEST_PORT,$AUTH_WEB_PORT,$T
 
 [tasks.dev]
 description = "Start all workers (router + truck + auth + test + web devservers)"
-depends = ["kill"]
+depends = ["install", "kill"]
 run = "bun run dev"
 
 # ── Install ───────────────────────────────────────────────────────────────────
@@ -86,14 +86,17 @@ run = "bun run build && bun run test"
 
 [tasks."build:plugins"]
 description = "Build all first-party plugins (bundle TS + wasm-pack WASM → public/)"
+depends = ["install"]
 run = "bun run build:plugins"
 
 [tasks."build:plugins:howick"]
 description = "Build just the Howick plugin (WASM + TS bundle)"
+depends = ["install"]
 run = "bun run build:plugins howick"
 
 [tasks."build:plugins:dev"]
 description = "Build all plugins in dev mode (faster, larger WASM)"
+depends = ["install"]
 run = "bun run build:plugins --dev"
 
 [tasks."howick:ci"]
@@ -105,7 +108,7 @@ run = "mise run ci"
 
 [tasks.deploy]
 description = "Deploy all workers to Cloudflare (main push — requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)"
-depends = ["ci:check-secrets"]
+depends = ["ci", "ci:check-secrets"]
 run = "bun scripts/cf-deploy.ts deploy-all"
 
 [tasks."deploy:pr"]
