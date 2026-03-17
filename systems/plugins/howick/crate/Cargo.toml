@@ -2,7 +2,7 @@
 name = "howick"
 version = "0.1.0"
 edition = "2021"
-description = "Howick cold-formed steel framing — WASM geometry + cut list kernel"
+description = "Howick cold-formed steel framing — WASM geometry + cut list + CSV export kernel"
 
 [lib]
 crate-type = ["cdylib"]
@@ -11,6 +11,9 @@ crate-type = ["cdylib"]
 wasm-bindgen  = "0.2"
 serde         = { version = "1", features = ["derive"] }
 serde_json    = "1"
+# howick-rs: CSV serialiser for Howick FRAMA machines
+# Pure Rust, no_std compatible, no WASM-incompatible deps
+howick-rs     = { git = "https://github.com/joeblew999/howick-rs" }
 
 [profile.release]
 # Plugins share the 3MB Worker limit — optimise hard for size
