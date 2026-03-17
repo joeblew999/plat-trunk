@@ -74,15 +74,35 @@ run = "bun run ios:build"
 description = "Open Xcode project (fallback when headless build fails)"
 run = "bun run ios:open"
 
+# ── Install ───────────────────────────────────────────────────────────────────
+
+[tasks.install]
+description = "Install JS deps"
+run = "bun install"
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+
+[tasks."secrets:pull"]
+description = "Pull secrets from Doppler → .env.local (run after setup or rotation)"
+run = """
+if [ -n "${DOPPLER_TOKEN:-}" ]; then
+  doppler secrets download --no-file --format env --project plat-trunk --config dev --token "$DOPPLER_TOKEN" > .env.local
+else
+  doppler secrets download --no-file --format env --project plat-trunk --config dev > .env.local
+fi
+echo "✓ .env.local updated from Doppler"
+"""
+
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
 [tasks.dev]
 description = "Start router + all demos via wrangler multi-config dev"
+depends = ["install", "kill"]
 run = "bunx wrangler dev --port $ROUTER_PORT --inspector-port $ROUTER_INSPECTOR --config demo-main/wrangler.toml --config demo1/wrangler.toml --config demo2/wrangler.toml"
 
 [tasks."dev:all"]
 description = "Kill ports, then start router+demos and demo-line in parallel"
-depends = ["kill"]
+depends = ["install", "kill"]
 run = ["bun run dev", "bun run dev:line"]
 # depends runs kill first (sequential), then run array starts both in parallel
 
@@ -184,9 +204,22 @@ run = '''
   echo "✓ All three workers deployed."
 '''
 
+[tasks."ci:check-secrets"]
+description = "Fail fast if Cloudflare deploy secrets are missing"
+run = """
+missing=()
+[ -z "${CLOUDFLARE_API_TOKEN:-}" ]  && missing+=("CLOUDFLARE_API_TOKEN")
+[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+if [ ${#missing[@]} -gt 0 ]; then
+  for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
+  exit 1
+fi
+echo "✓ All required secrets present"
+"""
+
 [tasks."deploy:safe"]
-description = "CI gate then deploy — safe path to production"
-depends = ["ci"]
+description = "CI gate + secret check then deploy — safe path to production"
+depends = ["ci", "ci:check-secrets"]
 run = "mise run deploy"
 
 # ── Setup / Kill ───────────────────────────────────────────────────────────────

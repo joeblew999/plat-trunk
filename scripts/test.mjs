@@ -24,14 +24,16 @@ import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 import { testing as truckTesting } from '../systems/truck/system.mjs';
 import { testing as syncTesting } from '../systems/sync/system.mjs';
 import { testing as authTesting } from '../systems/auth/system.mjs';
+import { testing as howickPluginTesting } from '../systems/plugins/howick/system.mjs';
 
 const SYSTEMS = [
   truckTesting,
   syncTesting,
   authTesting,
+  howickPluginTesting,
   // mvtTesting,   ← add when systems/mvt/system.mjs exists
   // ifcTesting,   ← add when systems/ifc/system.mjs exists
-];
+].filter(Boolean); // plugins with testing = null are excluded
 
 // ────────────────────────────────────────────────────────────────────────────
 
