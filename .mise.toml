@@ -100,7 +100,16 @@ run = [
 
 [tasks."ci:check-secrets"]
 description = "Fail fast if Cloudflare deploy secrets are missing"
-run = "bash scripts/ci-check-secrets.sh"
+run = """
+missing=()
+[ -z "${CLOUDFLARE_API_TOKEN:-}" ]  && missing+=("CLOUDFLARE_API_TOKEN")
+[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+if [ ${#missing[@]} -gt 0 ]; then
+  for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
+  exit 1
+fi
+echo "✓ All required secrets present"
+"""
 
 [tasks.ci]
 description = "Full CI gate — all systems in order: install → build → test"
@@ -211,7 +220,19 @@ echo "────────────────────────�
 
 [tasks."repo:public"]
 description = "Pre-flight secret scan then make repo public (enables free GitHub Actions CI)"
-run = "bash scripts/repo-public.sh"
+run = """
+FOUND=$(git grep -l "ghp_\|CLOUDFLARE_ACCOUNT_ID.*=.*[0-9a-f]\{32\}\|CLOUDFLARE_API_TOKEN.*=.*[A-Za-z0-9]\{40\}" \
+  -- . ':!.mise.local.toml.example' ':!.gitignore' 2>/dev/null || true)
+if [ -n "$FOUND" ]; then
+  echo "ERROR: potential secrets found in tracked files:"
+  echo "$FOUND"
+  echo "Fix before going public."
+  exit 1
+fi
+echo "✓ no secrets in tracked files"
+gh repo edit joeblew999/plat-trunk --visibility public --accept-visibility-change-consequences
+echo "✓ repo is now public"
+"""
 
 [tasks."repo:private"]
 description = "Make repo private"
