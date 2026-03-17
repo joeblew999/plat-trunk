@@ -36,7 +36,7 @@ description = "Auto-rebuild WASM on Rust source changes"
 run = "mise watch build:wasm"
 
 [tasks."build:ts"]
-description = "Bundle plugin.ts → public/plugin.js"
+description = "Bundle plugin.ts → public/plugin.js (requires bun from root mise)"
 run = "bun build plugin.ts --outfile public/plugin.js --target browser"
 
 [tasks.build]
@@ -46,10 +46,10 @@ depends = ["build:wasm", "build:ts"]
 # ── Code quality ──────────────────────────────────────────────────────────────
 
 [tasks.check]
-description = "Clippy (WASM target) + fmt check"
+description = "Clippy (native) + fmt check — WASM correctness verified by build:wasm"
 run = """
 cd crate
-cargo clippy --target wasm32-unknown-unknown -- -D warnings
+cargo clippy -- -D warnings
 cargo fmt --check
 """
 
