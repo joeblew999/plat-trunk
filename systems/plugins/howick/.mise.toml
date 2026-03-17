@@ -2,14 +2,15 @@
 #
 # Howick steel framing plugin — WASM kernel + TypeScript plugin + Machine tab UI.
 # Tool versions (bun, wasm-pack, Rust) inherited from root .mise.toml + rust-toolchain.toml.
-# Run from repo root OR from systems/plugins/howick/ — both work.
 #
-# Usage:
-#   mise run build:wasm        Build WASM kernel (incremental)
-#   mise run build:wasm:watch  Auto-rebuild on Rust changes
-#   mise run check             Clippy + fmt check
-#   mise run test              Rust unit tests
-#   mise run ci                Full CI gate
+# All tasks runnable from repo root OR from systems/plugins/howick/:
+#   cd systems/plugins/howick && mise run ci
+#   # OR from root:
+#   mise run --cd systems/plugins/howick ci
+#
+# Root .mise.toml exposes:
+#   mise run build:plugins:howick   ← full build (WASM + TS bundle)
+#   mise run howick:ci              ← full CI gate
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -34,10 +35,18 @@ run = "cd crate && wasm-pack build --target web --dev"
 description = "Auto-rebuild WASM on Rust source changes"
 run = "mise watch build:wasm"
 
+[tasks."build:ts"]
+description = "Bundle plugin.ts → public/plugin.js"
+run = "bun build plugin.ts --outfile public/plugin.js --target browser"
+
+[tasks.build]
+description = "Full plugin build: WASM + TS bundle"
+depends = ["build:wasm", "build:ts"]
+
 # ── Code quality ──────────────────────────────────────────────────────────────
 
 [tasks.check]
-description = "Clippy + fmt check on howick crate (WASM target)"
+description = "Clippy (WASM target) + fmt check"
 run = """
 cd crate
 cargo clippy --target wasm32-unknown-unknown -- -D warnings
@@ -51,28 +60,38 @@ run = "cd crate && cargo fmt"
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 [tasks.test]
-description = "Run howick Rust unit tests (native — WASM tested via build:wasm)"
+description = "Run Rust unit tests including FrameExtractor (native — WASM via build:wasm)"
 run = "cd crate && cargo test"
 
+[tasks."test:extractor"]
+description = "Run FrameExtractor tests only (native, no WASM)"
+run = "cd crate && cargo test --lib frame_extractor"
+
 [tasks."test:size"]
-description = "Check WASM binary size (must stay under 3MB CF Worker limit)"
+description = "Verify WASM binary is under 3MB CF Worker limit"
 run = """
-mise run build:wasm
+if [ ! -f crate/pkg/howick_bg.wasm ]; then
+  echo "ERROR: crate/pkg/howick_bg.wasm not found — run mise run build:wasm first"
+  exit 1
+fi
 SIZE=$(wc -c < crate/pkg/howick_bg.wasm)
-echo "WASM size: ${SIZE} bytes ($(( SIZE / 1024 ))KB)"
+KB=$(( SIZE / 1024 ))
+echo "WASM size: ${SIZE} bytes (${KB} KB / 3072 KB limit)"
 if [ $SIZE -gt 3145728 ]; then
   echo "ERROR: WASM exceeds 3MB CF Worker limit"
   exit 1
 fi
-echo "OK — within 3MB limit"
+echo "OK — within limit"
 """
 
 # ── CI ────────────────────────────────────────────────────────────────────────
+# This is the single source of truth for what CI runs.
+# .github/workflows/howick-plugin.yml calls nothing directly — only mise run ci.
 
 [tasks.ci]
-description = "Full CI gate — check + test + WASM build + size check"
-depends     = ["check", "test", "build:wasm", "test:size"]
+description = "Full CI gate — check + test + WASM build + size check + TS bundle"
+depends = ["check", "test", "build:wasm", "test:size", "build:ts"]
 
 # ── Companion repos ───────────────────────────────────────────────────────────
-# howick-rs crate (CSV parser/serialiser): https://github.com/joeblew999/howick-rs
-# opcua-howick edge agent:                 https://github.com/joeblew999/opcua-howick
+# howick-rs (CSV parser/serialiser): https://github.com/joeblew999/howick-rs
+# opcua-howick (edge agent):         https://github.com/joeblew999/opcua-howick

@@ -77,6 +77,25 @@ description = "Full CI gate — install deps, build, test (run locally to replic
 depends = ["install"]
 run = "bun run build && bun run test"
 
+# ── Plugins ───────────────────────────────────────────────────────────────────
+
+[tasks."build:plugins"]
+description = "Build all first-party plugins (bundle TS + wasm-pack WASM → public/)"
+run = "bun run build:plugins"
+
+[tasks."build:plugins:howick"]
+description = "Build just the Howick plugin (WASM + TS bundle)"
+run = "bun run build:plugins howick"
+
+[tasks."build:plugins:dev"]
+description = "Build all plugins in dev mode (faster, larger WASM)"
+run = "bun run build:plugins --dev"
+
+[tasks."howick:ci"]
+description = "Full CI gate for the Howick plugin — delegates to systems/plugins/howick/.mise.toml"
+dir = "systems/plugins/howick"
+run = "mise run ci"
+
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
 [tasks.deploy]

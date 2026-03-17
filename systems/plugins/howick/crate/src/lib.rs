@@ -1,18 +1,30 @@
 //! howick/crate/src/lib.rs
 //!
-//! Howick cold-formed steel framing — pure compute WASM kernel.
+//! Howick cold-formed steel framing — WASM kernel + native FrameExtractor.
 //!
-//! This crate has NO access to the plat host. It is pure Rust:
+//! ## WASM (default) — browser plugin
 //!   - Profile cross-section definitions (C, U, Z, Hat)
 //!   - Member parametric geometry (B-Rep description as JSON)
 //!   - Stud layout generation (spacing, headers, tracks)
 //!   - Cut list calculation
+//!   - CSV export via howick-rs (generate_csv command)
 //!
-//! All entry points go through the single `execute(cmd, params_json) -> String`
-//! function, which matches the pattern used by the truck B-Rep kernel.
+//! ## Native (--features native) — server / Tauri sidecar
+//!   - FrameExtractor trait: Truck B-Rep geometry → howick_rs::Frameset
+//!   - ParametricWallExtractor: wall dimensions → Frameset (no Truck dep)
+//!   - TruckFrameExtractor: queries Solid topology directly (ADR-0014)
+//!
+//! All WASM entry points go through execute(cmd, params_json) → String.
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
+
+// ── FrameExtractor (native feature — never compiled to WASM) ──────────────────
+pub mod frame_extractor;
+pub use frame_extractor::{
+    ExtractParams, ExtractedMember, ExtractError, FrameExtractor,
+    ParametricWallExtractor, WallOpening, members_to_frameset, derive_operations,
+};
 
 // ── Public WASM entry point ───────────────────────────────────────────────────
 
