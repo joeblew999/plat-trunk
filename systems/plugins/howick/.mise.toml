@@ -1,0 +1,46 @@
+# systems/plugins/howick/.mise.toml
+#
+# Tool versions and tasks for the Howick plugin.
+# Inherits tool versions from root .mise.toml.
+# Run from repo root OR from systems/plugins/howick/ — both work.
+#
+# Usage:
+#   mise run build:wasm    Build howick WASM kernel (includes howick-rs CSV)
+#   mise run test          Run Rust tests
+#   mise run check         Clippy + fmt check
+
+[tasks."build:wasm"]
+description = "Build howick plugin WASM (includes howick-rs CSV serialiser)"
+sources = [
+  "crate/src/**/*.rs",
+  "crate/Cargo.toml",
+]
+outputs = [
+  "crate/pkg/howick_bg.wasm",
+  "crate/pkg/howick.js",
+]
+run = "cd crate && wasm-pack build --target web --release"
+
+[tasks."build:wasm:watch"]
+description = "Watch + rebuild howick WASM on Rust changes"
+run = "mise watch build:wasm"
+
+[tasks.check]
+description = "Clippy + fmt check on howick crate"
+run = """
+cd crate
+cargo clippy --target wasm32-unknown-unknown -- -D warnings
+cargo fmt --check
+"""
+
+[tasks.test]
+description = "Run howick Rust unit tests (native target — WASM tests via build:wasm)"
+run = "cd crate && cargo test"
+
+[tasks.fmt]
+description = "Format howick crate"
+run = "cd crate && cargo fmt"
+
+[tasks.ci]
+description = "Full CI: check + test"
+depends = ["check", "test"]

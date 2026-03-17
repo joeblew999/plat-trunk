@@ -774,6 +774,50 @@ const syncRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
 const cadRoutes = new OpenAPIHono<{ Bindings: Bindings }>();
 mountModule(cadRoutes, 'cad', cadSchema as ModuleSchema);
 
+// ── Howick machine job submission (ADR-0013) ──────────────────────────────────
+// Accepts a Howick FRAMA CSV and stores it in R2 for opcua-howick to pick up.
+// Topology-agnostic: same endpoint whether running on CF or Tauri local server.
+
+const HowickJobBody = z.object({
+  frameset_name: z.string().min(1).openapi({ example: 'W1' }),
+  csv:           z.string().min(1).openapi({ description: 'Howick FRAMA CSV content' }),
+}).openapi('HowickJobBody');
+
+const HowickJobResult = z.object({
+  job_id:        z.string().openapi({ example: 'W1-1710000000' }),
+  frameset_name: z.string(),
+  status:        z.literal('queued'),
+}).openapi('HowickJobResult');
+
+const howickJobRoute = createRoute({
+  method:  'post',
+  path:    '/jobs/howick',
+  tags:    ['manufacturing'],
+  summary: 'Submit a Howick FRAMA job — stores CSV in R2 for opcua-howick',
+  request: { body: { content: { 'application/json': { schema: HowickJobBody } } } },
+  responses: {
+    200: { description: 'Job queued', content: { 'application/json': { schema: HowickJobResult } } },
+    400: { description: 'Bad request', content: { 'application/json': { schema: z.object({ error: z.string() }) } } },
+    500: { description: 'Storage error', content: { 'application/json': { schema: z.object({ error: z.string() }) } } },
+  },
+});
+
+const jobRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(howickJobRoute, async (c) => {
+    const { frameset_name, csv } = c.req.valid('json');
+    const job_id = `${frameset_name}-${Date.now()}`;
+    const key    = `jobs/howick/${job_id}.csv`;
+    try {
+      await c.env.MODELS.put(key, csv, {
+        httpMetadata: { contentType: 'text/csv' },
+        customMetadata: { frameset_name, job_id, submitted_at: new Date().toISOString() },
+      });
+      return c.json({ job_id, frameset_name, status: 'queued' as const });
+    } catch (err: any) {
+      return c.json({ error: err.message ?? 'R2 write failed' }, 500);
+    }
+  });
+
 // Assemble API — typed sub-routers (no .use() here to preserve hc type inference)
 const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', platformRoutes)
@@ -781,7 +825,8 @@ const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', opLogRoutes)
   .route('/', sceneRoutes)
   .route('/', syncRoutes)
-  .route('/', cadRoutes);
+  .route('/', cadRoutes)
+  .route('/', jobRoutes);
 
 // Middleware applied at app level so .use() doesn't break the hc<AppType> chain
 const app = new OpenAPIHono<{ Bindings: Bindings }>()

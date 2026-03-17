@@ -151,3 +151,68 @@ plat.on('modelchange', ({ objectIds, actorId }) => {
 plat.on('close', () => {
   console.log('[howick] plugin closed')
 })
+
+// The above closes plat.ui.onMessage — these handlers are appended to plugin.ts
+// via a second onMessage call to avoid modifying the upstream block structure.
+
+plat.ui.onMessage(async (msg: any) => {
+
+  // ── CSV export ─────────────────────────────────────────────────────────────
+
+  if (msg.type === 'GENERATE_CSV') {
+    // Generate stud layout then convert to Howick CSV in one shot.
+    // msg: { params: StudLayoutParams, framesetName?: string, profileCode?: string }
+    const layout = wasmCall('stud_layout', msg.params) as any
+    if (layout.error) {
+      plat.ui.sendMessage({ type: 'ERROR', error: layout.error })
+      return
+    }
+    const result = wasmCall('generate_csv', {
+      frameset_name:   msg.framesetName  ?? 'W1',
+      profile_code:    msg.profileCode   ?? 'S8908',
+      members:         layout.members,
+      stud_spacing_mm: msg.params.spacing ?? 600.0,
+    }) as any
+    if (result.error) {
+      plat.ui.sendMessage({ type: 'ERROR', error: result.error })
+      return
+    }
+    plat.ui.sendMessage({
+      type:          'CSV_READY',
+      csv:           result.csv,
+      framesetName:  msg.framesetName ?? 'W1',
+    })
+  }
+
+  // ── Job submission → opcua-howick → machine ─────────────────────────────────
+
+  if (msg.type === 'SUBMIT_JOB') {
+    // POST CSV to plat-trunk backend. CF Worker (or Tauri local server)
+    // stores it and triggers opcua-howick file watcher.
+    // Topology-agnostic: same endpoint regardless of Cloud/LAN/Hybrid.
+    // msg: { csv: string, framesetName: string }
+    try {
+      const response = await fetch('/api/jobs/howick', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          frameset_name: msg.framesetName,
+          csv:           msg.csv,
+        }),
+      })
+      const data = await response.json() as any
+      if (!response.ok) {
+        plat.ui.sendMessage({ type: 'ERROR', error: data.error ?? 'Job submission failed' })
+        return
+      }
+      plat.ui.sendMessage({
+        type:         'JOB_SUBMITTED',
+        jobId:        data.job_id,
+        framesetName: msg.framesetName,
+      })
+    } catch (err) {
+      plat.ui.sendMessage({ type: 'ERROR', error: String(err) })
+    }
+  }
+
+})
