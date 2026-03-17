@@ -11,9 +11,13 @@
 const isProd = process.argv.includes('--prod');
 
 const PROD_URL = 'https://cad.ubuntusoftware.net';
-const BASE = isProd ? PROD_URL : 'http://localhost:8788';
-const WORKER = isProd ? PROD_URL : 'http://localhost:8789';
-const VITE = isProd ? null : 'http://localhost:5173';
+// Ports from mise env ([env] in .mise.toml) — fall back to defaults if run outside mise
+const ROUTER_PORT  = process.env.ROUTER_PORT    ?? '8788';
+const TRUCK_PORT   = process.env.TRUCK_PORT     ?? '8789';
+const TRUCK_WEB_PORT = process.env.TRUCK_WEB_PORT ?? '5173';
+const BASE   = isProd ? PROD_URL : `http://localhost:${ROUTER_PORT}`;
+const WORKER = isProd ? PROD_URL : `http://localhost:${TRUCK_PORT}`;
+const VITE   = isProd ? null     : `http://localhost:${TRUCK_WEB_PORT}`;
 
 let pass = 0, fail = 0;
 

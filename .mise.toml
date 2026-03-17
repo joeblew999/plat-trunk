@@ -54,6 +54,16 @@ DOCS_PORT             = "5176"
 description = "Clone/update all vendored .src repos (truck, ifc-lite, ezpz)"
 run = "bash scripts/src-sync.sh"
 
+# ── MCP ───────────────────────────────────────────────────────────────────────
+
+[tasks."mcp:setup"]
+description = "Configure MCP for Gemini + Cursor + Claude Code (uses ports from env)"
+run = "bash scripts/mcp-setup.sh"
+
+[tasks."mcp:teardown"]
+description = "Remove generated MCP configs for Gemini + Cursor"
+run = "bash scripts/mcp-teardown.sh"
+
 # ── Dev ──────────────────────────────────────────────────────────────────────
 
 [tasks.kill]
@@ -72,29 +82,31 @@ description = "Install JS deps for root + all systems (auto-discovers package.js
 run = "bun scripts/install-all.mjs"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
-# Builds all systems in dependency order — incremental via sources/outputs.
+# Delegates to build.mjs (system-aware registry, ordering, timeouts).
+# Incremental builds live at the system level via sources/outputs.
 
 [tasks.build]
-description = "Build all systems — sync WASM → truck WASM → auth web → docs → plugins"
+description = "Build all systems via build.mjs (sync → auth → truck → docs)"
 depends = ["install"]
-run = """
-mise --cd systems/sync run build:wasm
-mise --cd systems/truck run build:wasm
-mise --cd systems/auth run build
-mise --cd systems/docs run build
-mise run build:plugins
-"""
+run = "bun run build"
 
 # ── Test ──────────────────────────────────────────────────────────────────────
+# Delegates to test.mjs (phased pipeline — alignment, schema, CRDT, TS, HTTP).
 
 [tasks.test]
-description = "Run all system tests in parallel (build first)"
+description = "Run full phased test pipeline via test.mjs"
 depends = ["build"]
-run = [
-  "mise --cd systems/sync run test",
-  "mise --cd systems/truck run test",
-  "mise --cd systems/auth run test",
-]
+run = "bun run test"
+
+# ── Smoke ─────────────────────────────────────────────────────────────────────
+
+[tasks.smoke]
+description = "Quick live check — local dev (requires mise run dev)"
+run = "bun scripts/smoke.ts"
+
+[tasks."smoke:prod"]
+description = "Quick live check — production (cad.ubuntusoftware.net)"
+run = "bun scripts/smoke.ts --prod"
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 
