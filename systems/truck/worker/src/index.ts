@@ -846,6 +846,97 @@ const jobRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     }
   });
 
+// ── Pending jobs endpoint — polled by opcua-howick ────────────────────────────
+// opcua-howick calls GET /api/jobs/howick/pending to fetch unprocessed jobs.
+// Jobs are stored in R2 at jobs/howick/{job_id}.csv with metadata.
+// After processing, opcua-howick calls POST /api/jobs/howick/{job_id}/complete.
+
+const HowickPendingResponse = z.object({
+  jobs: z.array(z.object({
+    job_id:        z.string(),
+    frameset_name: z.string(),
+    csv:           z.string(),
+  })),
+}).openapi('HowickPendingResponse');
+
+const howickPendingRoute = createRoute({
+  method:  'get',
+  path:    '/jobs/howick/pending',
+  tags:    ['manufacturing'],
+  summary: 'Get pending Howick jobs (polled by opcua-howick edge agent)',
+  responses: {
+    200: { description: 'Pending jobs', content: { 'application/json': { schema: HowickPendingResponse } } },
+  },
+});
+
+const HowickCompleteParam = z.object({
+  job_id: z.string().openapi({ param: { name: 'job_id', in: 'path' } }),
+});
+
+const howickCompleteRoute = createRoute({
+  method:  'post',
+  path:    '/jobs/howick/{job_id}/complete',
+  tags:    ['manufacturing'],
+  summary: 'Mark a Howick job complete (called by opcua-howick after machine processes it)',
+  request: {
+    params: HowickCompleteParam,
+    body:   { content: { 'application/json': { schema: z.object({ job_id: z.string(), status: z.string() }) } } },
+  },
+  responses: {
+    200: { description: 'OK', content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } } },
+  },
+});
+
+const jobPollRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
+  .openapi(howickPendingRoute, async (c) => {
+    try {
+      // List pending jobs: prefix jobs/howick/, exclude completed/ subfolder
+      const list = await c.env.MODELS.list({ prefix: 'jobs/howick/', limit: 50 });
+      const pending = list.objects.filter(obj =>
+        obj.key.endsWith('.csv') && !obj.key.includes('/completed/')
+      );
+
+      const jobs = await Promise.all(
+        pending.map(async (obj) => {
+          const body   = await c.env.MODELS.get(obj.key);
+          const csv    = body ? await body.text() : '';
+          const meta   = obj.customMetadata ?? {};
+          return {
+            job_id:        meta.job_id        ?? obj.key.replace('jobs/howick/', '').replace('.csv', ''),
+            frameset_name: meta.frameset_name ?? 'unknown',
+            csv,
+          };
+        })
+      );
+
+      return c.json({ jobs });
+    } catch (err: any) {
+      return c.json({ jobs: [] });
+    }
+  })
+  .openapi(howickCompleteRoute, async (c) => {
+    const { job_id } = c.req.valid('param');
+    const key        = `jobs/howick/${job_id}.csv`;
+    const doneKey    = `jobs/howick/completed/${job_id}.csv`;
+    try {
+      // Move from pending to completed/ subfolder
+      const obj = await c.env.MODELS.get(key);
+      if (obj) {
+        const body = await obj.arrayBuffer();
+        await c.env.MODELS.put(doneKey, body, {
+          customMetadata: {
+            ...(obj.customMetadata ?? {}),
+            completed_at: new Date().toISOString(),
+          },
+        });
+        await c.env.MODELS.delete(key);
+      }
+      return c.json({ ok: true as const });
+    } catch (err: any) {
+      return c.json({ ok: true as const }); // idempotent — don't fail if already moved
+    }
+  });
+
 // Assemble API — typed sub-routers (no .use() here to preserve hc type inference)
 const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', platformRoutes)
@@ -854,7 +945,8 @@ const api = new OpenAPIHono<{ Bindings: Bindings }>()
   .route('/', sceneRoutes)
   .route('/', syncRoutes)
   .route('/', cadRoutes)
-  .route('/', jobRoutes);
+  .route('/', jobRoutes)
+  .route('/', jobPollRoutes);
 
 // Middleware applied at app level so .use() doesn't break the hc<AppType> chain
 const app = new OpenAPIHono<{ Bindings: Bindings }>()
