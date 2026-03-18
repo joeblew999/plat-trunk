@@ -108,6 +108,7 @@ export class SyncClient {
   private _modelId: string | null = null;
   private _syncing = false;
   private _syncTimer: ReturnType<typeof setTimeout> | null = null;
+  private _activeSyncPromise: Promise<void> | null = null;
   private _online = true;
   private _pendingSync = false;  // queued while offline
 
@@ -373,7 +374,17 @@ export class SyncClient {
   private _triggerRemoteSync(): void {
     // Remote change arrived — sync immediately (don't debounce)
     if (this._syncTimer) clearTimeout(this._syncTimer);
-    this.syncWithServer();
+    this._activeSyncPromise = this.syncWithServer().then(() => {
+      this._activeSyncPromise = null;
+    });
+  }
+
+  /**
+   * Resolves when any in-progress sync triggered by a remote change completes.
+   * Useful in tests: await client.waitForSync() after triggerRemoteChange().
+   */
+  async waitForSync(): Promise<void> {
+    if (this._activeSyncPromise) await this._activeSyncPromise;
   }
 
   private _log(event: SyncEventType, detail: Record<string, unknown>): void {

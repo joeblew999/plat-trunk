@@ -137,9 +137,9 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     let remoteOpsFired = false;
     b.onRemoteOps = () => { remoteOpsFired = true; };
 
-    // Simulate SSE doc-changed arriving at B, then B syncs
+    // Simulate SSE doc-changed arriving at B — triggers internal sync
     netB.triggerRemoteChange(modelId);
-    await b.syncWithServer();
+    await b.waitForSync(); // wait for the triggered sync to complete
 
     expect(remoteOpsFired).toBe(true);
     expect(await b.getOpCount()).toBe(1);
