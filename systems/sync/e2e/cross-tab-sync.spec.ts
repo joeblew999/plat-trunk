@@ -15,14 +15,26 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // ── Minimal helpers (sync e2e is self-contained — no truck dep) ───────────────
+//
+// Playwright evaluate() runs in the browser context — window properties are
+// accessed via a typed interface rather than (window as any) throughout.
+
+interface CadWindow {
+  sceneController?: unknown;
+  cadDocManager?: { _sync?: { modelId?: string; syncLog?: Array<{ event: string }> }; undo(): void };
+  moduleRouter?: { query(key: string): unknown };
+  cadCommand(type: string, params?: Record<string, unknown>): Promise<unknown>;
+}
+
+function cadWindow(): CadWindow { return window as unknown as CadWindow; }
 
 async function waitForReady(page: Page): Promise<void> {
-  await page.waitForFunction(() => !!(window as any).sceneController, { timeout: 30_000 });
+  await page.waitForFunction(() => !!(window as unknown as CadWindow).sceneController, { timeout: 30_000 });
 }
 
 async function waitForAutomerge(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => !!(window as any).cadDocManager?._sync?.modelId,
+    () => !!(window as unknown as CadWindow).cadDocManager?._sync?.modelId,
     { timeout: 10_000 },
   );
 }
@@ -30,7 +42,7 @@ async function waitForAutomerge(page: Page): Promise<void> {
 async function waitForObjectCount(page: Page, count: number, timeout = 8_000): Promise<void> {
   await page.waitForFunction(
     (n) => {
-      const ids = (window as any).moduleRouter?.query('objectIds');
+      const ids = (window as unknown as CadWindow).moduleRouter?.query('objectIds');
       return Array.isArray(ids) && ids.length === n;
     },
     count,
@@ -40,7 +52,7 @@ async function waitForObjectCount(page: Page, count: number, timeout = 8_000): P
 
 async function apiCommand(page: Page, type: string, params: Record<string, unknown>): Promise<void> {
   await page.evaluate(
-    ({ type, params }) => (window as any).cadCommand(type, params),
+    ({ type, params }) => (window as unknown as CadWindow).cadCommand(type, params),
     { type, params },
   );
 }
@@ -75,8 +87,8 @@ test.describe('Cross-Tab Scene Sync', () => {
 
     // Wait for SyncClient to finish saving + broadcasting
     await tabA.waitForFunction(
-      () => (window as any).cadDocManager?._sync?.syncLog?.some(
-        (e: any) => e.event === 'save_storage'
+      () => (window as unknown as CadWindow).cadDocManager?._sync?.syncLog?.some(
+        (e: { event: string }) => e.event === 'save_storage'
       ),
       { timeout: 5_000 },
     );
@@ -114,7 +126,7 @@ test.describe('Cross-Tab Scene Sync', () => {
     await waitForObjectCount(tabB, 2);
 
     // Tab A undoes → broadcasts disabled op → both see 1
-    await tabA.evaluate(() => (window as any).cadDocManager.undo());
+    await tabA.evaluate(() => (window as unknown as CadWindow).cadDocManager?.undo());
     await waitForObjectCount(tabA, 1);
     await waitForObjectCount(tabB, 1);
 

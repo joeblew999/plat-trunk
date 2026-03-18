@@ -26,7 +26,7 @@ import { moduleRouter } from './core/module-router';
 import { executeReplayPlan, type ReplayPlan } from './replay-executor';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
 import { SyncClient, type SyncMessage } from '../../sync/ts/sync-client';
-import { IdbStorageAdapter, NullNetworkAdapter } from '../../sync/ts/adapters';
+import { IdbStorageAdapter, NullNetworkAdapter, type SyncFetchFn } from '../../sync/ts/adapters';
 import { getSceneController } from './scene-controller';
 
 export type { CadOperation, SyncMessage }; // SyncMessage owned by sync-client.ts
@@ -60,12 +60,25 @@ export class CadDocumentManagerBase {
         this.tabId = crypto.randomUUID();
         const actorId = this._getOrCreateActorId();
         // SSE is owned by worker-relay.ts — it calls syncWithServer() directly.
-        // NullNetworkAdapter: postSync unreachable (worker-relay calls syncWithServer),
-        // onRemoteChange unused (worker-relay triggers _sync via triggerRemoteSync).
+        // NullNetworkAdapter receives a typed fetchFn so the URL pattern is
+        // defined once here (not buried in adapters.ts which can't import api-client).
+        const syncFetch: SyncFetchFn = async (modelId, bytes, actorId) => {
+            try {
+                const resp = await fetch(`/api/models/${modelId}/sync?actorId=${encodeURIComponent(actorId)}`, {
+                    method: 'POST',
+                    body: bytes.buffer as ArrayBuffer,
+                    headers: { 'content-type': 'application/octet-stream' },
+                });
+                if (!resp.ok) return null;
+                return new Uint8Array(await resp.arrayBuffer());
+            } catch {
+                return null;
+            }
+        };
         this._sync = new SyncClient(
             browserSyncWasmAdapter,
             new IdbStorageAdapter(DOCS_STORE, openCadSyncDb),
-            new NullNetworkAdapter(),
+            new NullNetworkAdapter(syncFetch),
             { actorId, debounceMs: 2000 },
         );
 

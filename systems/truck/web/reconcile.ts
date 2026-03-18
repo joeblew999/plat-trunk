@@ -14,7 +14,9 @@ import { warmCount } from './tier-manager';
 import { LOCAL_MODE } from './app-config';
 
 // ── reconcileSignals: selection state from command result ────────
-// r: any — Datastar root signal tree, no TS bindings available
+// r: DatastarRoot — Datastar signal bag. Typed as any because datastar.d.ts
+// declares root: any. Cannot be typed further without official Datastar TS defs.
+// See: https://github.com/starfederation/datastar (tracked in memory for future fix)
 function reconcileSignals(r: any, ids: string[], result: WasmResult) {
   // Prune stale selections (objects may have been deleted)
   // Use '' not null — Datastar breaks reactivity for signals initialized as null

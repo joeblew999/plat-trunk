@@ -70,7 +70,8 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     await client.saveToStorage();
 
     // New client, same storage
-    const storage2 = (client as any).storage as MemoryStorageAdapter;
+    // Access private storage field for test assertion — cast needed as it's private
+    const storage2 = (client as unknown as { storage: MemoryStorageAdapter }).storage;
     const net2 = new DirectNetworkAdapter(async () => null);
     const client2 = new SyncClient(testSyncWasmAdapter, storage2, net2, { actorId: 'actor-a' });
 

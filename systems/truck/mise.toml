@@ -68,6 +68,10 @@ depends = ["build:wasm"]
 run = [
   "cd worker && bunx tsc --noEmit",
   "cd web && bun run typecheck",
+  # api-contract.ts: compile-time check that all browser→worker API calls are type-safe.
+  # It exercises every client.* pattern — if a route changes, this fails immediately.
+  # It produces no runtime output — exists only for tsc --noEmit.
+  "cd web && bunx tsc --noEmit --strict api-contract.ts",
 ]
 
 # ── CI ────────────────────────────────────────────────────────────────────────

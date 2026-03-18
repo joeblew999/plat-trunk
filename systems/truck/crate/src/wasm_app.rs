@@ -808,6 +808,9 @@ pub struct SceneController {
 
 #[wasm_bindgen]
 impl SceneController {
+    // winit 0.30 APIs: EventLoop::new(), create_window(), spawn() are deprecated
+    // in favour of the ApplicationHandler trait pattern (winit 0.31+, still in beta).
+    // Remove these suppressions once winit 0.31 is stable and we migrate.
     #[allow(deprecated)]
     #[wasm_bindgen(constructor)]
     pub async fn new(canvas_id: String) -> std::result::Result<SceneController, JsValue> {

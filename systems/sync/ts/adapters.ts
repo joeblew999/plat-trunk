@@ -83,22 +83,43 @@ export class DirectNetworkAdapter implements SyncNetworkAdapter {
 //
 // Use when the SSE connection is owned externally (e.g. worker-relay.ts) and
 // SyncClient.syncWithServer() is called directly rather than via the adapter.
-// postSync: delegates to window.fetch directly (bypasses adapter routing).
+//
+// postSync accepts an injected fetchFn to keep adapters.ts platform-agnostic
+// (cannot import truck's api-client.ts — that would make sync depend on truck).
+// In the browser, history-domain.ts injects a typed wrapper over api-client.ts.
+//
 // onRemoteChange: no-op — the external SSE owner triggers syncs directly.
 
+export type SyncFetchFn = (
+  modelId: string,
+  bytes: Uint8Array,
+  actorId: string,
+) => Promise<Uint8Array | null>;
+
+/** Default fetch implementation — raw fetch with the standard sync endpoint URL. */
+export async function defaultSyncFetch(
+  modelId: string,
+  bytes: Uint8Array,
+  actorId: string,
+): Promise<Uint8Array | null> {
+  try {
+    const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
+      method: 'POST',
+      body: bytes.buffer as ArrayBuffer,
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+    if (!resp.ok) return null;
+    return new Uint8Array(await resp.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 export class NullNetworkAdapter implements SyncNetworkAdapter {
+  constructor(private readonly _fetch: SyncFetchFn = defaultSyncFetch) {}
+
   async postSync(modelId: string, bytes: Uint8Array, actorId: string): Promise<Uint8Array | null> {
-    try {
-      const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
-        method: 'POST',
-        body: bytes.buffer as ArrayBuffer,
-        headers: { 'content-type': 'application/octet-stream' },
-      });
-      if (!resp.ok) return null;
-      return new Uint8Array(await resp.arrayBuffer());
-    } catch {
-      return null;
-    }
+    return this._fetch(modelId, bytes, actorId);
   }
   onRemoteChange(_modelId: string, _callback: () => void): void {
     // SSE-triggered syncs are driven externally by worker-relay.ts

@@ -10,25 +10,11 @@
 //! WASM exports give TypeScript raw bytes in / raw bytes out.
 //! Storage (IDB) and networking (BroadcastChannel) are the JS shell's responsibility.
 //!
-//! # TODO: Multi-system / multi-plugin support
+//! # Multi-system doc structure
 //!
-//! The previous truck-sync prototype used a segmented doc structure:
-//!
-//!   ROOT
-//!     plugins: Map{
-//!       "{plugin_id}": Map{ operations: List[...], name: String }
-//!     }
-//!
-//! This was removed in favour of the flat structure above because:
-//! - truck CAD is the only consumer right now
-//! - Flat structure matches the JS CadOperation schema with zero translation
-//! - Simpler tests, simpler WASM API
-//!
-//! If future systems (e.g. truck-mvt, ifc-lite) need their own op logs in the
-//! same Automerge doc, choose one of:
-//!   (a) Separate Automerge docs per system — simplest; no changes to this crate
-//!   (b) Re-introduce the plugins map — add a `plugin_id: String` field to `Op`
-//!       and restore the nested structure in apply_op / get_ops
+//! Decision recorded in docs/adr/0015-sync-doc-structure.md.
+//! Short version: use separate Automerge docs per system (option a) — no changes
+//! to this crate needed. Each system owns its own doc with its own R2 key.
 
 use automerge::{AutoCommit, ObjType, ReadDoc, Value};
 use automerge::transaction::Transactable;
