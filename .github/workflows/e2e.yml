@@ -31,16 +31,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Cargo cache — same keys as main CI so warm builds are shared
+      - name: Sync .src repos
+        run: mise run src:sync
+
+      # Cargo registry cache only — not target/ dirs (embed absolute .src paths)
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            systems/sync/crate/target
-            systems/truck/crate/target
-          key: ${{ runner.os }}-crate-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-crate-target-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - uses: actions/cache@v4
         with:

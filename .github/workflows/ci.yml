@@ -31,26 +31,17 @@ jobs:
       # ── Cargo cache — registry + build targets + WASM outputs ──────────────
       # Key includes Cargo.lock hash so cache busts on dependency changes.
       # WASM pkg/ dirs cached separately — they're the expensive build outputs.
+      # Cache only the Cargo registry (path-independent).
+      # Do NOT cache crate target/ dirs — they embed absolute paths to .src/
+      # which breaks when restored on a different runner path.
+      # WASM pkg/ outputs are cached separately — they are path-independent.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            .src/truck/target
-            .src/ifc-lite/target
-            .src/ezpz/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            systems/sync/crate/target
-            systems/truck/crate/target
-            systems/plugins/howick/crate/target
-            systems/plugins/example/crate/target
-          key: ${{ runner.os }}-crate-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-crate-target-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - uses: actions/cache@v4
         with:
