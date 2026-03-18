@@ -83,37 +83,40 @@ export type { HeadlessController } from '../pkg/truck_cad.js';
 `;
 }
 
+// ─── Sync WASM wrapper definitions (shared by loader + adapter generator) ────
+// clientAdapter: true  → included in SyncWasmAdapter (used by SyncClient)
+// clientAdapter: false → server/worker-only, not in SyncWasmAdapter
+const syncWrappers: Array<{
+  wasmFn: string;
+  wrapperName: string;
+  params: string;
+  call: string;
+  returnType: string;
+  clientAdapter: boolean;
+}> = [
+  { wasmFn: 'create_doc',          wrapperName: 'syncCreate',            params: '',                                                  call: 'bg.create_doc()',                       returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+  { wasmFn: 'apply_op',            wrapperName: 'syncApplyOp',           params: 'doc: Uint8Array, opJson: string',                    call: 'bg.apply_op(doc, opJson)',              returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+  { wasmFn: 'merge_docs',          wrapperName: 'syncMergeDocs',         params: 'local: Uint8Array, remote: Uint8Array',              call: 'bg.merge_docs(local, remote)',          returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+  { wasmFn: 'merge_docs_with_info',wrapperName: 'syncMergeDocsWithInfo', params: 'local: Uint8Array, remote: Uint8Array',              call: 'bg.merge_docs_with_info(local, remote)',returnType: 'SyncMergeResult',        clientAdapter: false },
+  { wasmFn: 'get_ops',             wrapperName: 'syncGetOps',            params: 'doc: Uint8Array',                                   call: 'bg.get_ops(doc)',                       returnType: 'string',                 clientAdapter: true  },
+  { wasmFn: 'get_op_count',        wrapperName: 'syncGetOpCount',        params: 'doc: Uint8Array',                                   call: 'bg.get_op_count(doc)',                  returnType: 'number',                 clientAdapter: true  },
+  { wasmFn: 'set_op_enabled',      wrapperName: 'syncSetOpEnabled',      params: 'doc: Uint8Array, opId: string, enabled: boolean',    call: 'bg.set_op_enabled(doc, opId, enabled)', returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+  { wasmFn: 'set_group_enabled',   wrapperName: 'syncSetGroupEnabled',   params: 'doc: Uint8Array, groupId: string, enabled: boolean', call: 'bg.set_group_enabled(doc, groupId, enabled)', returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true },
+  { wasmFn: 'rollback_to',         wrapperName: 'syncRollbackTo',        params: 'doc: Uint8Array, actorId: string, toIndex: number',  call: 'bg.rollback_to(doc, actorId, toIndex)', returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+  { wasmFn: 'export_ops_since',    wrapperName: 'syncExportOpsSince',    params: 'doc: Uint8Array, sinceIndex: number',                call: 'bg.export_ops_since(doc, sinceIndex)',  returnType: 'string',                 clientAdapter: false },
+  { wasmFn: 'validate_op',         wrapperName: 'syncValidateOp',        params: 'opJson: string',                                    call: 'bg.validate_op(opJson)',                returnType: 'boolean',                clientAdapter: false },
+  { wasmFn: 'get_replay_ops',      wrapperName: 'syncGetReplayOps',      params: 'doc: Uint8Array',                                   call: 'bg.get_replay_ops(doc)',                returnType: 'string',                 clientAdapter: true  },
+  { wasmFn: 'get_name',            wrapperName: 'syncGetName',           params: 'doc: Uint8Array',                                   call: 'bg.get_name(doc)',                      returnType: 'string',                 clientAdapter: true  },
+  { wasmFn: 'set_name',            wrapperName: 'syncSetName',           params: 'doc: Uint8Array, name: string',                     call: 'bg.set_name(doc, name)',                returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
+];
+
 // ─── CF Worker: truck-sync loader ────────────────────────────────
 
 function genCfSyncWasm(): string {
   const exports = boundaries.modules['truck-sync']?.exports as string[];
   if (!exports) throw new Error('No truck-sync module in boundaries');
 
-  // Map of WASM export → wrapper function config
-  // Each entry: [wrapperName, params, paramTypes, returnType]
-  const syncWrappers: Array<{
-    wasmFn: string;
-    wrapperName: string;
-    params: string;
-    call: string;
-    returnType: string;
-  }> = [
-    { wasmFn: 'create_doc', wrapperName: 'syncCreate', params: '', call: 'bg.create_doc()', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'apply_op', wrapperName: 'syncApplyOp', params: 'doc: Uint8Array, opJson: string', call: 'bg.apply_op(doc, opJson)', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'merge_docs', wrapperName: 'syncMergeDocs', params: 'local: Uint8Array, remote: Uint8Array', call: 'bg.merge_docs(local, remote)', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'merge_docs_with_info', wrapperName: 'syncMergeDocsWithInfo', params: 'local: Uint8Array, remote: Uint8Array', call: 'bg.merge_docs_with_info(local, remote)', returnType: 'SyncMergeResult' },
-    { wasmFn: 'get_ops', wrapperName: 'syncGetOps', params: 'doc: Uint8Array', call: 'bg.get_ops(doc)', returnType: 'string' },
-    { wasmFn: 'get_op_count', wrapperName: 'syncGetOpCount', params: 'doc: Uint8Array', call: 'bg.get_op_count(doc)', returnType: 'number' },
-    { wasmFn: 'set_op_enabled', wrapperName: 'syncSetOpEnabled', params: 'doc: Uint8Array, opId: string, enabled: boolean', call: 'bg.set_op_enabled(doc, opId, enabled)', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'set_group_enabled', wrapperName: 'syncSetGroupEnabled', params: 'doc: Uint8Array, groupId: string, enabled: boolean', call: 'bg.set_group_enabled(doc, groupId, enabled)', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'rollback_to', wrapperName: 'syncRollbackTo', params: 'doc: Uint8Array, actorId: string, toIndex: number', call: 'bg.rollback_to(doc, actorId, toIndex)', returnType: 'Uint8Array<ArrayBuffer>' },
-    { wasmFn: 'export_ops_since', wrapperName: 'syncExportOpsSince', params: 'doc: Uint8Array, sinceIndex: number', call: 'bg.export_ops_since(doc, sinceIndex)', returnType: 'string' },
-    { wasmFn: 'validate_op', wrapperName: 'syncValidateOp', params: 'opJson: string', call: 'bg.validate_op(opJson)', returnType: 'boolean' },
-    { wasmFn: 'get_replay_ops', wrapperName: 'syncGetReplayOps', params: 'doc: Uint8Array', call: 'bg.get_replay_ops(doc)', returnType: 'string' },
-    { wasmFn: 'get_name', wrapperName: 'syncGetName', params: 'doc: Uint8Array', call: 'bg.get_name(doc)', returnType: 'string' },
-    { wasmFn: 'set_name', wrapperName: 'syncSetName', params: 'doc: Uint8Array, name: string', call: 'bg.set_name(doc, name)', returnType: 'Uint8Array<ArrayBuffer>' },
-  ];
-
+  // syncWrappers defined at module scope — used here + in adapter generators
   // Only generate wrappers for exports that are in the schema
   const activeWrappers = syncWrappers.filter(w => exports.includes(w.wasmFn));
 
@@ -269,6 +272,145 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// ─── Sync: SyncWasmAdapter interface ─────────────────────────────
+// Generated from syncWrappers entries with clientAdapter:true.
+// Imported by sync-client.ts — single source of truth for the adapter shape.
+
+function genSyncWasmAdapter(): string {
+  const exports = boundaries.modules['truck-sync']?.exports as string[];
+  if (!exports) throw new Error('No truck-sync module in boundaries');
+
+  // Only clientAdapter:true entries, filtered to what the schema exports
+  const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
+
+  // Map returnType to the correct Promise return
+  function adapterReturn(returnType: string): string {
+    if (returnType === 'Uint8Array<ArrayBuffer>') return 'Promise<Uint8Array>';
+    if (returnType === 'string') return 'Promise<string>';
+    if (returnType === 'number') return 'Promise<number>';
+    if (returnType === 'boolean') return 'Promise<boolean>';
+    return `Promise<${returnType}>`;
+  }
+
+  const methods = adapterWrappers.map(w => {
+    const ret = adapterReturn(w.returnType);
+    return `  ${w.wasmFn}(${w.params}): ${ret};`;
+  }).join('\n');
+
+  return `${HEADER('sync-client (SyncWasmAdapter interface)')}
+/**
+ * SyncWasmAdapter — interface for the truck-sync WASM module.
+ *
+ * Implemented by:
+ *   - Real WASM: wrap the generated async functions from sync-wasm.generated.ts
+ *   - Tests: wrap the same generated functions directly (no mock)
+ *
+ * All methods are async — matches wasm-bindgen generated signatures.
+ * Generated from cad-schema.json boundaries.modules['truck-sync'] (clientAdapter:true entries).
+ * ${adapterWrappers.length} methods.
+ */
+export interface SyncWasmAdapter {
+${methods}
+}
+`;
+}
+
+// ─── Browser: SyncWasmAdapter implementation ─────────────────────
+// Wraps the browser WASM functions (from pkg-sync/truck_sync.js) as the
+// SyncWasmAdapter used by SyncClient in history-domain.ts.
+// browser sync WASM functions are sync after init — wrap in Promise.resolve().
+
+function genBrowserSyncAdapter(): string {
+  const exports = boundaries.modules['truck-sync']?.exports as string[];
+  if (!exports) throw new Error('No truck-sync module in boundaries');
+
+  // All clientAdapter:true entries — SyncClient calls merge_docs after network.postSync() returns server bytes
+  const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
+
+  // Map wasm function params to the implementation call
+  const methods = adapterWrappers.map(w => {
+    const paramNames = w.params
+      .split(',')
+      .map(p => p.trim().split(':')[0].trim())
+      .filter(Boolean)
+      .join(', ');
+    const call = paramNames ? `${w.wasmFn}(${paramNames})` : `${w.wasmFn}()`;
+    // get_replay_ops needs special handling — not re-exported, derive from get_ops
+    if (w.wasmFn === 'get_replay_ops') {
+      return `    ${w.wasmFn}: (doc) => {
+        const all: CadOperation[] = JSON.parse(get_ops(doc));
+        return Promise.resolve(JSON.stringify(all.filter(o => o.enabled)));
+    },`;
+    }
+    return `    ${w.wasmFn}: (${w.params ? w.params : ''}) => Promise.resolve(${call}),`;
+  }).join('\n');
+
+  const importedFns = adapterWrappers
+    .filter(w => w.wasmFn !== 'get_replay_ops')
+    .map(w => w.wasmFn)
+    .join(', ');
+
+  return `${HEADER('browser / sync-wasm-adapter')}
+// Browser SyncWasmAdapter — wraps the sync WASM functions from pkg-sync.
+// merge_docs IS included — SyncClient calls it after network.postSync() returns
+// the merged server bytes. It is a local merge, not a network call.
+//
+// get_replay_ops is derived from get_ops + filter(enabled) because
+// get_replay_ops is not re-exported from the browser WASM generated bindings.
+
+import { ${importedFns} } from './pkg-sync/truck_sync.js';
+import type { SyncWasmAdapter } from '../../sync/ts/sync-wasm-adapter.generated';
+import type { CadOperation } from '../../sync/ts/sync-types.generated';
+
+/** Real browser SyncWasmAdapter — use in CadDocumentManagerBase constructor. */
+export const browserSyncWasmAdapter: SyncWasmAdapter = {
+${methods}
+};
+`;
+}
+
+// ─── Test: SyncWasmAdapter implementation ────────────────────────
+// Wraps the generated async test WASM functions for use in sync-client.test.ts.
+
+function genTestSyncAdapter(): string {
+  const exports = boundaries.modules['truck-sync']?.exports as string[];
+  if (!exports) throw new Error('No truck-sync module in boundaries');
+
+  const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
+
+  const importedFns = adapterWrappers
+    .filter(w => w.wasmFn !== 'get_replay_ops')
+    .map(w => w.wrapperName)
+    .join(', ');
+  // syncMergeDocs also needed in makeServer() test helper — included via importedFns
+
+  const methods = adapterWrappers.map(w => {
+    if (w.wasmFn === 'get_replay_ops') {
+      return `    ${w.wasmFn}: (doc) => syncGetReplayOps(doc),`;
+    }
+    const paramNames = w.params
+      .split(',')
+      .map(p => p.trim().split(':')[0].trim())
+      .filter(Boolean);
+    const call = paramNames.length ? `${w.wrapperName}(${paramNames.join(', ')})` : `${w.wrapperName}()`;
+    return `    ${w.wasmFn}: (${w.params}) => ${call},`;
+  }).join('\n');
+
+  return `${HEADER('sync-test / SyncWasmAdapter implementation')}
+// Test SyncWasmAdapter — wraps the generated async WASM functions.
+// Identical shape to browser adapter but uses the test context WASM loader.
+// Generated from cad-schema.json boundaries.modules['truck-sync'] (clientAdapter:true, no merge_docs).
+
+import { ${importedFns}, syncGetReplayOps } from './sync-wasm.generated';
+import type { SyncWasmAdapter } from '../../ts/sync-wasm-adapter.generated';
+
+/** SyncWasmAdapter implementation using the real sync WASM — no mocks. */
+export const testSyncWasmAdapter: SyncWasmAdapter = {
+${methods}
+};
+`;
+}
+
 // ─── Output ──────────────────────────────────────────────────────
 
 interface GeneratedFile {
@@ -277,6 +419,9 @@ interface GeneratedFile {
 }
 
 const outputs: GeneratedFile[] = [
+  { path: 'systems/sync/ts/sync-wasm-adapter.generated.ts', content: genSyncWasmAdapter() },
+  { path: 'systems/truck/web/sync-wasm-adapter.generated.ts', content: genBrowserSyncAdapter() },
+  { path: 'systems/sync/test/src/sync-wasm-adapter.generated.ts', content: genTestSyncAdapter() },
   { path: 'systems/truck/worker/src/truck-wasm.generated.ts', content: genCfTruckWasm() },
   { path: 'systems/truck/worker/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
   { path: 'systems/sync/test/src/sync-wasm.generated.ts', content: genCfSyncWasm() },

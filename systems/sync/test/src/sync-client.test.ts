@@ -9,30 +9,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  syncCreate, syncApplyOp, syncGetOps, syncGetOpCount, syncMergeDocs,
-  syncGetReplayOps, syncSetOpEnabled,
-} from './sync-wasm.generated';
-import { SyncClient, type SyncWasmAdapter } from '../../ts/sync-client';
+import { syncCreate, syncApplyOp, syncGetOps, syncGetOpCount, syncMergeDocs, syncGetReplayOps } from './sync-wasm.generated';
+import { testSyncWasmAdapter } from './sync-wasm-adapter.generated';
+import { SyncClient } from '../../ts/sync-client';
 import { MemoryStorageAdapter, DirectNetworkAdapter } from '../../ts/adapters';
 import type { CadOperation } from '../../ts/sync-types.generated';
 
-// ── Real async WASM adapter ───────────────────────────────────────────────────
-// Wraps the generated async functions directly — no sync stubs, no hacks.
-
-const realWasm: SyncWasmAdapter = {
-  create_doc:        ()           => syncCreate(),
-  apply_op:          (doc, json)  => syncApplyOp(doc, json),
-  merge_docs:        (a, b)       => syncMergeDocs(a, b),
-  get_ops:           (doc)        => syncGetOps(doc),
-  get_op_count:      (doc)        => syncGetOpCount(doc).then(n => n as number),
-  get_replay_ops:    (doc)        => syncGetReplayOps(doc),
-  set_op_enabled:    (doc, id, en) => syncSetOpEnabled(doc, id, en),
-  set_group_enabled: (doc, _gid, _en) => Promise.resolve(doc), // not needed here
-  rollback_to:       (doc, _a, _i)   => Promise.resolve(doc), // not needed here
-  get_name:          (_doc)       => Promise.resolve(''),
-  set_name:          (doc, _name) => Promise.resolve(doc),
-};
+// testSyncWasmAdapter from sync-wasm-adapter.generated.ts wraps the real WASM.
+// syncCreate/syncMergeDocs etc. imported directly for makeServer() helper only.
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,7 +52,7 @@ function makeClient(
   const net = new DirectNetworkAdapter(
     async (modelId, bytes, actorId) => server.sync(modelId, bytes),
   );
-  const client = new SyncClient(realWasm, storage, net, { actorId: actor, debounceMs: 99999 });
+  const client = new SyncClient(testSyncWasmAdapter, storage, net, { actorId: actor, debounceMs: 99999 });
   return { client, net, storage };
 }
 
@@ -88,7 +72,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     // New client, same storage
     const storage2 = (client as any).storage as MemoryStorageAdapter;
     const net2 = new DirectNetworkAdapter(async () => null);
-    const client2 = new SyncClient(realWasm, storage2, net2, { actorId: 'actor-a' });
+    const client2 = new SyncClient(testSyncWasmAdapter, storage2, net2, { actorId: 'actor-a' });
 
     const found = await client2.loadFromStorage(modelId);
     expect(found).toBe(true);
@@ -196,7 +180,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
       syncCount++;
       return server.sync(mid, bytes);
     });
-    const client = new SyncClient(realWasm, new MemoryStorageAdapter(), net, {
+    const client = new SyncClient(testSyncWasmAdapter, new MemoryStorageAdapter(), net, {
       actorId: 'actor-a',
       debounceMs: 0, // immediate
     });
