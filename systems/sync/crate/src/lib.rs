@@ -941,3 +941,274 @@ mod tests {
         assert!(!result2.had_new_ops());
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Integration tests — simulate full browser ↔ server ↔ browser sync cycle
+//
+// These tests model the real storage/network boundary entirely in Rust:
+//   "IDB"  = Vec<u8> in memory (same bytes the browser would store)
+//   "R2"   = Vec<u8> in memory (same bytes the worker would store)
+//   "fetch" = direct function call (same CRDT logic the worker executes)
+//
+// If these pass, the sync protocol is correct. Browser/CF add only I/O.
+// ────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod integration {
+    use super::{Op, core};
+    use serde_json::json;
+
+    fn op(op_type: &str, params: serde_json::Value, actor: &str) -> Op {
+        Op {
+            id: uuid::Uuid::new_v4().to_string(),
+            op_type: op_type.to_string(),
+            params,
+            enabled: true,
+            timestamp: 0,
+            actor_id: actor.to_string(),
+            group_id: None,
+        }
+    }
+
+    // ── Storage simulators ────────────────────────────────────────────────────
+
+    /// Simulates IDB (browser IndexedDB) — just bytes in memory.
+    struct MockIdb(Option<Vec<u8>>);
+    impl MockIdb {
+        fn new() -> Self { Self(None) }
+        fn save(&mut self, bytes: &[u8]) { self.0 = Some(bytes.to_vec()); }
+        fn load(&self) -> Option<Vec<u8>> { self.0.clone() }
+    }
+
+    /// Simulates R2 (Cloudflare) — just bytes in memory.
+    struct MockR2(Option<Vec<u8>>);
+    impl MockR2 {
+        fn new() -> Self { Self(None) }
+        fn put(&mut self, bytes: &[u8]) { self.0 = Some(bytes.to_vec()); }
+        fn get(&self) -> Option<Vec<u8>> { self.0.clone() }
+    }
+
+    /// Simulates the worker's POST /api/models/:id/sync endpoint.
+    /// Takes browser doc bytes, merges with R2 doc, saves back, returns merged.
+    fn simulate_server_sync(browser_doc: &[u8], r2: &mut MockR2) -> Vec<u8> {
+        match r2.get() {
+            Some(server_doc) => {
+                let merged = core::merge_docs(server_doc.as_slice(), browser_doc)
+                    .expect("merge failed");
+                r2.put(&merged);
+                merged
+            }
+            None => {
+                // No server doc yet — adopt browser doc directly
+                r2.put(browser_doc);
+                browser_doc.to_vec()
+            }
+        }
+    }
+
+    /// Simulates the worker's POST /api/models/:id/ops endpoint.
+    fn simulate_server_apply_op(op: &Op, r2: &mut MockR2) -> Vec<u8> {
+        let doc = r2.get().unwrap_or_else(|| core::create_doc());
+        let updated = core::apply_op(&doc, op).expect("apply_op failed");
+        r2.put(&updated);
+        updated
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    /// Full cycle: browser creates doc → syncs to server → server applies MCP op
+    /// → browser syncs again → browser sees both ops.
+    #[test]
+    fn browser_server_full_sync_cycle() {
+        let mut idb = MockIdb::new();
+        let mut r2 = MockR2::new();
+
+        // Browser: create doc + apply local op
+        let browser_op = op("add_cube", json!({"size": 1.0}), "browser");
+        let doc = core::create_doc();
+        let doc = core::apply_op(&doc, &browser_op).unwrap();
+        idb.save(&doc);
+
+        // Browser → Server: first sync (server adopts browser doc)
+        let merged = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged);
+        assert_eq!(core::get_op_count(&merged).unwrap(), 1);
+
+        // Server: MCP agent applies op directly (simulate executeServerDirect)
+        let mcp_op = op("add_sphere", json!({"radius": 0.5}), "mcp-server");
+        simulate_server_apply_op(&mcp_op, &mut r2);
+
+        // Browser → Server: second sync (browser gets MCP op via merge)
+        let merged = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged);
+
+        // Browser now has both ops
+        let ops = core::get_ops(&merged).unwrap();
+        assert_eq!(ops.len(), 2, "browser must see both ops after sync");
+        let types: Vec<&str> = ops.iter().map(|o| o.op_type.as_str()).collect();
+        assert!(types.contains(&"add_cube"), "browser op must survive");
+        assert!(types.contains(&"add_sphere"), "MCP op must survive");
+    }
+
+    /// Two browsers, one server: both make changes offline, sync independently,
+    /// server merges both, each browser gets the other's changes.
+    #[test]
+    fn two_browsers_converge_via_server() {
+        let mut r2 = MockR2::new();
+        let mut idb_a = MockIdb::new();
+        let mut idb_b = MockIdb::new();
+
+        // Shared base (both tabs open from the same IDB state)
+        let base = core::create_doc();
+        idb_a.save(&base);
+        idb_b.save(&base);
+
+        // Browser A: adds a cube offline
+        let op_a = op("add_cube", json!({"size": 2.0}), "browser-a");
+        let doc_a = core::apply_op(&base, &op_a).unwrap();
+        idb_a.save(&doc_a);
+
+        // Browser B: adds a sphere offline
+        let op_b = op("add_sphere", json!({"radius": 1.0}), "browser-b");
+        let doc_b = core::apply_op(&base, &op_b).unwrap();
+        idb_b.save(&doc_b);
+
+        // Browser A syncs first — server adopts A's doc
+        let merged_a = simulate_server_sync(idb_a.load().unwrap().as_slice(), &mut r2);
+        idb_a.save(&merged_a);
+        assert_eq!(core::get_op_count(&merged_a).unwrap(), 1);
+
+        // Browser B syncs — server merges A+B, B receives merged doc
+        let merged_b = simulate_server_sync(idb_b.load().unwrap().as_slice(), &mut r2);
+        idb_b.save(&merged_b);
+        assert_eq!(core::get_op_count(&merged_b).unwrap(), 2, "B must see A's op");
+
+        // Browser A syncs again — gets B's op
+        let merged_a2 = simulate_server_sync(idb_a.load().unwrap().as_slice(), &mut r2);
+        idb_a.save(&merged_a2);
+        assert_eq!(core::get_op_count(&merged_a2).unwrap(), 2, "A must see B's op");
+
+        // Both browsers have the same ops
+        let ops_a = core::get_ops(&merged_a2).unwrap();
+        let ops_b = core::get_ops(&merged_b).unwrap();
+        let mut ids_a: Vec<_> = ops_a.iter().map(|o| o.id.clone()).collect();
+        let mut ids_b: Vec<_> = ops_b.iter().map(|o| o.id.clone()).collect();
+        ids_a.sort(); ids_b.sort();
+        assert_eq!(ids_a, ids_b, "both browsers must converge to identical state");
+    }
+
+    /// Undo/redo survives a server sync round-trip.
+    /// Browser undoes an op, syncs to server, re-syncs — op remains disabled.
+    #[test]
+    fn undo_survives_server_sync() {
+        let mut idb = MockIdb::new();
+        let mut r2 = MockR2::new();
+
+        // Browser: apply 2 ops
+        let o1 = op("add_cube",   json!({"size": 1.0}), "browser");
+        let o2 = op("add_sphere", json!({"radius": 0.5}), "browser");
+        let id2 = o2.id.clone();
+
+        let doc = core::create_doc();
+        let doc = core::apply_op(&doc, &o1).unwrap();
+        let doc = core::apply_op(&doc, &o2).unwrap();
+
+        // Browser: undo second op
+        let doc = core::set_op_enabled(&doc, &id2, false).unwrap();
+        idb.save(&doc);
+
+        // Sync to server
+        let merged = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged);
+
+        // Sync again (no new ops — idempotent)
+        let merged2 = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged2);
+
+        // Replay ops — only enabled ones
+        let replay = core::get_replay_ops(&merged2).unwrap();
+        assert_eq!(replay.len(), 1, "undo must survive sync round-trip");
+        assert_eq!(replay[0].op_type, "add_cube");
+        assert!(replay[0].enabled);
+
+        // Full op list still has both
+        let all = core::get_ops(&merged2).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(!all.iter().find(|o| o.id == id2).unwrap().enabled);
+    }
+
+    /// Dual-write: server applies op via MCP, SSE delivers it to browser which
+    /// also applies it locally. Server sync must not duplicate the op.
+    #[test]
+    fn dual_write_mcp_and_sse_no_duplication() {
+        let mut idb = MockIdb::new();
+        let mut r2 = MockR2::new();
+
+        let shared_op = op("add_cube", json!({"size": 3.0}), "mcp-server");
+
+        // Server applies op via MCP
+        simulate_server_apply_op(&shared_op, &mut r2);
+
+        // Browser: create doc + apply same op (simulating SSE applyServerOp)
+        let base = core::create_doc();
+        let browser_doc = core::apply_op(&base, &shared_op).unwrap();
+        idb.save(&browser_doc);
+
+        // Browser syncs — CRDT dedup must eliminate duplicate
+        let merged = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged);
+
+        let ops = core::get_ops(&merged).unwrap();
+        assert_eq!(ops.len(), 1, "dual-write must not duplicate op");
+        assert_eq!(ops[0].id, shared_op.id);
+    }
+
+    /// Ping-pong prevention: browser syncs the merged doc back to server.
+    /// Op count must not grow — no infinite broadcast loop.
+    #[test]
+    fn re_sync_is_idempotent_no_ping_pong() {
+        let mut idb = MockIdb::new();
+        let mut r2 = MockR2::new();
+
+        let doc = core::create_doc();
+        let doc = core::apply_op(&doc, &op("add_cube", json!({"size": 1.0}), "browser")).unwrap();
+        idb.save(&doc);
+
+        // First sync
+        let merged = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        idb.save(&merged);
+        let count_after_first = core::get_op_count(&merged).unwrap();
+
+        // Second sync with same doc (ping-pong scenario)
+        let merged2 = simulate_server_sync(idb.load().unwrap().as_slice(), &mut r2);
+        let count_after_second = core::get_op_count(&merged2).unwrap();
+
+        assert_eq!(count_after_first, count_after_second,
+            "re-sync must not inflate op count — ping-pong prevention");
+    }
+
+    /// Model name syncs from browser to server and back to a second browser.
+    #[test]
+    fn model_name_syncs_browser_to_server_to_browser() {
+        let mut r2 = MockR2::new();
+        let mut idb_a = MockIdb::new();
+        let mut idb_b = MockIdb::new();
+
+        // Browser A sets name
+        let base = core::create_doc();
+        let doc_a = core::set_name(&base, "My Model").unwrap();
+        idb_a.save(&doc_a);
+
+        // A syncs to server
+        let merged = simulate_server_sync(idb_a.load().unwrap().as_slice(), &mut r2);
+        idb_a.save(&merged);
+
+        // Browser B starts empty, syncs — gets name from server
+        idb_b.save(&base);
+        let merged_b = simulate_server_sync(idb_b.load().unwrap().as_slice(), &mut r2);
+        idb_b.save(&merged_b);
+
+        let name = core::get_name(&merged_b).unwrap();
+        assert_eq!(name, "My Model", "name must propagate browser A → server → browser B");
+    }
+}

@@ -242,7 +242,7 @@ echo "────────────────────────�
 
 [tasks."repo:public"]
 description = "Pre-flight secret scan then make repo public (enables free GitHub Actions CI)"
-run = """
+run = '''
 FOUND=$(git grep -l "ghp_\|CLOUDFLARE_ACCOUNT_ID.*=.*[0-9a-f]\{32\}\|CLOUDFLARE_API_TOKEN.*=.*[A-Za-z0-9]\{40\}" \
   -- . ':!.mise.local.toml.example' ':!.gitignore' 2>/dev/null || true)
 if [ -n "$FOUND" ]; then
@@ -254,7 +254,7 @@ fi
 echo "✓ no secrets in tracked files"
 gh repo edit joeblew999/plat-trunk --visibility public --accept-visibility-change-consequences
 echo "✓ repo is now public"
-"""
+'''
 
 [tasks."repo:private"]
 description = "Make repo private"

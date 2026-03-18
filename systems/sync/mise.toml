@@ -75,8 +75,8 @@ run = "cd worker && bun install"
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 [tasks."test:rust"]
-description = "Run Rust CRDT unit tests only — fast, no WASM build needed"
-run = "cargo test -p truck-sync"
+description = "Run Rust CRDT unit + integration tests — standalone, no .src repos needed"
+run = "cd crate && cargo test"
 
 [tasks."test:ts"]
 description = "Run TS WASM boundary + message contract tests (WASM must be built first)"
@@ -87,7 +87,7 @@ run = "cd worker && bunx vitest run"
 description = "Build WASM standalone + run all sync tests (Rust CRDT + TS boundary)"
 depends = ["build:wasm:self", "install"]
 run = [
-  "cargo test -p truck-sync",
+  "cd crate && cargo test",
   "cd worker && bunx vitest run",
 ]
 
@@ -107,7 +107,7 @@ run = "cd worker && bunx tsc --noEmit"
 description = "Full standalone CI gate — build WASM + typecheck + Rust tests + TS tests"
 depends = ["build:wasm:self", "install"]
 run = [
-  "cargo test -p truck-sync",
+  "cd crate && cargo test",
   "cd worker && bunx tsc --noEmit",
   "cd worker && bunx vitest run",
 ]

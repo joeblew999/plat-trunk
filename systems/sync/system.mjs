@@ -36,10 +36,11 @@ export const testing = {
 // When adding tests, update this list. If a file is missing, the build breaks.
 export const testFiles = {
   rust: [
-    { file: 'systems/sync/crate/src/lib.rs', covers: 'CRDT math: merge, dedup, replay, rollback, enable/disable, names' },
+    { file: 'systems/sync/crate/src/lib.rs', covers: 'CRDT math: merge, dedup, replay, rollback, enable/disable, names (unit + integration)' },
   ],
   vitest: [
     { file: 'systems/sync/worker/src/wasm.test.ts', covers: 'WASM boundary: JS↔Rust serialization, create/apply/merge/dedup/names' },
     { file: 'systems/sync/worker/src/message-contract.test.ts', covers: 'SSE message format: SyncMessage wire contract, model isolation' },
+    { file: 'systems/sync/worker/src/history-domain.test.ts', covers: 'Browser sync protocol: record/undo/sync with mock IDB+R2, no browser APIs' },
   ],
 };

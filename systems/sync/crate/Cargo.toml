@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "Plugin-agnostic CRDT op log for plat-trunk systems (truck-geometry, truck-mvt, ifc-lite, …)"
 
+# ── Standalone workspace ───────────────────────────────────────────────────────
+# truck-sync has zero dependencies on truck geometry, howick, or any other
+# plat-trunk crate. Declaring its own workspace here means:
+#   cd systems/sync/crate && cargo test   ← works with NO .src repos cloned
+#   cargo test -p truck-sync             ← still works from monorepo root
+# Without this, Cargo resolves ALL workspace members first (including howick
+# which has a .src/truck path dep), breaking sync tests in a fresh checkout.
+[workspace]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -12,7 +21,7 @@ crate-type = ["cdylib", "rlib"]
 automerge = "0.7.4"
 
 # Serialization
-serde     = { version = "1", features = ["derive"] }
+serde      = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 
 # JSON Schema generation (ADR-0001 Part E — Op type codegen)
@@ -22,13 +31,13 @@ schemars = { version = "0.8", features = ["derive"] }
 uuid = { version = "1", features = ["v4", "js", "serde"] }
 
 # WASM bridge (only used when compiled to wasm32)
-wasm-bindgen = "0.2.106"
-console_error_panic_hook = "0.1.7"
-log = "0.4"
+wasm-bindgen              = "0.2.106"
+console_error_panic_hook  = "0.1.7"
+log                       = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
+js-sys               = "0.3"
 # getrandom 0.3.x requires explicit opt-in for wasm32-unknown-unknown
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
@@ -41,4 +50,3 @@ path = "src/bin/generate_sync_schema.rs"
 
 [features]
 default = []
-
