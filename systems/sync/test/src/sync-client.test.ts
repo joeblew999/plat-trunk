@@ -104,11 +104,11 @@ describe('SyncClient — protocol correctness with real WASM', () => {
 
     // B syncs — server merges A+B
     await b.syncWithServer();
-    expect(await b.getOpCount()).toBe(2, 'B must see A\'s op');
+    expect(await b.getOpCount(), 'B must see A\'s op').toBe(2);
 
     // A re-syncs — gets B's op
     await a.syncWithServer();
-    expect(await a.getOpCount()).toBe(2, 'A must see B\'s op');
+    expect(await a.getOpCount(), 'A must see B\'s op').toBe(2);
 
     // Both converge to same op IDs
     const opsA = await a.getOps();

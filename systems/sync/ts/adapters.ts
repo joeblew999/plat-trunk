@@ -151,7 +151,7 @@ const _DEFAULT_STORE = 'docs';
 function _defaultOpenIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open('cad-sync', 2);
-    req.onupgradeneeded = (e) => {
+    req.onupgradeneeded = (e: Event) => {
       const db = (e.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(_DEFAULT_STORE)) db.createObjectStore(_DEFAULT_STORE);
     };
