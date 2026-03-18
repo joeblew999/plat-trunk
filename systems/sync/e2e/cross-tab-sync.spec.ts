@@ -12,13 +12,38 @@
  *
  * Lives in systems/sync/e2e/ — sync owns cross-tab behaviour, not truck.
  */
-import { test } from '@playwright/test';
-import {
-  waitForReady,
-  waitForAutomerge,
-  waitForObjectCount,
-  apiCommand,
-} from '../../truck/e2e/helpers';
+import { test, expect, type Page } from '@playwright/test';
+
+// ── Minimal helpers (sync e2e is self-contained — no truck dep) ───────────────
+
+async function waitForReady(page: Page): Promise<void> {
+  await page.waitForFunction(() => !!(window as any).sceneController, { timeout: 30_000 });
+}
+
+async function waitForAutomerge(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => !!(window as any).cadDocManager?._sync?.modelId,
+    { timeout: 10_000 },
+  );
+}
+
+async function waitForObjectCount(page: Page, count: number, timeout = 8_000): Promise<void> {
+  await page.waitForFunction(
+    (n) => {
+      const ids = (window as any).moduleRouter?.query('objectIds');
+      return Array.isArray(ids) && ids.length === n;
+    },
+    count,
+    { timeout },
+  );
+}
+
+async function apiCommand(page: Page, type: string, params: Record<string, unknown>): Promise<void> {
+  await page.evaluate(
+    ({ type, params }) => (window as any).cadCommand(type, params),
+    { type, params },
+  );
+}
 
 test.describe('Cross-Tab Scene Sync', () => {
   test('BroadcastChannel: Tab A change appears in Tab B immediately', async ({ browser }, testInfo) => {

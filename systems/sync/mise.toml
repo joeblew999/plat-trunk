@@ -98,6 +98,13 @@ description = "Typecheck sync test runner TS (WASM must be built first for gener
 depends = ["install"]
 run = "cd test && bunx tsc --noEmit"
 
+# ── E2E ──────────────────────────────────────────────────────────────────────
+# Requires: mise run dev (from repo root) to be running first.
+
+[tasks."test:e2e"]
+description = "Run cross-tab sync Playwright tests (requires dev server running)"
+run = "cd e2e && bun install --silent && bunx playwright test"
+
 # ── CI ────────────────────────────────────────────────────────────────────────
 # Fully standalone — does not require the root pipeline.
 # Invoked by root: mise --cd systems/sync run ci

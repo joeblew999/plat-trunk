@@ -3,7 +3,7 @@
 
 import { cadCommand } from './dispatch';
 
-function docMgr() { return window.cadDocManager?._docBytes ? window.cadDocManager : null; }
+function docMgr() { return window.cadDocManager?._sync?.modelId ? window.cadDocManager : null; }
 
 document.addEventListener('keydown', (e) => {
     // 's' — open sketch tab (unmodified, not in input)

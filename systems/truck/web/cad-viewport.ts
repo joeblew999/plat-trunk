@@ -233,7 +233,7 @@ export class CadViewport extends LitElement {
       canvas.releasePointerCapture(e.pointerId);
 
       const result = window.sceneController.end_gizmo_drag();
-      if (result && result.objectId && window.cadDocManager?._docBytes) {
+      if (result && result.objectId && window.cadDocManager?._sync?.modelId) {
         window.cadDocManager.record('translate', {
           objectId: result.objectId,
           dx: result.dx, dy: result.dy, dz: result.dz,

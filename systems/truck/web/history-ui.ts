@@ -9,9 +9,9 @@ import { CadDocumentManagerBase } from './history-domain';
 class CadDocumentManager extends CadDocumentManagerBase {
     override _updateDocInfo() {
         const el = document.getElementById('docInfo');
-        if (!el || !this._docBytes) return;
+        if (!el || !this._sync?.modelId) return;
         el.textContent = this._meta.name || 'Untitled';
-        el.title = this._modelId || '';
+        el.title = this._sync.modelId || '';
     }
 
     override _renderTimeline() {

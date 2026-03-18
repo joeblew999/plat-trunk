@@ -151,8 +151,8 @@ export async function waitForAutomerge(page: Page, timeoutMs = 10_000) {
   await page.waitForFunction(
     () => {
       const mgr = (window as any).cadDocManager;
-      // Doc is loaded when _docBytes is set (non-null) and modelId is known
-      return !!(mgr?._docBytes && mgr?._modelId);
+      // Doc is loaded when SyncClient has a modelId (doc adopted/created)
+      return !!(mgr?._sync?.modelId);
     },
     { timeout: timeoutMs },
   );

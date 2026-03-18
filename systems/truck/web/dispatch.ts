@@ -106,7 +106,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
     case 'get_status':
       return {
         mode: window.__cadLocalMode ? 'local' : 'online',
-        automergeReady: !!mgr?._docBytes,
+        automergeReady: !!mgr?._sync?.modelId,
         automergeEnabled: mgr?.enabled ?? true,
         objectCount: window._ds?.root?.objectCount || 0,
         warmCount: window._ds?.root?.warmCount || 0
@@ -264,7 +264,7 @@ export async function cadCommand(type: string, params?: Record<string, unknown>,
     const result = moduleRouter.execute(type, p);
 
     // Record to Automerge
-    const mgr = window.cadDocManager?._docBytes ? window.cadDocManager : null;
+    const mgr = window.cadDocManager?._sync?.modelId ? window.cadDocManager : null;
     if (mgr) {
       // Strip large blob data from import commands (ADR-0025 Phase 0).
       // Blob param derived from schema: first required string param on import commands.

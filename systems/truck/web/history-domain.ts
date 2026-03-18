@@ -242,6 +242,7 @@ export class CadDocumentManagerBase {
                     await this._sync.setOpEnabled(ops[i].id, false);
                 }
                 this._meta.snapshotValidFrom = undefined;
+                await this._refreshUndoState();
                 await this._replayScene();
                 return true;
             }
@@ -264,6 +265,7 @@ export class CadDocumentManagerBase {
             await this._sync.setOpEnabled(ops[target].id, true);
         }
         this._meta.snapshotValidFrom = undefined;
+        await this._refreshUndoState();
         await this._replayScene();
         return true;
     }
@@ -273,6 +275,7 @@ export class CadDocumentManagerBase {
         if (toOpIndex < 0 || toOpIndex >= ops.length) return false;
         await this._sync.rollbackTo(toOpIndex);
         this._meta.snapshotValidFrom = undefined;
+        await this._refreshUndoState();
         await this._replayScene();
         return true;
     }
@@ -306,6 +309,7 @@ export class CadDocumentManagerBase {
         if (!this._sync.docBytes || !this._sync.modelId) return;
         cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
         await this._sync.addOp(op);
+        await this._refreshUndoState();
         reconcile({});
         this._renderTimeline();
     }

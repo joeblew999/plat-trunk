@@ -125,7 +125,7 @@ export function reconcile(result: WasmResult): WasmResult {
   if (!moduleRouter.ready || !ds?.root) return {};
 
   const ids = moduleRouter.query('objectIds') as string[];
-  const mgr = window.cadDocManager?._docBytes ? window.cadDocManager : null;
+  const mgr = window.cadDocManager?._sync?.modelId ? window.cadDocManager : null;
   const r = ds.root;
 
   ds.beginBatch();
