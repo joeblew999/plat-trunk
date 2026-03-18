@@ -127,6 +127,15 @@ export class NullNetworkAdapter implements SyncNetworkAdapter {
   disconnect(): void {}
 }
 
+// ── IDB type stubs (browser globals not available in CF Workers tsconfig) ────
+// IdbStorageAdapter only runs in a browser. These stubs satisfy tsc when
+// adapters.ts is compiled under a non-dom tsconfig (e.g. sync test worker).
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type IDBDatabase = any;
+type IDBOpenDBRequest = any;
+declare const indexedDB: { open(name: string, version: number): IDBOpenDBRequest };
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // ── IDB (browser production) ──────────────────────────────────────────────────
 //
 // IdbStorageAdapter accepts an injected openDb function so the caller controls

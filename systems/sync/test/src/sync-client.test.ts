@@ -65,7 +65,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const { client } = makeClient(server, 'actor-a');
     const modelId = 'roundtrip';
 
-    client.createDoc(modelId);
+    await client.createDoc(modelId);
     await client.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
     await client.saveToStorage();
 
@@ -91,7 +91,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const { client: a } = makeClient(server, 'actor-a');
     const { client: b } = makeClient(server, 'actor-b');
 
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
     await a.addOp(makeOp('add_cube', { size: 2 }, 'actor-a'));
 
     // A syncs first
@@ -99,7 +99,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     expect(await server.opCount(modelId)).toBe(1);
 
     // B starts fresh, adds different op
-    b.createDoc(modelId);
+    await b.createDoc(modelId);
     await b.addOp(makeOp('add_sphere', { radius: 1 }, 'actor-b'));
 
     // B syncs — server merges A+B
@@ -126,12 +126,12 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const { client: b, net: netB } = makeClient(server, 'actor-b');
 
     // A adds op + syncs
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
     await a.addOp(makeOp('add_sphere', { radius: 1 }, 'actor-a'));
     await a.syncWithServer();
 
     // B starts empty
-    b.createDoc(modelId);
+    await b.createDoc(modelId);
     b.listen(modelId);
 
     let remoteOpsFired = false;
@@ -150,7 +150,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const modelId = 'undo';
 
     const { client: a } = makeClient(server, 'actor-a');
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
 
     const op1 = makeOp('add_cube',   { size: 1 }, 'actor-a');
     const op2 = makeOp('add_sphere', { radius: 1 }, 'actor-a');
@@ -164,12 +164,12 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     // Re-sync — undo must survive
     await a.syncWithServer();
     const replay = await a.getReplayOps();
-    expect(replay.length).toBe(1, 'undo must survive server sync');
+    expect(replay.length, 'undo must survive server sync').toBe(1);
     expect(replay[0].type).toBe('add_cube');
 
     const all = await a.getOps();
     expect(all.length).toBe(2);
-    expect(all[1].enabled).toBe(false, 'disabled op persisted');
+    expect(all[1].enabled, 'disabled op persisted').toBe(false);
   });
 
   it('offline queues sync, online flushes it', async () => {
@@ -186,16 +186,16 @@ describe('SyncClient — protocol correctness with real WASM', () => {
       debounceMs: 0, // immediate
     });
 
-    client.createDoc(modelId);
+    await client.createDoc(modelId);
     client.goOffline();
 
     await client.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
-    expect(syncCount).toBe(0, 'no sync while offline');
+    expect(syncCount, 'no sync while offline').toBe(0);
 
     client.goOnline();
     // goOnline triggers pending sync — give microtask a tick
     await new Promise(r => setTimeout(r, 10));
-    expect(syncCount).toBe(1, 'sync fired on reconnect');
+    expect(syncCount, 'sync fired on reconnect').toBe(1);
   });
 
   it('re-sync is idempotent — no ping-pong op inflation', async () => {
@@ -203,7 +203,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const modelId = 'pingpong';
     const { client: a } = makeClient(server, 'actor-a');
 
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
     await a.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
 
     await a.syncWithServer();
@@ -212,7 +212,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     await a.syncWithServer();
     const count2 = await a.getOpCount();
 
-    expect(count2).toBe(count1, 're-sync must not inflate op count');
+    expect(count2, 're-sync must not inflate op count').toBe(count1);
   });
 
   it('structured log captures sync events', async () => {
@@ -220,7 +220,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     const { client: a } = makeClient(server, 'actor-a');
     const modelId = 'log-test';
 
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
     await a.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
     await a.syncWithServer();
 
@@ -252,14 +252,14 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     await server.sync(modelId, serverDoc);
 
     // Client also applies same op (simulates SSE applyServerOp)
-    a.createDoc(modelId);
+    await a.createDoc(modelId);
     await a.addOp(sharedOp);
 
     // Sync — CRDT dedup must prevent duplicate
     await a.syncWithServer();
 
     const ops = await a.getOps();
-    expect(ops.length).toBe(1, 'dual-write must not duplicate op');
+    expect(ops.length, 'dual-write must not duplicate op').toBe(1);
     expect(ops[0].id).toBe(sharedOp.id);
   });
 });

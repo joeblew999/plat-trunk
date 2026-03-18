@@ -174,7 +174,7 @@ export class SyncClient {
   // ── Doc lifecycle ─────────────────────────────────────────────────────────
 
   /** Create a fresh empty doc. Does not save to storage. */
-  createDoc(modelId: string): void {
+  async createDoc(modelId: string): Promise<void> {
     this._docBytes = await this.wasm.create_doc();
     this._modelId = modelId;
   }
@@ -269,7 +269,7 @@ export class SyncClient {
     catch { return ''; }
   }
 
-  setName(name: string): void {
+  async setName(name: string): Promise<void> {
     if (!this._docBytes) return;
     this._docBytes = await this.wasm.set_name(this._docBytes, name);
   }

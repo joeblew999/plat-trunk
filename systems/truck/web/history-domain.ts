@@ -148,8 +148,8 @@ export class CadDocumentManagerBase {
     }
 
     async createFreshDoc(modelId: string, sceneJson: string | null, source: string): Promise<void> {
-        this._sync.createDoc(modelId);
-        this._sync.setName(`Model ${modelId}`);
+        await this._sync.createDoc(modelId);
+        await this._sync.setName(`Model ${modelId}`);
         this._meta = { name: `Model ${modelId}`, snapshots: [] };
 
         if (sceneJson) {
