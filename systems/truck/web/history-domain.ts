@@ -1,37 +1,37 @@
+/**
+ * history-domain.ts — Thin CAD wrapper over SyncClient (ADR-0008).
+ *
+ * This file owns:
+ *   - Op recording (knowing WHEN and WHAT to record after cadCommand executes)
+ *   - Scene replay (knowing HOW to replay ops into the WASM geometry engine)
+ *   - Snapshot management (IDB blob cache for fast replay)
+ *   - UI state (canUndo/canRedo signals, timeline render)
+ *
+ * This file does NOT own:
+ *   - CRDT doc bytes           → SyncClient
+ *   - IDB persistence          → SyncClient + IdbStorageAdapter
+ *   - Server sync round-trip   → SyncClient + HttpSseNetworkAdapter
+ *   - Cross-tab BroadcastChannel → SyncClient (future: BroadcastNetworkAdapter)
+ *   - Network state            → SyncClient
+ *   - Structured sync tracing  → SyncClient.syncLog
+ */
+
 import initSyncWasm, {
     create_doc, apply_op, get_ops, get_op_count, get_name, set_name,
-    set_op_enabled, set_group_enabled, rollback_to, merge_docs,
+    set_op_enabled, set_group_enabled, rollback_to,
 } from './pkg-sync/truck_sync.js';
-import { loadDoc, saveDoc, loadMeta, saveMeta, type DocMeta } from './doc-store';
+import { saveDoc, loadDoc } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
 import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { moduleRouter } from './core/module-router';
 import { executeReplayPlan, type ReplayPlan } from './replay-executor';
-import type { CadOptions } from './types';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
-import {
-    IdbDocStore, FetchServerSync, BroadcastChannelSync,
-    type BrowserDocStore, type ServerSync, type TabBroadcast,
-} from './sync-interfaces';
+import { SyncClient, type SyncWasmAdapter } from '../../sync/ts/sync-client';
+import { IdbStorageAdapter, HttpSseNetworkAdapter } from '../../sync/ts/adapters';
 
-// CadDocumentManager — truck-sync WASM-backed operation log for collaborative CAD.
-// Replaces @automerge/automerge-repo + IndexedDBStorageAdapter + BroadcastChannelNetworkAdapter.
-//
-// Storage (IDB) and network (fetch) are injected via interfaces — fully testable
-// without a browser. See sync-interfaces.ts for mock implementations.
-
-// ── WASM init (lazy, idempotent) ─────────────────────────────────────────────
-let _wasmReady: Promise<void> | null = null;
-function ensureWasm(): Promise<void> {
-    if (!_wasmReady) _wasmReady = initSyncWasm().then(() => {});
-    return _wasmReady;
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/** Formal contract for BroadcastChannel messages between tabs. */
+export type { CadOperation };
 export interface SyncMessage {
     type: 'doc_update';
     modelId: string;
@@ -39,38 +39,88 @@ export interface SyncMessage {
     tabId: string;
 }
 
-export type { CadOperation } from '../../sync/ts/sync-types.generated';
-
 export const SNAPSHOT_INTERVAL = 10;
+
+// ── WASM init ─────────────────────────────────────────────────────────────────
+let _wasmReady: Promise<void> | null = null;
+function ensureWasm(): Promise<void> {
+    if (!_wasmReady) _wasmReady = initSyncWasm().then(() => {});
+    return _wasmReady;
+}
+
+// ── SyncWasm adapter wrapping the real WASM functions ─────────────────────────
+const syncWasmAdapter: SyncWasmAdapter = {
+    create_doc,
+    apply_op,
+    merge_docs: (a, b) => { throw new Error('use SyncClient.syncWithServer()'); },
+    get_ops,
+    get_op_count,
+    get_replay_ops: (doc) => {
+        // get_replay_ops not re-exported from generated — parse enabled ops
+        const all: CadOperation[] = JSON.parse(get_ops(doc));
+        return JSON.stringify(all.filter(o => o.enabled));
+    },
+    set_op_enabled,
+    set_group_enabled,
+    rollback_to,
+    get_name,
+    set_name,
+};
+
+// ── Snapshot metadata (stays in history-domain — CAD concern, not sync) ───────
+interface SnapshotRef { blobRef: string; atOpIndex: number; }
+interface DocMeta {
+    name: string;
+    snapshots: SnapshotRef[];
+    bimHierarchy?: unknown;
+    snapshotValidFrom?: number;
+}
 
 // ── CadDocumentManagerBase ────────────────────────────────────────────────────
 
 export class CadDocumentManagerBase {
-    _docBytes: Uint8Array | null = null;
-    _modelId: string | null = null;
-    _meta: DocMeta = { name: '', snapshots: [] };
-    actorId: string;
+    // SyncClient owns all CRDT + sync logic
+    protected _sync: SyncClient;
+    protected _net: HttpSseNetworkAdapter;
+
+    // CAD-specific state (not sync's concern)
+    protected _meta: DocMeta = { name: '', snapshots: [] };
     tabId: string;
     _replayInProgress = false;
-    _localOpCount = 0;
     _lastSavedOpIndex = 0;
-    enabled: boolean;
 
-    // ── Injected platform dependencies ────────────────────────────────────────
-    protected _store: BrowserDocStore;
-    protected _serverSync: ServerSync;
-    protected _broadcast: TabBroadcast | null = null;
-
-    constructor(
-        store?: BrowserDocStore,
-        serverSync?: ServerSync,
-    ) {
-        this.actorId = this._getOrCreateActorId();
+    constructor() {
         this.tabId = crypto.randomUUID();
-        this.enabled = !(typeof window !== 'undefined' && (window as any).__cadSyncDisabled);
-        // Default to production implementations when running in browser
-        this._store = store ?? new IdbDocStore(saveDoc, loadDoc, loadMeta, saveMeta);
-        this._serverSync = serverSync ?? new FetchServerSync();
+        const actorId = this._getOrCreateActorId();
+        this._net = new HttpSseNetworkAdapter();
+
+        this._sync = new SyncClient(
+            syncWasmAdapter,
+            new IdbStorageAdapter(),
+            this._net,
+            { actorId, debounceMs: 2000 },
+        );
+
+        // When remote ops arrive — trigger scene replay
+        this._sync.onRemoteOps = (_ops) => {
+            this._scheduleRemoteReplay();
+        };
+
+        // Network state events
+        this._sync.onNetworkState = (online) => {
+            console.log(`[CAD] Network: ${online ? 'online' : 'offline'}`);
+        };
+
+        // Sync errors
+        this._sync.onError = (err, ctx) => {
+            console.warn(`[CAD] Sync error in ${ctx}:`, err);
+        };
+
+        // Wire up online/offline detection
+        if (typeof window !== 'undefined') {
+            window.addEventListener('online', () => this._sync.goOnline());
+            window.addEventListener('offline', () => this._sync.goOffline());
+        }
     }
 
     _getOrCreateActorId(): string {
@@ -80,53 +130,47 @@ export class CadDocumentManagerBase {
         return id;
     }
 
+    get actorId(): string { return this._sync.opts ? (this._sync as any).opts.actorId : ''; }
     _ctrl() { return (window as any).sceneController; }
 
     async initRepo(): Promise<void> {
         await ensureWasm();
     }
 
+    // ── Doc lifecycle ─────────────────────────────────────────────────────────
+
     async tryRestoreFromIdb(modelId: string): Promise<boolean> {
         console.log(`[Sync] IDB restore: modelId=${modelId}`);
         try {
-            const bytes = await this._store.loadDoc(modelId);
-            if (!bytes) {
+            const found = await this._sync.loadFromStorage(modelId);
+            if (!found) {
                 this._emitEvent('cad:idb-restore-failed', { modelId, reason: 'no-bytes' });
                 return false;
             }
-            this._docBytes = bytes;
-            this._modelId = modelId;
-            this._meta = await this._store.loadMeta(modelId);
-            const docName = get_name(this._docBytes);
-            if (docName) this._meta.name = docName;
+            this._sync.listen(modelId);
             await this._replayScene();
             const ids = moduleRouter.query('objectIds') as string[] | null;
-            const ops = this._getOps();
-            const hasContent = ops.length > 0 || this._meta.snapshots.length > 0;
-            console.log(`[Sync] IDB restore: ops=${ops.length} ids=${ids?.length ?? 0} hasContent=${hasContent}`);
+            const opCount = this._sync.opCount;
+            const hasContent = opCount > 0 || this._meta.snapshots.length > 0;
             if (hasContent && (!ids || ids.length === 0)) {
                 console.warn('[loadModel] Sync cache invalid — falling through to cloud');
-                this._docBytes = null;
                 this._emitEvent('cad:idb-restore-failed', { modelId, reason: 'empty-scene' });
                 return false;
             }
-            console.log(`[loadModel] Restored from WASM sync cache (${ops.length} ops)`);
-            this._emitEvent('cad:idb-restore-done', { modelId, ops: ops.length });
+            this._emitEvent('cad:idb-restore-done', { modelId, ops: opCount });
             return true;
         } catch (e) {
             console.warn('[loadModel] Sync restore failed:', e);
-            this._docBytes = null;
             this._emitEvent('cad:idb-restore-failed', { modelId, reason: String(e) });
             return false;
         }
     }
 
     async createFreshDoc(modelId: string, sceneJson: string | null, source: string): Promise<void> {
-        this._docBytes = create_doc();
-        this._modelId = modelId;
-        const defaultName = `Model ${modelId}`;
-        this._docBytes = set_name(this._docBytes, defaultName);
-        this._meta = { name: defaultName, snapshots: [] };
+        this._sync.createDoc(modelId);
+        this._sync.setName(`Model ${modelId}`);
+        this._meta = { name: `Model ${modelId}`, snapshots: [] };
+
         if (sceneJson) {
             cadCommand('clear', {}, { record: false, reconcile: false });
             cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
@@ -135,16 +179,15 @@ export class CadDocumentManagerBase {
             this._meta.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
             console.log(`[loadModel] Loaded from ${source}`);
         }
-        await this._store.saveDoc(modelId, this._docBytes);
-        await this._store.saveMeta(modelId, this._meta);
+        await this._sync.saveToStorage();
+        this._sync.listen(modelId);
     }
 
     async adoptServerDoc(modelId: string, docBytes: Uint8Array): Promise<void> {
-        this._docBytes = docBytes;
-        this._modelId = modelId;
-        const docName = get_name(this._docBytes) || `Model ${modelId}`;
-        this._meta = { name: docName, snapshots: [] };
-        const ops: CadOperation[] = JSON.parse(get_ops(this._docBytes));
+        this._sync.adoptDoc(modelId, docBytes);
+        this._meta = { name: this._sync.name || `Model ${modelId}`, snapshots: [] };
+
+        const ops = this._sync.replayOps;
         if (ops.length > 0) {
             cadCommand('clear', {}, { record: false, reconcile: false });
             for (const op of ops) {
@@ -153,12 +196,14 @@ export class CadDocumentManagerBase {
             reconcile({});
             console.log(`[loadModel] Adopted server doc (${ops.length} ops)`);
         }
-        await this._store.saveDoc(modelId, this._docBytes);
-        await this._store.saveMeta(modelId, this._meta);
+        await this._sync.saveToStorage();
+        this._sync.listen(modelId);
     }
 
+    // ── Op recording ──────────────────────────────────────────────────────────
+
     async record(type: string, params: Record<string, any> = {}, meta: any = {}): Promise<void> {
-        if (!this._docBytes || !this.enabled || !this._modelId) return;
+        if (!this._sync.docBytes || !this._sync.modelId) return;
 
         const op: CadOperation = {
             id: crypto.randomUUID(),
@@ -170,14 +215,14 @@ export class CadDocumentManagerBase {
             groupId: meta.groupId || null,
         };
 
-        const nextOpCount = this._getDocOpCount() + 1;
+        const nextOpCount = this._sync.opCount + 1;
         let snapshotRef: string | null = null;
         if (nextOpCount % SNAPSHOT_INTERVAL === 0) {
             const ctrl = this._ctrl();
             if (ctrl) snapshotRef = await storeBlob(ctrl.export_scene()) as string;
         }
 
-        this._docBytes = apply_op(this._docBytes, JSON.stringify(op));
+        await this._sync.addOp(op);
 
         if (type === 'import_ifc' && meta.hierarchy) this._meta.bimHierarchy = meta.hierarchy;
         if (snapshotRef) {
@@ -186,26 +231,21 @@ export class CadDocumentManagerBase {
         }
         if (nextOpCount % SNAPSHOT_INTERVAL === 0) refreshBudget().catch(() => {});
 
-        await this._saveAndBroadcast();
-        this._localOpCount = this._getDocOpCount();
         reconcile({});
         this._renderTimeline();
     }
 
     async undo(): Promise<boolean> {
-        if (!this._docBytes) return false;
-        const ops = this._getOps();
+        const ops = this._sync.ops;
         for (let i = ops.length - 1; i >= 0; i--) {
             if (ops[i].actorId === this.actorId && ops[i].enabled) {
                 if (ops[i].groupId) {
-                    this._docBytes = set_group_enabled(this._docBytes, ops[i].groupId!, false);
+                    await this._sync.setGroupEnabled(ops[i].groupId!, false);
                 } else {
-                    this._docBytes = set_op_enabled(this._docBytes, ops[i].id, false);
+                    await this._sync.setOpEnabled(ops[i].id, false);
                 }
                 this._meta.snapshotValidFrom = undefined;
-                await this._saveAndBroadcast();
                 await this._replayScene();
-                this._localOpCount = this._getDocOpCount();
                 return true;
             }
         }
@@ -213,8 +253,7 @@ export class CadDocumentManagerBase {
     }
 
     async redo(): Promise<boolean> {
-        if (!this._docBytes) return false;
-        const ops = this._getOps();
+        const ops = this._sync.ops;
         let target = -1;
         for (let i = ops.length - 1; i >= 0; i--) {
             if (ops[i].actorId === this.actorId && !ops[i].enabled) target = i;
@@ -223,122 +262,65 @@ export class CadDocumentManagerBase {
         if (target === -1) return false;
         const targetGroupId = ops[target].groupId;
         if (targetGroupId) {
-            this._docBytes = set_group_enabled(this._docBytes, targetGroupId, true);
+            await this._sync.setGroupEnabled(targetGroupId, true);
         } else {
-            this._docBytes = set_op_enabled(this._docBytes, ops[target].id, true);
+            await this._sync.setOpEnabled(ops[target].id, true);
         }
         this._meta.snapshotValidFrom = undefined;
-        await this._saveAndBroadcast();
         await this._replayScene();
-        this._localOpCount = this._getDocOpCount();
         return true;
     }
 
     async rollback(toOpIndex: number): Promise<boolean> {
-        if (!this._docBytes) return false;
-        const ops = this._getOps();
+        const ops = this._sync.ops;
         if (toOpIndex < 0 || toOpIndex >= ops.length) return false;
-        this._docBytes = rollback_to(this._docBytes, this.actorId, toOpIndex);
+        await this._sync.rollbackTo(toOpIndex);
         this._meta.snapshotValidFrom = undefined;
-        await this._saveAndBroadcast();
         await this._replayScene();
-        this._localOpCount = this._getDocOpCount();
         return true;
     }
 
     async toggleOpAtIndex(opIndex: number, groupId: string | null | undefined, currentEnabled: boolean): Promise<void> {
-        if (!this._docBytes) return;
         if (groupId) {
-            this._docBytes = set_group_enabled(this._docBytes, groupId, !currentEnabled);
+            await this._sync.setGroupEnabled(groupId, !currentEnabled);
         } else {
-            const opId = this._getOps()[opIndex]?.id;
-            if (opId) this._docBytes = set_op_enabled(this._docBytes, opId, !currentEnabled);
+            const opId = this._sync.ops[opIndex]?.id;
+            if (opId) await this._sync.setOpEnabled(opId, !currentEnabled);
         }
         this._meta.snapshotValidFrom = undefined;
-        await this._saveAndBroadcast();
         await this._replayScene();
-        this._localOpCount = this._getDocOpCount();
     }
 
-    get canUndo(): boolean {
-        if (!this._docBytes) return false;
-        return this._getOps().some(op => op.actorId === this.actorId && op.enabled);
-    }
+    get canUndo(): boolean { return this._sync.canUndo; }
+    get canRedo(): boolean { return this._sync.canRedo; }
+    get isDirty(): boolean { return this._sync.opCount > this._lastSavedOpIndex; }
+    markSaved(): void { this._lastSavedOpIndex = this._sync.opCount; }
+    get documentUrl(): string | null { return this._sync.modelId; }
 
-    get canRedo(): boolean {
-        if (!this._docBytes) return false;
-        let foundDisabled = false;
-        const ops = this._getOps();
-        for (let i = ops.length - 1; i >= 0; i--) {
-            if (ops[i].actorId === this.actorId) {
-                if (!ops[i].enabled) foundDisabled = true;
-                else break;
-            }
-        }
-        return foundDisabled;
-    }
-
-    get isDirty(): boolean { return this._getDocOpCount() > this._lastSavedOpIndex; }
-    markSaved(): void { this._lastSavedOpIndex = this._getDocOpCount(); }
-    get documentUrl(): string | null { return this._modelId; }
-
-    get stats(): { total: number; enabled: number; disabled: number } {
-        if (!this._docBytes) return { total: 0, enabled: 0, disabled: 0 };
-        const ops = this._getOps();
+    get stats() {
+        const ops = this._sync.ops;
         const enabled = ops.filter(op => op.enabled).length;
         return { total: ops.length, enabled, disabled: ops.length - enabled };
     }
 
-    _getOps(): CadOperation[] {
-        if (!this._docBytes) return [];
-        try { return JSON.parse(get_ops(this._docBytes)) as CadOperation[]; }
-        catch { return []; }
+    // ── Server sync (delegates to SyncClient) ─────────────────────────────────
+
+    async applyServerOp(op: CadOperation): Promise<void> {
+        if (!this._sync.docBytes || !this._sync.modelId) return;
+        cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
+        await this._sync.addOp(op);
+        reconcile({});
+        this._renderTimeline();
     }
 
-    _getDocOpCount(): number {
-        if (!this._docBytes) return 0;
-        try { return get_op_count(this._docBytes); } catch { return 0; }
+    async syncWithServer(): Promise<void> {
+        await this._sync.syncWithServer();
+        const name = this._sync.name;
+        if (name) { this._meta.name = name; this._updateDocInfo(); }
+        if ((await this._sync.syncWithServer()).hadNewOps) await this._replayScene();
     }
 
-    async _saveAndBroadcast(): Promise<void> {
-        if (!this._docBytes || !this._modelId) return;
-        await this._store.saveDoc(this._modelId, this._docBytes);
-        await this._store.saveMeta(this._modelId, this._meta);
-        if (this._broadcast) {
-            this._broadcast.send(this._docBytes, this._modelId, this.tabId);
-        }
-        if (typeof navigator !== 'undefined' && navigator.onLine) {
-            this._debouncedSync();
-        }
-    }
-
-    _listenForChanges(): void {
-        this._broadcast = new BroadcastChannelSync();
-        this._broadcast.onMessage((bytes, modelId, tabId) => {
-            if (tabId === this.tabId || modelId !== this._modelId || !this._docBytes) return;
-            try {
-                this._docBytes = merge_docs(this._docBytes, bytes);
-                this._store.saveDoc(this._modelId!, this._docBytes).catch(() => {});
-            } catch (e) {
-                console.warn('[Sync] CRDT merge failed:', e);
-                return;
-            }
-            this._scheduleRemoteReplay();
-        });
-    }
-
-    private _remoteReplayTimer: ReturnType<typeof setTimeout> | null = null;
-
-    _scheduleRemoteReplay(): void {
-        if (this._replayInProgress) return;
-        if (this._remoteReplayTimer) clearTimeout(this._remoteReplayTimer);
-        this._remoteReplayTimer = setTimeout(() => {
-            this._remoteReplayTimer = null;
-            console.log('[Sync] Remote change detected, replaying scene...');
-            this._replayScene('remote');
-            this._localOpCount = this._getDocOpCount();
-        }, 500);
-    }
+    // ── Replay (CAD concern — not sync's) ────────────────────────────────────
 
     _computeSnapshotValidFrom(ops: CadOperation[]): number {
         let validFrom = 0;
@@ -350,19 +332,16 @@ export class CadDocumentManagerBase {
     }
 
     async _computeReplayPlan(source: 'local' | 'remote' | 'server' = 'local'): Promise<ReplayPlan> {
-        const ops = this._getOps();
+        const ops = this._sync.ops;
         let startIndex = 0;
         let snapshotJson: string | null = null;
         const validFrom = this._meta.snapshotValidFrom ?? this._computeSnapshotValidFrom(ops);
         if (this._meta.snapshotValidFrom === undefined) this._meta.snapshotValidFrom = validFrom;
-        const snaps = this._meta.snapshots || [];
-        for (let s = snaps.length - 1; s >= 0; s--) {
-            const snap = snaps[s];
+        for (let s = (this._meta.snapshots || []).length - 1; s >= 0; s--) {
+            const snap = this._meta.snapshots[s];
             if (snap.atOpIndex == null || snap.atOpIndex > validFrom) continue;
             let json: string | null = null;
-            if (snap.blobRef) {
-                try { json = await getBlob(snap.blobRef) as string | null; } catch {}
-            }
+            if (snap.blobRef) { try { json = await getBlob(snap.blobRef) as string | null; } catch {} }
             if (json) { snapshotJson = json; startIndex = snap.atOpIndex; break; }
         }
         return { snapshotJson, startIndex, ops, totalEnabledOps: ops.filter(o => o.enabled).length, source };
@@ -390,6 +369,16 @@ export class CadDocumentManagerBase {
         }
     }
 
+    private _remoteReplayTimer: ReturnType<typeof setTimeout> | null = null;
+    _scheduleRemoteReplay(): void {
+        if (this._replayInProgress) return;
+        if (this._remoteReplayTimer) clearTimeout(this._remoteReplayTimer);
+        this._remoteReplayTimer = setTimeout(() => {
+            this._remoteReplayTimer = null;
+            this._replayScene('remote');
+        }, 500);
+    }
+
     _emitSceneChanged(plan: ReplayPlan): void {
         this._emitEvent('cad-scene-changed', { source: plan.source, opCount: plan.totalEnabledOps });
     }
@@ -398,53 +387,6 @@ export class CadDocumentManagerBase {
         if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent(name, { detail }));
         }
-    }
-
-    // ── Server sync ───────────────────────────────────────────────────────────
-
-    async applyServerOp(op: CadOperation): Promise<void> {
-        if (!this._docBytes || !this._modelId) return;
-        cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
-        this._docBytes = apply_op(this._docBytes, JSON.stringify(op));
-        await this._store.saveDoc(this._modelId, this._docBytes);
-        this._localOpCount = this._getDocOpCount();
-        reconcile({});
-        this._renderTimeline();
-    }
-
-    private _syncing = false;
-
-    async syncWithServer(): Promise<void> {
-        if (!this._docBytes || !this._modelId || this._syncing) return;
-        this._syncing = true;
-        try {
-            const serverDoc = await this._serverSync.sync(this._modelId, this.actorId, this._docBytes);
-            if (!serverDoc) return;
-            const localOpCount = get_op_count(this._docBytes);
-            const merged = merge_docs(this._docBytes, serverDoc);
-            const mergedOpCount = get_op_count(merged);
-            const hadNewOps = mergedOpCount > localOpCount;
-            this._docBytes = merged;
-            const docName = get_name(merged);
-            if (docName) { this._meta.name = docName; this._updateDocInfo(); }
-            await this._store.saveDoc(this._modelId, merged);
-            if (hadNewOps) {
-                console.log(`[Sync] Server merge: ${localOpCount} → ${mergedOpCount} ops, replaying...`);
-                await this._replayScene();
-            }
-            this._localOpCount = mergedOpCount;
-        } catch (err) {
-            console.warn('[Sync] Server sync failed:', err);
-        } finally {
-            this._syncing = false;
-        }
-    }
-
-    private _syncTimer: ReturnType<typeof setTimeout> | null = null;
-
-    _debouncedSync(): void {
-        if (this._syncTimer) clearTimeout(this._syncTimer);
-        this._syncTimer = setTimeout(() => { this._syncTimer = null; this.syncWithServer(); }, 2000);
     }
 
     // ── UI stubs ──────────────────────────────────────────────────────────────

@@ -41,6 +41,6 @@ export const testFiles = {
   vitest: [
     { file: 'systems/sync/worker/src/wasm.test.ts', covers: 'WASM boundary: JS↔Rust serialization, create/apply/merge/dedup/names' },
     { file: 'systems/sync/worker/src/message-contract.test.ts', covers: 'SSE message format: SyncMessage wire contract, model isolation' },
-    { file: 'systems/sync/worker/src/history-domain.test.ts', covers: 'Browser sync protocol: record/undo/sync with mock IDB+R2, no browser APIs' },
+    { file: 'systems/sync/worker/src/sync-client.test.ts', covers: 'SyncClient protocol: real WASM + MemoryStorage + DirectNetwork adapters' },
   ],
 };
