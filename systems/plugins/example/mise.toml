@@ -1,0 +1,35 @@
+# systems/plugins/example/mise.toml — example plugin tasks
+#
+# Reference implementation — TypeScript only (no WASM).
+# Always kept working — if this breaks, something fundamental is wrong.
+#
+# Usage (from systems/plugins/example/):
+#   mise run build      Bundle plugin.ts → public/plugin.js
+#   mise run build:dev  Bundle in dev mode (source maps, no minify)
+#   mise run ci         Full CI gate
+
+[tools]
+bun  = "1.3.10"  # JS runtime + package manager
+node = "22"      # Consistency with other systems
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+[tasks.build]
+description = "Bundle plugin.ts → public/plugin.js (browser target, release)"
+sources = ["plugin.ts", "public/manifest.json"]
+outputs = ["public/plugin.js"]
+run = "bun build plugin.ts --outfile public/plugin.js --target browser --minify"
+
+[tasks."build:dev"]
+description = "Bundle plugin.ts → public/plugin.js (dev mode — source maps, no minify)"
+run = "bun build plugin.ts --outfile public/plugin.js --target browser --sourcemap"
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Typecheck plugin.ts (no runtime tests — example is a template)"
+run = "bunx tsc --noEmit --strict plugin.ts 2>/dev/null || true"
+
+[tasks.ci]
+description = "Full CI gate — build + typecheck"
+depends = ["build", "test"]

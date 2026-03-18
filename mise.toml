@@ -131,34 +131,26 @@ run = [
   "mise --cd systems/truck run ci",
   "mise --cd systems/auth run ci",
   "mise --cd systems/docs run ci",
-  "mise --cd systems/plugins/howick run ci",
+  "mise --cd systems/plugins run ci",
 ]
 
 # ── Plugins ───────────────────────────────────────────────────────────────────
+# Plugin group tasks delegate to systems/plugins/mise.toml.
+# To add a new plugin: add it to systems/plugins/mise.toml, not here.
 
 [tasks."build:plugins"]
-description = "Build all first-party plugins (bundle TS + wasm-pack WASM → public/)"
+description = "Build all first-party plugins"
 depends = ["install"]
-sources = ["systems/plugins/*/crate/src/**/*.rs", "systems/plugins/**/*.ts", "systems/plugins/**/Cargo.toml"]
-outputs = ["systems/plugins/*/public/plugin.js", "systems/plugins/*/public/index.html"]
-run = "bun run build:plugins"
-
-[tasks."build:plugins:howick"]
-description = "Build just the Howick plugin (WASM + TS bundle)"
-depends = ["install"]
-sources = ["systems/plugins/howick/crate/src/**/*.rs", "systems/plugins/howick/plugin.ts", "systems/plugins/howick/crate/Cargo.toml"]
-outputs = ["systems/plugins/howick/public/plugin.js"]
-run = "bun run build:plugins howick"
+run = "mise --cd systems/plugins run build"
 
 [tasks."build:plugins:dev"]
 description = "Build all plugins in dev mode (faster, larger WASM)"
 depends = ["install"]
-run = "bun run build:plugins --dev"
+run = "mise --cd systems/plugins run build:dev"
 
-[tasks."howick:ci"]
-description = "Full CI gate for the Howick plugin — delegates to systems/plugins/howick/.mise.toml"
-dir = "systems/plugins/howick"
-run = "mise run ci"
+[tasks."plugins:ci"]
+description = "Full CI gate for all plugins — delegates to systems/plugins/mise.toml"
+run = "mise --cd systems/plugins run ci"
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
