@@ -162,14 +162,11 @@ run = "cd systems/sync/e2e && bunx playwright test"
 [tasks."ci:check-secrets"]
 description = "Fail fast if Cloudflare deploy secrets are missing"
 run = """
-missing=()
-[ -z "${CLOUDFLARE_API_TOKEN:-}" ]  && missing+=("CLOUDFLARE_API_TOKEN")
-[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
-if [ ${#missing[@]} -gt 0 ]; then
-  for s in "${missing[@]}"; do echo "::error::$s secret is not set"; done
-  exit 1
-fi
-echo "✓ All required secrets present"
+OK=1
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then echo "::error::CLOUDFLARE_API_TOKEN secret is not set"; OK=0; fi
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "::error::CLOUDFLARE_ACCOUNT_ID secret is not set"; OK=0; fi
+if [ "$OK" = "0" ]; then exit 1; fi
+echo "All required secrets present"
 """
 
 [tasks.ci]
