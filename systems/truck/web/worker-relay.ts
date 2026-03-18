@@ -1,4 +1,6 @@
-// worker-relay.js — Handles non-signal SSE events (commands) from Worker.
+// worker-relay.ts — Handles non-signal SSE events from the CF worker.
+// Owns: cad-command dispatch, sync-op relay, doc-changed trigger, presence.
+// Does NOT own: CRDT merge, IDB, server sync — those are SyncClient's concern.
 import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { client } from './api-client';
@@ -52,7 +54,7 @@ const relay = {
       try {
         const op = JSON.parse(e.data);
         const mgr = window.cadDocManager;
-        if (mgr?._docBytes) {
+        if (mgr?._sync?.modelId) {
           mgr.applyServerOp(op).catch(err => console.warn('[worker-relay] sync-op apply failed:', err));
         }
       } catch (err) {

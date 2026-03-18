@@ -1,4 +1,4 @@
-# .mise.toml — tool version pins for plat-trunk
+# mise.toml — tool version pins for plat-trunk
 #
 # Install: https://mise.jdx.dev
 # Usage:   mise install   (installs all tools at pinned versions)

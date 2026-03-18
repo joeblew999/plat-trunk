@@ -6,7 +6,7 @@
  *   HttpSseNetworkAdapter  — fetch + EventSource
  *
  * Production (CF worker):
- *   (worker uses R2DocStore directly — SyncClient not used server-side)
+ *   R2DocStore in systems/truck/worker/src/doc-store.ts — SyncClient not used server-side
  *
  * Tests (all environments):
  *   MemoryStorageAdapter   — Map<string, Uint8Array>

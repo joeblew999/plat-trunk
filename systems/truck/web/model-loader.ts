@@ -57,9 +57,9 @@ export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {
     }
 
     // ── Phase 4: Finalize ────────────────────────────────────────
-    mgr._localOpCount = mgr._getDocOpCount();
-    mgr._lastSavedOpIndex = mgr._localOpCount;
-    mgr._listenForChanges();
+    // SyncClient.listen() is called inside createFreshDoc/adoptServerDoc/tryRestoreFromIdb
+    // _localOpCount and _listenForChanges are owned by SyncClient now
+    await mgr.markSaved();
     mgr._updateDocInfo();
     mgr._renderTimeline();
 }

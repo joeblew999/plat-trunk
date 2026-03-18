@@ -1,6 +1,6 @@
-# systems/auth/.mise.toml — auth system tasks
+# systems/auth/mise.toml — auth system tasks
 #
-# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+# Ports + tool versions inherited from root mise.toml [env] + [tools].
 #
 # Usage (from systems/auth/):
 #   mise run dev    Start auth worker + Vite web dev server

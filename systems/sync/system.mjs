@@ -27,7 +27,7 @@ export const building = {
 export const testing = {
   name: 'sync',
   rust: {
-    crdt: 'cargo test -p truck-sync',
+    crdt: 'cd systems/sync/crate && cargo test',
   },
   vitest: 'cd systems/sync/test && bun x vitest run',
 };

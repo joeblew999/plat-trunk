@@ -1,6 +1,6 @@
-# systems/test/.mise.toml — test-worker tasks
+# systems/test/mise.toml — test-worker tasks
 #
-# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+# Ports + tool versions inherited from root mise.toml [env] + [tools].
 #
 # Usage (from systems/test/):
 #   mise run dev    Start test worker

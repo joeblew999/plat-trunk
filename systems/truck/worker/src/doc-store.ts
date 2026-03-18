@@ -1,13 +1,15 @@
 /**
- * doc-store.ts — R2-backed Automerge doc store (ADR-0001 Part A0.5).
+ * doc-store.ts — R2-backed Automerge doc store (ADR-0008).
  *
- * Stores automerge.bin alongside existing model artifacts in R2:
+ * Implements SyncStorageAdapter (systems/sync/ts/sync-client.ts) for
+ * Cloudflare R2. Stores automerge.bin alongside model artifacts:
  *   models/{id}/manifest.json
  *   models/{id}/scene.json
  *   models/{id}/thumbnail.png
- *   models/{id}/automerge.bin    ← NEW
+ *   models/{id}/automerge.bin
  *
  * Supports optimistic concurrency via R2 etag for concurrent MCP writes.
+ * Used directly by the truck worker — SyncClient is browser-only.
  */
 
 import type { DocStore } from '../../../sync/ts/sync-client';

@@ -1,8 +1,8 @@
-# systems/sync/.mise.toml — sync WASM library tasks
+# systems/sync/mise.toml — sync WASM library tasks
 #
 # Self-contained: pins its own tools so this system can be used standalone
 # (e.g. as a git submodule, copied into another repo, or run in CI without
-# the plat-trunk root). Tool versions must be kept in sync with root .mise.toml.
+# the plat-trunk root). Tool versions must be kept in sync with root mise.toml.
 #
 # Global mise config (~/.config/mise/config.toml) can provide these as
 # cross-repo defaults — see: https://mise.jdx.dev/configuration.html#global-config

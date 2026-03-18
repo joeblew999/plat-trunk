@@ -1,7 +1,7 @@
-# systems/plugins/howick/.mise.toml
+# systems/plugins/howick/mise.toml
 #
 # Howick steel framing plugin — WASM kernel + TypeScript plugin + Machine tab UI.
-# Tool versions (bun, wasm-pack, Rust) inherited from root .mise.toml + rust-toolchain.toml.
+# Tool versions (bun, wasm-pack, Rust) inherited from root mise.toml + rust-toolchain.toml.
 #
 # All tasks runnable from repo root OR from systems/plugins/howick/:
 #   cd systems/plugins/howick && mise run ci

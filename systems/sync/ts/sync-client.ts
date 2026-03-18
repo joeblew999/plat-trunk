@@ -3,7 +3,7 @@
  *
  * Single class that owns the full sync protocol:
  *   - CRDT doc bytes (Automerge)
- *   - Storage (IDB in browser, R2 in worker, Memory in tests)
+ *   - Storage (IDB in browser, R2 in CF worker, Memory in tests)
  *   - Server sync round-trip (HTTP in production, direct fn in tests)
  *   - Cross-tab/cross-actor messaging (BroadcastChannel in browser, direct in tests)
  *   - Network state (online/offline, unsent op queue, auto-resync on reconnect)

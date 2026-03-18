@@ -2,12 +2,15 @@
  * Cross-Tab Scene Sync — verifies that WASM scene state propagates between
  * browser tabs via CRDT BroadcastChannel (live) and IDB (on reload).
  *
- * Architecture:
- *   Tab A records an op → _saveAndBroadcast → IDB write + BroadcastChannel post
- *   Tab B (same modelId) receives broadcast → merge_docs → _replayScene → WASM updated
+ * Architecture (ADR-0008 SyncClient):
+ *   Tab A records an op → SyncClient.addOp() → IdbStorageAdapter.save()
+ *                       → BroadcastChannelSync.send() → Tab B receives
+ *   Tab B SyncClient receives broadcast → merge_docs → onRemoteOps → replay
  *
  * Test order matters: Tab B must open BEFORE Tab A changes (BroadcastChannel
  * only delivers to already-open listeners).
+ *
+ * Lives in systems/sync/e2e/ — sync owns cross-tab behaviour, not truck.
  */
 import { test } from '@playwright/test';
 import {
@@ -45,9 +48,11 @@ test.describe('Cross-Tab Scene Sync', () => {
     await apiCommand(tabA, 'add_cube', { size: 1.0 });
     await waitForObjectCount(tabA, 2);
 
-    // Wait for IDB write to complete (_localOpCount set after _saveAndBroadcast)
+    // Wait for SyncClient to finish saving + broadcasting
     await tabA.waitForFunction(
-      () => (window as any).cadDocManager?._localOpCount >= 1,
+      () => (window as any).cadDocManager?._sync?.syncLog?.some(
+        (e: any) => e.event === 'save_storage'
+      ),
       { timeout: 5_000 },
     );
 

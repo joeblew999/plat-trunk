@@ -180,9 +180,10 @@ export class CadDocumentManagerBase {
 
     async adoptServerDoc(modelId: string, docBytes: Uint8Array): Promise<void> {
         this._sync.adoptDoc(modelId, docBytes);
-        this._meta = { name: this._sync.name || `Model ${modelId}`, snapshots: [] };
+        const docName = await this._sync.getName();
+        this._meta = { name: docName || `Model ${modelId}`, snapshots: [] };
 
-        const ops = this._sync.replayOps;
+        const ops = await this._sync.getReplayOps();
         if (ops.length > 0) {
             cadCommand('clear', {}, { record: false, reconcile: false });
             for (const op of ops) {
@@ -280,7 +281,7 @@ export class CadDocumentManagerBase {
         if (groupId) {
             await this._sync.setGroupEnabled(groupId, !currentEnabled);
         } else {
-            const opId = this._sync.ops[opIndex]?.id;
+            const opId = (await this._sync.getOps())[opIndex]?.id;
             if (opId) await this._sync.setOpEnabled(opId, !currentEnabled);
         }
         this._meta.snapshotValidFrom = undefined;
@@ -290,7 +291,7 @@ export class CadDocumentManagerBase {
     get canUndo(): boolean { return false; } // sync via this._sync.canUndo() async
     get canRedo(): boolean { return false; } // sync via this._sync.canRedo() async
     get isDirty(): boolean { return false; } // use async isDirtyAsync()
-    markSaved(): void { this._lastSavedOpIndex = this._sync.opCount; }
+    async markSaved(): Promise<void> { this._lastSavedOpIndex = await this._sync.getOpCount(); }
     get documentUrl(): string | null { return this._sync.modelId; }
 
     get stats() {

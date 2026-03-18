@@ -1,6 +1,6 @@
-# systems/docs/.mise.toml — docs system tasks
+# systems/docs/mise.toml — docs system tasks
 #
-# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+# Ports + tool versions inherited from root mise.toml [env] + [tools].
 #
 # Usage (from systems/docs/):
 #   mise run dev    Start VitePress dev server

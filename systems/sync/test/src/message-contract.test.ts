@@ -3,14 +3,14 @@
 // SyncMessage is the wire format between browser tabs. This test documents the
 // required fields and ensures the shape is correct at runtime.
 //
-// The interface is defined inline here (not imported from history-domain.ts)
-// because history-domain.ts is a DOM module — importing it into the worker
-// typecheck context would cascade all browser globals into the worker tsconfig.
-// The web tsconfig (strict: false + dom default lib) covers history-domain.ts.
+// SyncMessage is defined inline here — not imported from history-domain.ts —
+// because history-domain.ts is a DOM module. Importing it into the CF worker
+// typecheck context would pull in all browser globals (window, document, etc.)
+// which breaks the worker tsconfig.
 //
-// To verify the contract matches history-domain.ts, compare manually:
-//   systems/truck/web/history-domain.ts exports `interface SyncMessage`
-//   with identical fields: type, modelId, bytes, tabId.
+// SyncMessage is the BroadcastChannel wire format owned by SyncClient
+// (systems/sync/ts/sync-client.ts). If you change the wire format there,
+// update this test too. Fields: type, modelId, bytes, tabId.
 
 import { describe, it, expect } from 'vitest';
 
