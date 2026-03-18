@@ -9,7 +9,7 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStore } from './doc-store';
-import { syncCreate, syncApplyOp, syncMergeDocs, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
 type Bindings = {
@@ -562,8 +562,9 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     const storage = new R2DocStore(c.env.MODELS);
     const docBytes = await storage.load(modelId);
     if (!docBytes) return c.json({ error: 'No doc for model' }, 404);
-    const sinceIndex = since ? parseInt(since, 10) : -1;
-    const opsJson = sinceIndex >= 0
+    // since=undefined → all ops; since=N → ops from index N onward (0 = all from start)
+    const sinceIndex = since !== undefined ? parseInt(since, 10) : undefined;
+    const opsJson = sinceIndex !== undefined && sinceIndex >= 0
       ? await syncExportOpsSince(docBytes, sinceIndex)
       : await syncGetOps(docBytes);
     return c.json(JSON.parse(opsJson));
@@ -578,10 +579,24 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
       const docBytes = await syncApplyOp(existing.doc, opJson);
       const saved = await storage.saveConditional(modelId, docBytes, existing.etag);
       if (!saved) {
-        // Retry once on etag conflict (concurrent write to existing doc)
-        const fresh = await storage.load(modelId) ?? await syncCreate();
-        const retried = await syncApplyOp(fresh, opJson);
-        await storage.save(modelId, retried);
+        // Retry once on etag conflict: reload with fresh etag and try conditional save again.
+        // Using loadWithEtag (not plain load) so we can do a second conditional save,
+        // avoiding unconditional overwrite of a concurrent write.
+        const freshWithEtag = await storage.loadWithEtag(modelId);
+        const freshDoc = freshWithEtag?.doc ?? await syncCreate();
+        const retried = await syncApplyOp(freshDoc, opJson);
+        if (freshWithEtag) {
+          // Best-effort second conditional save; if this races too, the op is not lost —
+          // the next sync will merge it in via CRDT.
+          const saved2 = await storage.saveConditional(modelId, retried, freshWithEtag.etag);
+          if (!saved2) {
+            // Both conditional saves lost — fall back to unconditional as last resort.
+            // CRDT deduplication ensures this is safe: apply_op is idempotent by op ID.
+            await storage.save(modelId, retried);
+          }
+        } else {
+          await storage.save(modelId, retried);
+        }
       }
     } else {
       // No doc exists — create, apply, save.
@@ -648,26 +663,33 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     let hadNewOps = false;
 
     if (existing?.doc) {
-      // Server has a doc — CRDT merge
-      const serverOpCount = await syncGetOpCount(existing.doc);
-      merged = await syncMergeDocs(existing.doc, browserDoc);
-      const mergedOpCount = await syncGetOpCount(merged);
-      hadNewOps = mergedOpCount > serverOpCount;
+      // Server has a doc — CRDT merge.
+      // syncMergeDocsWithInfo returns merged bytes + diff info in one WASM call,
+      // replacing the previous 3-call pattern (syncGetOpCount × 2 + syncMergeDocs).
+      const mergeResult = await syncMergeDocsWithInfo(existing.doc, browserDoc);
+      merged = mergeResult.doc;
+      hadNewOps = mergeResult.hadNewOps;
       const saved = await storage.saveConditional(modelId, merged, existing.etag);
       if (!saved) {
-        // Retry once on etag conflict
-        const fresh = await storage.load(modelId);
-        if (fresh) {
-          const freshOpCount = await syncGetOpCount(fresh);
-          merged = await syncMergeDocs(fresh, browserDoc);
-          const retryMergedCount = await syncGetOpCount(merged);
-          hadNewOps = retryMergedCount > freshOpCount;
+        // Retry: reload with fresh etag to avoid unconditional overwrite of concurrent write.
+        const freshWithEtag = await storage.loadWithEtag(modelId);
+        if (freshWithEtag) {
+          const retryResult = await syncMergeDocsWithInfo(freshWithEtag.doc, browserDoc);
+          merged = retryResult.doc;
+          hadNewOps = retryResult.hadNewOps;
+          // Second conditional save — best-effort; CRDT merge is idempotent so
+          // if this also loses the race the next browser sync will converge correctly.
+          const saved2 = await storage.saveConditional(modelId, merged, freshWithEtag.etag);
+          if (!saved2) {
+            // Both conditional saves lost — unconditional fallback.
+            await storage.save(modelId, merged);
+          }
         } else {
           // Doc disappeared between reads — adopt browser doc
           merged = browserDoc;
           hadNewOps = true;
+          await storage.save(modelId, merged);
         }
-        await storage.save(modelId, merged);
       }
     } else {
       // No server doc — adopt browser doc directly.
