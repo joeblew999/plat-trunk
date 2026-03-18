@@ -58,7 +58,7 @@ function makeClient(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('SyncClient — protocol correctness with real WASM', () => {
+describe('SyncClient  -  protocol correctness with real WASM', () => {
 
   it('createDoc + addOp + saveToStorage + loadFromStorage round-trip', async () => {
     const server = makeServer();
@@ -198,7 +198,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     expect(syncCount, 'sync fired on reconnect').toBe(1);
   });
 
-  it('re-sync is idempotent — no ping-pong op inflation', async () => {
+  it('re-sync is idempotent  -  no ping-pong op inflation', async () => {
     const server = makeServer();
     const modelId = 'pingpong';
     const { client: a } = makeClient(server, 'actor-a');
@@ -238,7 +238,7 @@ describe('SyncClient — protocol correctness with real WASM', () => {
     }
   });
 
-  it('dual-write: server + client both apply same op — no duplicate', async () => {
+  it('dual-write: server + client both apply same op  -  no duplicate', async () => {
     const server = makeServer();
     const modelId = 'dualwrite';
     const { client: a } = makeClient(server, 'actor-a');
