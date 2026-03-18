@@ -16,6 +16,8 @@ import { storeBlob } from './blob-store';
 import { client } from './api-client';
 import { scheduleThumbnailCapture, getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail';
 import { cadDocManager } from './history-ui';
+import { relay as workerRelay } from './worker-relay';
+import { MODEL_ID, LOCAL_MODE } from './app-config';
 
 // ─── Style (write path) ──────────────────────────────────────────
 // loadStyle / loadBim (read path) live in reconcile.ts — called during reconcileView.
@@ -116,9 +118,9 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
     case 'set_mode':
       const mode = params.mode as string;
       if (mode === 'local') {
-        window.__cadLocalMode = true;
+        window.__cadLocalMode = true; // kept for index.html read
       } else if (mode === 'online') {
-        window.__cadLocalMode = false;
+        window.__cadLocalMode = false; // kept for index.html read
       }
       return { mode: window.__cadLocalMode ? 'local' : 'online' };
 
@@ -135,7 +137,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
       return { success: true };
 
     case 'save_cloud': {
-      const mid = window.__modelId;
+      const mid = MODEL_ID;
       const result = moduleRouter.execute('export_scene', {});
       const sceneJson = result.scene;
       if (!sceneJson) throw new Error('Scene export returned no data');
@@ -154,7 +156,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
     case 'delete_model': {
       const delId = params.id as string;
       // Disconnect SSE if deleting the active model to prevent sync race
-      if (delId === window.__modelId) window.__workerRelay?.disconnect();
+      if (delId === MODEL_ID) workerRelay?.disconnect();
       await client.DELETE('/api/models/{id}', { params: { path: { id: delId } } });
       (document.querySelector('cad-gallery') as any)?.refresh();
       return { success: true };
@@ -180,7 +182,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
         indexedDB.deleteDatabase('cad-docs');
         indexedDB.deleteDatabase('cad-sync');
         if (wipeMode === 'full') {
-          const mid = window.__modelId;
+          const mid = MODEL_ID;
           if (mid) await handleJsCommand('delete_model', { id: mid });
           window.location.href = '/model/new';
         } else {
@@ -296,8 +298,8 @@ export async function cadCommand(type: string, params?: Record<string, unknown>,
     scheduleThumbnailCapture();
 
     // Broadcast state to Worker API
-    if (broadcast && !window.__cadLocalMode && source !== 'api') {
-      const mid = window.__modelId || 'default';
+    if (broadcast && !window.__cadLocalMode && source !== 'api') { // __cadLocalMode can change at runtime
+      const mid = MODEL_ID;
       client.POST('/api/cad/{modelId}/state', {
         params: { path: { modelId: mid } },
         body: { ...state, broadcast: true },

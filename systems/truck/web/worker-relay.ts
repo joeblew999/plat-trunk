@@ -5,8 +5,9 @@ import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { client } from './api-client';
 import { cadDocManager } from './history-ui';
+import { MODEL_ID } from './app-config';
 
-const modelId = window.__modelId || 'default';
+const modelId = MODEL_ID;
 
 let eventSource: EventSource | null = null;
 
@@ -119,7 +120,8 @@ const relay = {
   }
 };
 
-window.__workerRelay = relay;
+export { relay };
+window.__workerRelay = relay; // kept for E2E tests
 
 // Initial start if not in local mode
 if (!window.__cadLocalMode) {

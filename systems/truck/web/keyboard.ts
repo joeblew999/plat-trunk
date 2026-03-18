@@ -3,6 +3,7 @@
 
 import { cadCommand } from './dispatch';
 import { cadDocManager } from './history-ui';
+import { sketch } from './sketch';
 
 function docMgr() { return cadDocManager?._sync?.modelId ? cadDocManager : null; }
 
@@ -18,8 +19,8 @@ document.addEventListener('keydown', (e) => {
     }
 
     // Escape — cancel active sketch
-    if (e.key === 'Escape' && window.__sketch?.isActive) {
-        window.__sketch.cancel();
+    if (e.key === 'Escape' && sketch?.isActive) {
+        sketch.cancel();
         e.preventDefault();
         return;
     }

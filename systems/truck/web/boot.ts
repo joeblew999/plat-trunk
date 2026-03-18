@@ -11,13 +11,14 @@
 import { loadModel } from './model-loader';
 import { refreshBudget } from './storage-budget';
 import { cadDocManager } from './history-ui';
+import { MODEL_ID, RESET_REQUESTED, REDIRECTING } from './app-config';
 
 export async function boot() {
     // Bail out if redirecting — prevent stale Automerge doc from loading
-    if (window.__redirecting) throw new Error('redirect');
+    if (REDIRECTING) throw new Error('redirect');
 
     // ── 1. Clean state if ?reset=1 (ADR-0026 Phase 4: test isolation) ──
-    if (window.__resetRequested) {
+    if (RESET_REQUESTED) {
         localStorage.clear();
         await Promise.all([
             deleteDb('cad-objects'),
@@ -73,7 +74,7 @@ export async function boot() {
     // ── 4. Initialize Automerge repo + load model ───────────────────
     // cadDocManager is the module singleton from history-ui.ts — no waitFor needed
     await cadDocManager.initRepo();
-    await loadModel(window.__modelId, cadDocManager);
+    await loadModel(MODEL_ID, cadDocManager);
     console.log('Automerge doc ready:', cadDocManager.documentUrl);
 
     // ── 5. Start worker relay (online mode only) ─────────────────────

@@ -12,6 +12,7 @@
  *   </cad-outliner>
  */
 import { LitElement, html } from 'lit';
+import { moduleRouter } from './core/module-router';
 
 export class CadOutliner extends LitElement {
   static properties = {
@@ -44,7 +45,7 @@ export class CadOutliner extends LitElement {
     if (changed.has('objectIds')) {
       // Refresh object names from WASM when list changes
       try {
-        const router = window.__moduleRouter;
+        const router = moduleRouter;
         if (router?.ready) {
           const state = router.query('getState');
           this._names = state.objectNames || {};

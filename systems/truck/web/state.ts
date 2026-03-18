@@ -25,5 +25,4 @@ window.addShape = addShape;
 window.reconcile = reconcile;
 window.__applyStyle = applyStyle;
 window.__loadStyle = loadStyle;
-window.__moduleRouter = moduleRouter;
 window.showFeedbackSignal = showFeedback;

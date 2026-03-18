@@ -10,6 +10,8 @@
 import { moduleRouter } from './core/module-router';
 import type { WasmResult, DocManagerMeta } from './types';
 import { cadDocManager } from './history-ui';
+import { warmCount } from './tier-manager';
+import { LOCAL_MODE } from './app-config';
 
 // ── reconcileSignals: selection state from command result ────────
 // r: any — Datastar root signal tree, no TS bindings available
@@ -44,7 +46,7 @@ function reconcileSignals(r: any, ids: string[], result: WasmResult) {
 // ── reconcileMetadata: derived/computed signals ─────────────────
 function reconcileMetadata(r: any, ids: string[], mgr: DocManagerMeta | null) {
   const a = r.boolSelA, b = r.boolSelB;
-  const wc = window.__warmCount ?? 0;
+  const wc = warmCount();
   r.objectCount = ids.length + wc;
   r.warmCount = wc;
   r.sceneEmpty = ids.length === 0 && wc === 0;
@@ -53,7 +55,7 @@ function reconcileMetadata(r: any, ids: string[], mgr: DocManagerMeta | null) {
   r.boolReady = !!(a && b);
   r.canUndo = mgr?.canUndo ?? false;
   r.canRedo = mgr?.canRedo ?? false;
-  r.statusMode = window.__cadLocalMode ? 'Local' : 'Online';
+  r.statusMode = LOCAL_MODE ? 'Local' : 'Online';
   r.automergeEnabled = mgr?.enabled ?? true;
   r.storagePct = (window as any).__storagePct ?? 0;
   r.presenceCount = (window as any).__presenceCount ?? 0;

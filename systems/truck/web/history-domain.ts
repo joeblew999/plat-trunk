@@ -98,7 +98,7 @@ export class CadDocumentManagerBase {
     }
 
     get actorId(): string { return (this._sync as any).opts?.actorId ?? ''; }
-    _ctrl() { return (window as any).sceneController; }
+    _ctrl() { return window.sceneController; }
 
     async initRepo(): Promise<void> {
         await ensureWasm();

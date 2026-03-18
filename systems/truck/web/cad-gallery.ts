@@ -9,6 +9,7 @@ import { LitElement, html } from 'lit';
 import { client } from './api-client';
 import type { components } from './api-types.generated';
 import { cadDocManager } from './history-ui';
+import { MODEL_ID } from './app-config';
 
 type ModelManifest = components['schemas']['ModelManifest'];
 
@@ -69,7 +70,7 @@ export class CadGallery extends LitElement {
 
   _open(id: string): void {
     // Skip if already on this model
-    if (id === window.__modelId) return;
+    if (id === MODEL_ID) return;
     // Dirty check: warn if there are ops recorded since last cloud save
     const mgr = cadDocManager;
     if (mgr?.isDirty && !confirm('You have unsaved changes. Leave this model?')) return;

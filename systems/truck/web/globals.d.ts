@@ -6,7 +6,8 @@ import type { sketch } from './sketch';
 
 declare global {
   interface Window {
-    // Set by inline script in index.html before modules load
+    // Set by inline script in index.html; mutated at runtime by dispatch.ts set_mode command
+    // For initial value use LOCAL_MODE from app-config.ts; for live value read window.__cadLocalMode
     __cadLocalMode: boolean;
     __redirecting: boolean;
     __resetRequested: boolean;
@@ -26,7 +27,8 @@ declare global {
     cadDocManager: CadDocumentManagerBase;
     resetTierState: (() => void) | undefined;
 
-    // Set by core/module-router.ts (internal — prefer cadCommand/cadQuery)
+    // Set by core/module-router.ts (internal — prefer importing moduleRouter directly)
+    // window.__moduleRouter kept for legacy access only; use import { moduleRouter } from './core/module-router'
     moduleRouter: any;
     __moduleRouter: any;
 

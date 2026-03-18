@@ -3,6 +3,7 @@
 // Keyboard shortcuts → keyboard.ts. Gizmo interaction → cad-viewport.ts (ADR-0013).
 
 import { cadCommand, cadQuery, showFeedback } from './dispatch';
+import { MODEL_ID } from './app-config';
 
 function ctrl() { return window.sceneController; }
 
@@ -38,7 +39,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async () => {
 });
 
 document.getElementById('saveCloudBtn')?.addEventListener('click', async () => {
-    const name = prompt('Model name:', window.__modelId);
+    const name = prompt('Model name:', MODEL_ID);
     if (!name) return;
     const btn = document.getElementById('saveCloudBtn') as HTMLButtonElement | null;
     if (!btn) return;

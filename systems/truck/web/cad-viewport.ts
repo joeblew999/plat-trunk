@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { startTierManager, touchObject } from './tier-manager';
 import { cadDocManager } from './history-ui';
+import { MODEL_ID } from './app-config';
 
 export class CadViewport extends LitElement {
   /**
@@ -133,7 +134,7 @@ export class CadViewport extends LitElement {
         }
         console.log('[cad-viewport] WASM SceneController ready');
         // Start tier manager (ADR-0025 Phase 2)
-        startTierManager(window.__modelId || 'default');
+        startTierManager(MODEL_ID);
         if (window.reconcile) window.reconcile({});
       } catch (err) {
         console.error('[cad-viewport] WASM init failed:', err);
