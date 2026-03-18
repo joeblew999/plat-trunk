@@ -2,7 +2,8 @@
 
 **Status**: Proposed  
 **Date**: 2026-03-18  
-**Depends on**: ADR-0002 (GeometryStore data/control plane), ADR-0006 (performance)
+**Depends on**: ADR-0002 (GeometryStore data/control plane), ADR-0006 (performance)  
+**See also**: ADR-0017 (Tiered Compute) — the geometry worker defined here is the compute node that ADR-0017 delegates heavy operations to. ADR-0016 makes heavy ops non-blocking on the browser side; ADR-0017 routes them to the browser in the first place.
 
 ## Problem
 

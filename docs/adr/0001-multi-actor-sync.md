@@ -64,6 +64,8 @@ No tsconfig paths needed — relative imports work in both Vite (Rollup) and wra
 
 ### MCP execution model: server-direct, not browser-delegated
 
+> **Amended by ADR-0017**: server-direct is correct for fast ops (Tier 1, < 10ms CPU). Heavy ops (booleans, IFC import, STEP export) exceed CF CPU limits and must be browser-delegated (Tier 2). ADR-0017 defines the tiered model.
+
 **Current state (wrong in plan):** MCP tools call `waitForCommand()` → enqueue → SSE → browser executes → browser POSTs result back. MCP **requires a connected browser**.
 
 **Plan assumed:** "MCP `tools/call` → execute in WASM → POST result." — this was the intended future state, not the current state.
