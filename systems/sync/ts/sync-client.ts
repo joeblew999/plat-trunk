@@ -80,6 +80,21 @@ export interface SyncLogEntry {
   detail: Record<string, unknown>;
 }
 
+/**
+ * SyncMessage — BroadcastChannel wire format for cross-tab CRDT merge.
+ *
+ * Tab A applies an op → sends SyncMessage via BroadcastChannel.
+ * Tab B receives → merges doc bytes → triggers replay.
+ *
+ * Owned here (sync system) not in truck — cross-tab sync is a sync concern.
+ */
+export interface SyncMessage {
+  type: 'doc_update';
+  modelId: string;   // Filter: only merge if matches local model
+  bytes: number[];   // Uint8Array serialised as Array (structured clone safe)
+  tabId: string;     // Filter: ignore own tab's messages
+}
+
 // ── SyncClient ────────────────────────────────────────────────────────────────
 
 export interface SyncClientOptions {

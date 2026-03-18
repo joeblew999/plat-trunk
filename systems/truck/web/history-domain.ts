@@ -10,7 +10,7 @@
  * This file does NOT own:
  *   - CRDT doc bytes           → SyncClient
  *   - IDB persistence          → SyncClient + IdbStorageAdapter
- *   - Server sync round-trip   → SyncClient + HttpSseNetworkAdapter
+ *   - Server sync round-trip   → SyncClient + NullNetworkAdapter (SSE owned by worker-relay.ts)
  *   - Cross-tab BroadcastChannel → SyncClient (future: BroadcastNetworkAdapter)
  *   - Network state            → SyncClient
  *   - Structured sync tracing  → SyncClient.syncLog
@@ -19,6 +19,7 @@
 import initSyncWasm from './pkg-sync/truck_sync.js';
 import { browserSyncWasmAdapter } from './sync-wasm-adapter.generated';
 import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './doc-store';
+import { openCadSyncDb, DOCS_STORE } from './idb';
 import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
 import { cadCommand } from './dispatch';
@@ -26,16 +27,10 @@ import { reconcile } from './reconcile';
 import { moduleRouter } from './core/module-router';
 import { executeReplayPlan, type ReplayPlan } from './replay-executor';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
-import { SyncClient } from '../../sync/ts/sync-client';
-import { IdbStorageAdapter, HttpSseNetworkAdapter } from '../../sync/ts/adapters';
+import { SyncClient, type SyncMessage } from '../../sync/ts/sync-client';
+import { IdbStorageAdapter, NullNetworkAdapter } from '../../sync/ts/adapters';
 
-export type { CadOperation };
-export interface SyncMessage {
-    type: 'doc_update';
-    modelId: string;
-    bytes: number[];
-    tabId: string;
-}
+export type { CadOperation, SyncMessage }; // SyncMessage owned by sync-client.ts
 
 export const SNAPSHOT_INTERVAL = 10;
 
@@ -55,7 +50,6 @@ function ensureWasm(): Promise<void> {
 export class CadDocumentManagerBase {
     // SyncClient owns all CRDT + sync logic
     protected _sync: SyncClient;
-    protected _net: HttpSseNetworkAdapter;
 
     // CAD-specific state (not sync's concern)
     protected _meta: DocMeta = { name: '', snapshots: [] };
@@ -66,12 +60,13 @@ export class CadDocumentManagerBase {
     constructor() {
         this.tabId = crypto.randomUUID();
         const actorId = this._getOrCreateActorId();
-        this._net = new HttpSseNetworkAdapter();
-
+        // SSE is owned by worker-relay.ts — it calls syncWithServer() directly.
+        // NullNetworkAdapter: postSync unreachable (worker-relay calls syncWithServer),
+        // onRemoteChange unused (worker-relay triggers _sync via triggerRemoteSync).
         this._sync = new SyncClient(
             browserSyncWasmAdapter,
-            new IdbStorageAdapter(),
-            this._net,
+            new IdbStorageAdapter(DOCS_STORE, openCadSyncDb),
+            new NullNetworkAdapter(),
             { actorId, debounceMs: 2000 },
         );
 
@@ -122,6 +117,7 @@ export class CadDocumentManagerBase {
                 return false;
             }
             this._sync.listen(modelId);
+            await this._refreshUndoState();
             await this._replayScene();
             const ids = moduleRouter.query('objectIds') as string[] | null;
             const opCount = await this._sync.getOpCount();
@@ -154,6 +150,7 @@ export class CadDocumentManagerBase {
             console.log(`[loadModel] Loaded from ${source}`);
         }
         await this._sync.saveToStorage();
+        await this._refreshUndoState();
         this._sync.listen(modelId);
     }
 
@@ -172,6 +169,7 @@ export class CadDocumentManagerBase {
             console.log(`[loadModel] Adopted server doc (${ops.length} ops)`);
         }
         await this._sync.saveToStorage();
+        await this._refreshUndoState();
         this._sync.listen(modelId);
     }
 

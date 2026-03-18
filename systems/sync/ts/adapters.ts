@@ -79,50 +79,104 @@ export class DirectNetworkAdapter implements SyncNetworkAdapter {
   }
 }
 
+// ── Null network (browser with external SSE owner) ───────────────────────────
+//
+// Use when the SSE connection is owned externally (e.g. worker-relay.ts) and
+// SyncClient.syncWithServer() is called directly rather than via the adapter.
+// postSync: delegates to window.fetch directly (bypasses adapter routing).
+// onRemoteChange: no-op — the external SSE owner triggers syncs directly.
+
+export class NullNetworkAdapter implements SyncNetworkAdapter {
+  async postSync(modelId: string, bytes: Uint8Array, actorId: string): Promise<Uint8Array | null> {
+    try {
+      const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
+        method: 'POST',
+        body: bytes.buffer as ArrayBuffer,
+        headers: { 'content-type': 'application/octet-stream' },
+      });
+      if (!resp.ok) return null;
+      return new Uint8Array(await resp.arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+  onRemoteChange(_modelId: string, _callback: () => void): void {
+    // SSE-triggered syncs are driven externally by worker-relay.ts
+  }
+  disconnect(): void {}
+}
+
 // ── IDB (browser production) ──────────────────────────────────────────────────
+//
+// IdbStorageAdapter accepts an injected openDb function so the caller controls
+// which database and version is opened. In the browser this must be the shared
+// openCadSyncDb() from systems/truck/web/idb.ts — which creates BOTH the 'docs'
+// and 'meta' stores in a single onupgradeneeded handler.
+//
+// Default: a standalone opener that creates only 'docs' — suitable for tests
+// and environments where doc-store.ts metadata is not needed.
 
-const IDB_NAME = 'cad-sync';
-const IDB_STORE = 'docs';
+const _DEFAULT_STORE = 'docs';
 
-function openIdb(): Promise<IDBDatabase> {
+function _defaultOpenIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
+    const req = indexedDB.open('cad-sync', 2);
     req.onupgradeneeded = (e) => {
       const db = (e.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      if (!db.objectStoreNames.contains(_DEFAULT_STORE)) db.createObjectStore(_DEFAULT_STORE);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-/** IndexedDB storage — browser production. */
+/**
+ * IndexedDB storage — browser production.
+ *
+ * Usage in browser (inject shared opener to avoid split-version bug):
+ *   import { openCadSyncDb } from '../truck/web/idb';
+ *   new IdbStorageAdapter('docs', openCadSyncDb)
+ *
+ * Usage in tests (standalone, no shared opener needed):
+ *   new IdbStorageAdapter()
+ */
 export class IdbStorageAdapter implements SyncStorageAdapter {
+  private readonly _storeName: string;
+  private readonly _openDb: () => Promise<IDBDatabase>;
+
+  constructor(
+    storeName = _DEFAULT_STORE,
+    openDb: () => Promise<IDBDatabase> = _defaultOpenIdb,
+  ) {
+    this._storeName = storeName;
+    this._openDb = openDb;
+  }
+
   async save(modelId: string, bytes: Uint8Array): Promise<void> {
-    const db = await openIdb();
+    const db = await this._openDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(bytes, modelId);
+      const tx = db.transaction(this._storeName, 'readwrite');
+      tx.objectStore(this._storeName).put(bytes, modelId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
   }
 
   async load(modelId: string): Promise<Uint8Array | null> {
-    const db = await openIdb();
+    const db = await this._openDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).get(modelId);
+      const tx = db.transaction(this._storeName, 'readonly');
+      const req = tx.objectStore(this._storeName).get(modelId);
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => reject(req.error);
     });
   }
 
   async delete(modelId: string): Promise<void> {
-    const db = await openIdb();
+    const db = await this._openDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).delete(modelId);
+      const tx = db.transaction(this._storeName, 'readwrite');
+      tx.objectStore(this._storeName).delete(modelId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

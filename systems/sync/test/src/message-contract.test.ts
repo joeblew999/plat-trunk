@@ -8,9 +8,9 @@
 // typecheck context would pull in all browser globals (window, document, etc.)
 // which breaks the worker tsconfig.
 //
-// SyncMessage is the BroadcastChannel wire format owned by SyncClient
-// (systems/sync/ts/sync-client.ts). If you change the wire format there,
-// update this test too. Fields: type, modelId, bytes, tabId.
+// SyncMessage is defined in systems/sync/ts/sync-client.ts and exported
+// from history-domain.ts. The interface below must match exactly.
+// If you change the wire format in sync-client.ts, update this test too.
 
 import { describe, it, expect } from 'vitest';
 

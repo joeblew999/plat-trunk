@@ -1,13 +1,10 @@
 // doc-store.ts — IDB wrapper for CAD snapshot metadata (DocMeta).
 //
-// Raw Automerge doc bytes are now owned by SyncClient + IdbStorageAdapter
-// in systems/sync/ts/adapters.ts — this file is CAD-specific only.
-//
-// DB: 'cad-sync'
-//   Store 'meta': modelId → DocMeta (name, snapshots, bimHierarchy)
+// Raw Automerge doc bytes are owned by IdbStorageAdapter (systems/sync/ts/adapters.ts).
+// Both use the shared openCadSyncDb() from idb.ts — single DB, both stores created
+// together to prevent the split-version bug.
 
-const DB_NAME = 'cad-sync';
-const META_STORE = 'meta';
+import { openCadSyncDb, META_STORE } from './idb';
 
 export interface SnapshotRef {
     blobRef: string;
@@ -21,20 +18,8 @@ export interface DocMeta {
     snapshotValidFrom?: number;
 }
 
-function openDb(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = (e) => {
-            const db = (e.target as IDBOpenDBRequest).result;
-            if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE);
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-    });
-}
-
 export async function loadMeta(modelId: string): Promise<DocMeta> {
-    const db = await openDb();
+    const db = await openCadSyncDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(META_STORE, 'readonly');
         const req = tx.objectStore(META_STORE).get(modelId);
@@ -44,7 +29,7 @@ export async function loadMeta(modelId: string): Promise<DocMeta> {
 }
 
 export async function saveMeta(modelId: string, meta: DocMeta): Promise<void> {
-    const db = await openDb();
+    const db = await openCadSyncDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(META_STORE, 'readwrite');
         const req = tx.objectStore(META_STORE).put(meta, modelId);
@@ -54,7 +39,7 @@ export async function saveMeta(modelId: string, meta: DocMeta): Promise<void> {
 }
 
 export async function deleteMeta(modelId: string): Promise<void> {
-    const db = await openDb();
+    const db = await openCadSyncDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(META_STORE, 'readwrite');
         tx.objectStore(META_STORE).delete(modelId);
