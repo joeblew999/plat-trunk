@@ -87,8 +87,8 @@ const relay = {
     eventSource.addEventListener('presence', (e) => {
       try {
         const data = JSON.parse(e.data);
-        (window as any).__presenceActors = data.actors;
-        (window as any).__presenceCount = data.actors?.length ?? 0;
+        window.__presenceActors = data.actors;
+        window.__presenceCount = data.actors?.length ?? 0;
         reconcile({});
       } catch (err) {
         console.warn('[worker-relay] presence parse error:', err);

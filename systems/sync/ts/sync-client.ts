@@ -346,9 +346,10 @@ export class SyncClient {
       this._log('sync_complete', { modelId: this._modelId, hadNewOps, mergedOpCount });
       return { hadNewOps };
 
-    } catch (err: any) {
-      this._log('sync_error', { modelId: this._modelId, error: err?.message });
-      this.onError?.(err, 'syncWithServer');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this._log('sync_error', { modelId: this._modelId, error: message });
+      this.onError?.(err instanceof Error ? err : new Error(message), 'syncWithServer');
       return { hadNewOps: false };
     } finally {
       this._syncing = false;

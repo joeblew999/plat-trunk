@@ -22,7 +22,7 @@ export interface BrowserUrlParams {
 
 export function parseUrlParams(loc?: { pathname: string; search: string }): BrowserUrlParams {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { pathname, search } = loc ?? (globalThis as any).location ?? { pathname: '/', search: '' };
+    const { pathname, search } = loc ?? globalThis.location ?? { pathname: '/', search: '' };
     const params = new URLSearchParams(search);
     const pathMatch = pathname.match(/^\/model\/([^/]+)/);
     const rawId = pathMatch?.[1] ?? params.get('model');

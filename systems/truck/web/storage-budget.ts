@@ -21,7 +21,7 @@ export async function refreshBudget(): Promise<StorageBudget> {
     canStoreSnapshot: pctUsed <= 90,
     canEvictToWarm: pctUsed <= 95,
   };
-  (window as any).__storagePct = pctUsed;
+  window.__storagePct = pctUsed;
   return _current;
 }
 

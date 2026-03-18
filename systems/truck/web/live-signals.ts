@@ -9,6 +9,16 @@
  */
 import { LitElement, html, css } from 'lit';
 
+// Tree node for the signal inspector UI
+interface TreeNode {
+  key: string;
+  value: unknown;
+  type: string;
+  path: string;
+  children?: TreeNode[];
+  count?: number;
+}
+
 export class LiveSignals extends LitElement {
   static properties = {
     _signals:         { type: Object, state: true },
@@ -340,16 +350,16 @@ export class LiveSignals extends LitElement {
       .map(([key, value]) => {
         const path = parentPath ? `${parentPath}.${key}` : key;
         const type = this._getType(value);
-        const node: any = { key, value, type, path };
+        const node: TreeNode = { key, value, type, path };
 
         if (type === 'object') {
           node.children = this._buildTree(value, path);
           node.count = Object.keys(value as Record<string, unknown>).length;
         } else if (type === 'array') {
-          node.children = (value as any[]).map((item, i) => {
+          node.children = (value as unknown[]).map((item, i) => {
             const itemPath = `${path}[${i}]`;
             const itemType = this._getType(item);
-            const child: any = { key: String(i), value: item, type: itemType, path: itemPath };
+            const child: TreeNode = { key: String(i), value: item, type: itemType, path: itemPath };
             if (itemType === 'object') {
               child.children = this._buildTree(item, itemPath);
               child.count = Object.keys(item as Record<string, unknown>).length;
@@ -358,7 +368,7 @@ export class LiveSignals extends LitElement {
             }
             return child;
           });
-          node.count = (value as any[]).length;
+          node.count = (value as unknown[]).length;
         }
         return node;
       });
@@ -371,9 +381,9 @@ export class LiveSignals extends LitElement {
     return String(value);
   }
 
-  _getPreview(node: any) {
+  _getPreview(node: TreeNode) {
     if (node.type === 'array' && node.children) {
-      const items = node.children.slice(0, 3).map((c: any) => {
+      const items = node.children!.slice(0, 3).map((c: TreeNode) => {
         if (c.type === 'object') return '{...}';
         if (c.type === 'array') return '[...]';
         return this._formatValue(c.value, c.type);
@@ -381,7 +391,7 @@ export class LiveSignals extends LitElement {
       return `[${items.join(', ')}${node.children.length > 3 ? ', ...' : ''}]`;
     }
     if (node.type === 'object' && node.children) {
-      const keys = node.children.slice(0, 3).map((c: any) => c.key);
+      const keys = node.children!.slice(0, 3).map((c: TreeNode) => c.key);
       return `{ ${keys.join(', ')}${node.children.length > 3 ? ', ...' : ''} }`;
     }
     return '';
@@ -412,7 +422,7 @@ export class LiveSignals extends LitElement {
     return '';
   }
 
-  _renderNode(node: any, depth: number) {
+  _renderNode(node: TreeNode, depth: number) {
     const isExpandable = node.type === 'object' || node.type === 'array';
     const isExpanded = this._expandedPaths.has(node.path);
     const isChanged = this._changedPaths.has(node.path);
@@ -441,7 +451,7 @@ export class LiveSignals extends LitElement {
         </div>
         ${isExpandable && node.children ? html`
           <div class="children ${isExpanded ? '' : 'collapsed'}">
-            ${node.children.map((child: any) => this._renderNode(child, depth + 1))}
+            ${node.children!.map((child: TreeNode) => this._renderNode(child, depth + 1))}
           </div>
         ` : ''}
       </div>

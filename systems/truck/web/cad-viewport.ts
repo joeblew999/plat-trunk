@@ -115,7 +115,7 @@ export class CadViewport extends LitElement {
     if (!canvas) return;
 
     // Check WebGPU support
-    if (!(navigator as any).gpu) {
+    if (!(navigator as { gpu?: unknown }).gpu) {
       const msg = 'WebGPU not supported. Use Chrome, Edge, or Safari 17+.';
       console.error(msg);
       if (window.showFeedbackSignal) window.showFeedbackSignal(msg, true);

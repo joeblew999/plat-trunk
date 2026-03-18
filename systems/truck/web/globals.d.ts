@@ -78,4 +78,22 @@ declare global {
   }
 }
 
+// ── Custom element interface declarations ────────────────────────────────────
+// Augment HTMLElementTagNameMap so querySelector returns typed instances.
+
+interface CadGalleryElement extends HTMLElement {
+  refresh(): void;
+}
+
+interface CadViewportElement extends HTMLElement {
+  zoomTo(objectId: string): void;
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'cad-gallery': CadGalleryElement;
+    'cad-viewport': CadViewportElement;
+  }
+}
+
 export {};

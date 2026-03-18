@@ -84,7 +84,7 @@ export class CadOutliner extends LitElement {
   }
 
   _focus(id: string): void {
-    (document.getElementById('viewport') as any)?.zoomTo(id);
+    (document.getElementById('viewport') as CadViewportElement | null)?.zoomTo(id);
   }
 }
 

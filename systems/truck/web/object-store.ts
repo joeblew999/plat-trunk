@@ -122,7 +122,7 @@ export async function listObjects(modelId: string) {
  * Returns Array<{ objectId, boundingSphere: [cx,cy,cz,r] | null }>.
  * Used for viewport culling — decide which Warm objects to promote without loading geometry.
  */
-export async function listObjectsWithSpheres(modelId: string): Promise<Array<{ objectId: string; boundingSphere: number[] | null; style: any }>> {
+export async function listObjectsWithSpheres(modelId: string): Promise<Array<{ objectId: string; boundingSphere: number[] | null; style: Record<string, unknown> }>> {
     const db = await openObjectDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');

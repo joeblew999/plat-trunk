@@ -100,10 +100,10 @@ export async function boot() {
     // Fails silently if auth worker is not running (local dev without auth).
     fetch('/auth/api/get-session', { credentials: 'include' })
         .then(r => r.ok ? r.json() : null)
-        .then((data: any) => {
+        .then((data: { user?: { email?: string } } | null) => {
             const email = data?.user?.email ?? '';
-            if (email && (window as any).__ds) {
-                (window as any).__ds.signals.authUser = email;
+            if (email && window._ds) {
+                window._ds.root.authUser = email;
             }
         })
         .catch(() => {}); // auth worker not running — silently ignore

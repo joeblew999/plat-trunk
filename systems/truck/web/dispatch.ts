@@ -148,7 +148,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
       if (saveErr) throw new Error(`Cloud save failed: ${JSON.stringify(saveErr)}`);
       const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
       if (thumb) await uploadThumbnail(mid, thumb);
-      (document.querySelector('cad-gallery') as any)?.refresh();
+      (document.querySelector('cad-gallery') as CadGalleryElement | null)?.refresh();
       cadDocManager?.markSaved();
       return { success: true, modelId: mid };
     }
@@ -158,7 +158,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
       // Disconnect SSE if deleting the active model to prevent sync race
       if (delId === MODEL_ID) workerRelay?.disconnect();
       await client.DELETE('/api/models/{id}', { params: { path: { id: delId } } });
-      (document.querySelector('cad-gallery') as any)?.refresh();
+      (document.querySelector('cad-gallery') as CadGalleryElement | null)?.refresh();
       return { success: true };
     }
 
