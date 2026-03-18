@@ -1,0 +1,121 @@
+name: E2E
+
+# Runs after CI passes on main push, or on PR when labelled 'e2e'.
+# Uses CF preview deploy so tests run against real Cloudflare infrastructure.
+# Playwright runs on GitHub Actions (has Chrome + GPU flags via xvfb).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [labeled]
+    # Only run when 'e2e' label is added — avoids running on every PR commit.
+    # Add label manually when you want e2e validation on a PR.
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  e2e:
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Cargo cache — same keys as main CI so warm builds are shared
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            systems/sync/crate/target
+            systems/truck/crate/target
+          key: ${{ runner.os }}-crate-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-crate-target-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            systems/sync/worker/pkg-sync
+            systems/truck/web/pkg-sync
+            systems/truck/worker/pkg-sync
+            systems/truck/web/pkg-browser-renderer
+            systems/truck/worker/pkg
+          key: ${{ runner.os }}-wasm-pkg-${{ hashFiles('systems/sync/crate/src/**/*.rs', 'systems/truck/crate/src/**/*.rs', '**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-wasm-pkg-
+
+      - name: Install JS deps
+        run: bun scripts/install-all.mjs
+
+      - name: Build
+        run: bun run build:truck
+
+      - name: Deploy preview
+        id: preview
+        run: |
+          OUT=$(bun scripts/cf-deploy.ts upload --target truck --preview-alias e2e-${{ github.run_id }} 2>&1)
+          echo "$OUT"
+          URL=$(echo "$OUT" | grep -o 'https://e2e-[^ ]*\.workers\.dev' | head -1)
+          if [ -z "$URL" ]; then
+            URL=$(echo "$OUT" | grep -o 'https://[^ ]*\.workers\.dev' | head -1)
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "Preview URL: $URL"
+        env:
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Install Playwright browsers
+        run: mise run install:playwright
+
+      # WebGPU on Linux CI requires xvfb + software rendering
+      - name: Run e2e tests (truck)
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 2
+          BASE_URL=${{ steps.preview.outputs.url }} \
+            bunx playwright test --config systems/truck/e2e/playwright.config.ts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Run e2e tests (sync cross-tab)
+        run: |
+          export DISPLAY=:99
+          BASE_URL=${{ steps.preview.outputs.url }} \
+            bunx playwright test --config systems/sync/e2e/playwright.config.ts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            systems/truck/e2e/test-results/
+            systems/sync/e2e/test-results/
+          retention-days: 7
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request' && always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: e2e-results
+          message: |
+            ### E2E Test Results
+
+            Preview URL: ${{ steps.preview.outputs.url }}
+
+            ${{ job.status == 'success' && '✅ All e2e tests passed' || '❌ E2E tests failed — check artifacts' }}
+
+            [Download report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
