@@ -20,19 +20,23 @@ import type { CadOperation } from './sync-types.generated';
 
 // ── Adapter interfaces ────────────────────────────────────────────────────────
 
-/** WASM functions — same signatures in browser and CF worker. */
+/**
+ * WASM functions — async to match the generated wasm-bindgen bindings.
+ * All functions return Promises because the WASM module must be initialised
+ * before first call and wasm-bindgen generates async wrappers.
+ */
 export interface SyncWasmAdapter {
-  create_doc(): Uint8Array;
-  apply_op(doc: Uint8Array, opJson: string): Uint8Array;
-  merge_docs(local: Uint8Array, remote: Uint8Array): Uint8Array;
-  get_ops(doc: Uint8Array): string;
-  get_op_count(doc: Uint8Array): number;
-  get_replay_ops(doc: Uint8Array): string;
-  set_op_enabled(doc: Uint8Array, opId: string, enabled: boolean): Uint8Array;
-  set_group_enabled(doc: Uint8Array, groupId: string, enabled: boolean): Uint8Array;
-  rollback_to(doc: Uint8Array, actorId: string, toIndex: number): Uint8Array;
-  get_name(doc: Uint8Array): string;
-  set_name(doc: Uint8Array, name: string): Uint8Array;
+  create_doc(): Promise<Uint8Array>;
+  apply_op(doc: Uint8Array, opJson: string): Promise<Uint8Array>;
+  merge_docs(local: Uint8Array, remote: Uint8Array): Promise<Uint8Array>;
+  get_ops(doc: Uint8Array): Promise<string>;
+  get_op_count(doc: Uint8Array): Promise<number>;
+  get_replay_ops(doc: Uint8Array): Promise<string>;
+  set_op_enabled(doc: Uint8Array, opId: string, enabled: boolean): Promise<Uint8Array>;
+  set_group_enabled(doc: Uint8Array, groupId: string, enabled: boolean): Promise<Uint8Array>;
+  rollback_to(doc: Uint8Array, actorId: string, toIndex: number): Promise<Uint8Array>;
+  get_name(doc: Uint8Array): Promise<string>;
+  set_name(doc: Uint8Array, name: string): Promise<Uint8Array>;
 }
 
 /** Persistent storage — IDB in browser, R2 in worker, Map in tests. */
@@ -165,7 +169,7 @@ export class SyncClient {
 
   /** Create a fresh empty doc. Does not save to storage. */
   createDoc(modelId: string): void {
-    this._docBytes = this.wasm.create_doc();
+    this._docBytes = await this.wasm.create_doc();
     this._modelId = modelId;
   }
 
@@ -178,7 +182,7 @@ export class SyncClient {
     }
     this._docBytes = bytes;
     this._modelId = modelId;
-    this._log('load_storage', { modelId, found: true, opCount: this.opCount });
+    this._log('load_storage', { modelId, found: true });
     return true;
   }
 
@@ -192,7 +196,7 @@ export class SyncClient {
   async saveToStorage(): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
     await this.storage.save(this._modelId, this._docBytes);
-    this._log('save_storage', { modelId: this._modelId, opCount: this.opCount });
+    this._log('save_storage', { modelId: this._modelId });
   }
 
   // ── Op recording ──────────────────────────────────────────────────────────
@@ -200,8 +204,8 @@ export class SyncClient {
   /** Record a completed op into the CRDT doc. */
   async addOp(op: CadOperation): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
-    this._docBytes = this.wasm.apply_op(this._docBytes, JSON.stringify(op));
-    this._log('add_op', { modelId: this._modelId, opType: op.type, opId: op.id, opCount: this.opCount });
+    this._docBytes = await this.wasm.apply_op(this._docBytes, JSON.stringify(op));
+    this._log('add_op', { modelId: this._modelId, opType: op.type, opId: op.id });
     await this.saveToStorage();
     this._scheduleSyncIfOnline();
   }
@@ -209,7 +213,7 @@ export class SyncClient {
   /** Disable an op by ID (undo). */
   async setOpEnabled(opId: string, enabled: boolean): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
-    this._docBytes = this.wasm.set_op_enabled(this._docBytes, opId, enabled);
+    this._docBytes = await this.wasm.set_op_enabled(this._docBytes, opId, enabled);
     this._log(enabled ? 'redo_op' : 'undo_op', { modelId: this._modelId, opId });
     await this.saveToStorage();
     this._scheduleSyncIfOnline();
@@ -218,7 +222,7 @@ export class SyncClient {
   /** Disable all ops in a group. */
   async setGroupEnabled(groupId: string, enabled: boolean): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
-    this._docBytes = this.wasm.set_group_enabled(this._docBytes, groupId, enabled);
+    this._docBytes = await this.wasm.set_group_enabled(this._docBytes, groupId, enabled);
     this._log(enabled ? 'redo_group' : 'undo_group', { modelId: this._modelId, groupId });
     await this.saveToStorage();
     this._scheduleSyncIfOnline();
@@ -227,7 +231,7 @@ export class SyncClient {
   /** Disable all own ops after toIndex. */
   async rollbackTo(toIndex: number): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
-    this._docBytes = this.wasm.rollback_to(this._docBytes, this.opts.actorId, toIndex);
+    this._docBytes = await this.wasm.rollback_to(this._docBytes, this.opts.actorId, toIndex);
     this._log('rollback', { modelId: this._modelId, toIndex });
     await this.saveToStorage();
     this._scheduleSyncIfOnline();
@@ -235,44 +239,44 @@ export class SyncClient {
 
   // ── Read state ────────────────────────────────────────────────────────────
 
-  get ops(): CadOperation[] {
+  async getOps(): Promise<CadOperation[]> {
     if (!this._docBytes) return [];
-    try { return JSON.parse(this.wasm.get_ops(this._docBytes)); }
+    try { return JSON.parse(await this.wasm.get_ops(this._docBytes)); }
     catch { return []; }
   }
 
-  get replayOps(): CadOperation[] {
+  async getReplayOps(): Promise<CadOperation[]> {
     if (!this._docBytes) return [];
-    try { return JSON.parse(this.wasm.get_replay_ops(this._docBytes)); }
+    try { return JSON.parse(await this.wasm.get_replay_ops(this._docBytes)); }
     catch { return []; }
   }
 
-  get opCount(): number {
+  async getOpCount(): Promise<number> {
     if (!this._docBytes) return 0;
-    try { return this.wasm.get_op_count(this._docBytes); }
+    try { return await this.wasm.get_op_count(this._docBytes); }
     catch { return 0; }
   }
 
-  get name(): string {
+  async getName(): Promise<string> {
     if (!this._docBytes) return '';
-    try { return this.wasm.get_name(this._docBytes); }
+    try { return await this.wasm.get_name(this._docBytes); }
     catch { return ''; }
   }
 
   setName(name: string): void {
     if (!this._docBytes) return;
-    this._docBytes = this.wasm.set_name(this._docBytes, name);
+    this._docBytes = await this.wasm.set_name(this._docBytes, name);
   }
 
   get docBytes(): Uint8Array | null { return this._docBytes; }
   get modelId(): string | null { return this._modelId; }
 
-  get canUndo(): boolean {
-    return this.ops.some(op => op.actorId === this.opts.actorId && op.enabled);
+  async canUndo(): Promise<boolean> {
+    return (await this.getOps()).some(op => op.actorId === this.opts.actorId && op.enabled);
   }
 
-  get canRedo(): boolean {
-    const ops = this.ops;
+  async canRedo(): Promise<boolean> {
+    const ops = await this.getOps();
     let foundDisabled = false;
     for (let i = ops.length - 1; i >= 0; i--) {
       if (ops[i].actorId === this.opts.actorId) {
@@ -297,7 +301,7 @@ export class SyncClient {
     }
 
     this._syncing = true;
-    this._log('sync_start', { modelId: this._modelId, localOpCount: this.opCount });
+    this._log('sync_start', { modelId: this._modelId });
 
     try {
       const serverDoc = await this.network.postSync(
@@ -311,9 +315,9 @@ export class SyncClient {
         return { hadNewOps: false };
       }
 
-      const localOpCount = this.opCount;
-      this._docBytes = this.wasm.merge_docs(this._docBytes, serverDoc);
-      const mergedOpCount = this.opCount;
+      const localOpCount = await this.getOpCount();
+      this._docBytes = await this.wasm.merge_docs(this._docBytes, serverDoc);
+      const mergedOpCount = await this.getOpCount();
       const hadNewOps = mergedOpCount > localOpCount;
 
       this._log('merge', {
@@ -328,7 +332,7 @@ export class SyncClient {
       this.onSyncComplete?.(hadNewOps);
 
       if (hadNewOps) {
-        const newOps = this.ops.slice(localOpCount);
+        const newOps = (await this.getOps()).slice(localOpCount);
         this.onRemoteOps?.(newOps);
       }
 

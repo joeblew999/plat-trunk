@@ -1,12 +1,11 @@
 /**
- * sync-client.test.ts — Tests for SyncClient with real WASM.
+ * sync-client.test.ts — SyncClient tests with real WASM (ADR-0008 Phase 1).
  *
- * Uses real sync WASM — the same binary that runs in production.
- * Only MemoryStorageAdapter and DirectNetworkAdapter are swapped in.
+ * Uses the REAL sync WASM binary — same as production.
+ * Only MemoryStorageAdapter and DirectNetworkAdapter are swapped.
  *
- * This is the test the ADR-0008 calls for:
- *   "The WASM adapter is the SAME REAL WASM in both browser and tests.
- *    Only storage and network are swapped."
+ * The SyncWasmAdapter interface is async (matches wasm-bindgen generated
+ * bindings). We wrap the generated async functions directly.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -14,226 +13,268 @@ import {
   syncCreate, syncApplyOp, syncGetOps, syncGetOpCount, syncMergeDocs,
   syncGetReplayOps, syncSetOpEnabled,
 } from './sync-wasm.generated';
-import { SyncClient, type SyncWasmAdapter, type SyncClientOptions } from '../../ts/sync-client';
+import { SyncClient, type SyncWasmAdapter } from '../../ts/sync-client';
 import { MemoryStorageAdapter, DirectNetworkAdapter } from '../../ts/adapters';
+import type { CadOperation } from '../../ts/sync-types.generated';
 
-// ── WASM adapter wrapping the real generated functions ───────────────────────
+// ── Real async WASM adapter ───────────────────────────────────────────────────
+// Wraps the generated async functions directly — no sync stubs, no hacks.
 
 const realWasm: SyncWasmAdapter = {
-  create_doc: () => { let r: Uint8Array; syncCreate().then(v => r = v); return r!; },
-  apply_op: (doc, json) => { let r: Uint8Array; syncApplyOp(doc, json).then(v => r = v); return r!; },
-  merge_docs: (a, b) => { let r: Uint8Array; syncMergeDocs(a, b).then(v => r = v); return r!; },
-  get_ops: (doc) => { let r = '[]'; syncGetOps(doc).then(v => r = v); return r; },
-  get_op_count: (doc) => { let r = 0; syncGetOpCount(doc).then(v => r = v); return r; },
-  get_replay_ops: (doc) => { let r = '[]'; syncGetReplayOps(doc).then(v => r = v); return r; },
-  set_op_enabled: (doc, id, en) => { let r: Uint8Array; syncSetOpEnabled(doc, id, en).then(v => r = v); return r!; },
-  set_group_enabled: (doc, gid, en) => doc,  // not needed in these tests
-  rollback_to: (doc, actor, idx) => doc,       // not needed in these tests
-  get_name: () => '',
-  set_name: (doc) => doc,
+  create_doc:        ()           => syncCreate(),
+  apply_op:          (doc, json)  => syncApplyOp(doc, json),
+  merge_docs:        (a, b)       => syncMergeDocs(a, b),
+  get_ops:           (doc)        => syncGetOps(doc),
+  get_op_count:      (doc)        => syncGetOpCount(doc).then(n => n as number),
+  get_replay_ops:    (doc)        => syncGetReplayOps(doc),
+  set_op_enabled:    (doc, id, en) => syncSetOpEnabled(doc, id, en),
+  set_group_enabled: (doc, _gid, _en) => Promise.resolve(doc), // not needed here
+  rollback_to:       (doc, _a, _i)   => Promise.resolve(doc), // not needed here
+  get_name:          (_doc)       => Promise.resolve(''),
+  set_name:          (doc, _name) => Promise.resolve(doc),
 };
 
-// ── Async WASM adapter (the real way — all functions are async) ──────────────
-// The sync stubs above won't work for async WASM. Instead, build a proper async harness.
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeOp(type: string, params: object, actor = 'test-actor') {
+function makeOp(type: string, params: object, actor = 'test-actor'): CadOperation {
   return {
     id: crypto.randomUUID(), type, params,
     enabled: true, timestamp: Date.now(), actorId: actor, groupId: null,
   };
 }
 
-/** Build a minimal server that merges docs — simulates the CF worker POST /sync */
-function makeServer(wasm: { mergeDocs: (a: Uint8Array, b: Uint8Array) => Promise<Uint8Array> }) {
+/** Minimal in-memory server — simulates CF worker POST /sync endpoint. */
+function makeServer() {
   const r2 = new Map<string, Uint8Array>();
   return {
     async sync(modelId: string, bytes: Uint8Array): Promise<Uint8Array> {
       const existing = r2.get(modelId);
-      const merged = existing ? await wasm.mergeDocs(existing, bytes) : bytes;
+      const merged = existing ? await syncMergeDocs(existing, bytes) : bytes;
       r2.set(modelId, new Uint8Array(merged));
       return merged;
     },
-    get(modelId: string): Uint8Array | null { return r2.get(modelId) ?? null; },
+    opCount(modelId: string): Promise<number> {
+      const doc = r2.get(modelId);
+      return doc ? syncGetOpCount(doc).then(n => n as number) : Promise.resolve(0);
+    },
   };
 }
 
-// ── Tests using async WASM directly (cleaner than wrapping sync stubs) ───────
+function makeClient(
+  server: ReturnType<typeof makeServer>,
+  actor = 'test-actor',
+  storage = new MemoryStorageAdapter(),
+) {
+  const net = new DirectNetworkAdapter(
+    async (modelId, bytes, actorId) => server.sync(modelId, bytes),
+  );
+  const client = new SyncClient(realWasm, storage, net, { actorId: actor, debounceMs: 99999 });
+  return { client, net, storage };
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('SyncClient — protocol correctness with real WASM', () => {
 
-  it('addOp → saveToStorage → load verifies byte round-trip', async () => {
-    const storage = new MemoryStorageAdapter();
-    const net = new DirectNetworkAdapter(async () => null); // no server
-    const modelId = 'rt-test';
+  it('createDoc + addOp + saveToStorage + loadFromStorage round-trip', async () => {
+    const server = makeServer();
+    const { client } = makeClient(server, 'actor-a');
+    const modelId = 'roundtrip';
 
-    // Build client manually using raw WASM (no wrapper needed)
-    let doc = await syncCreate();
-    const op = makeOp('add_cube', { size: 1 }, 'actor-a');
-    doc = await syncApplyOp(doc, JSON.stringify(op));
-    await storage.save(modelId, doc);
+    client.createDoc(modelId);
+    await client.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
+    await client.saveToStorage();
 
-    // Reload from storage — bytes must be identical
-    const loaded = await storage.load(modelId);
-    expect(loaded).not.toBeNull();
-    const ops = JSON.parse(await syncGetOps(loaded!));
+    // New client, same storage
+    const storage2 = (client as any).storage as MemoryStorageAdapter;
+    const net2 = new DirectNetworkAdapter(async () => null);
+    const client2 = new SyncClient(realWasm, storage2, net2, { actorId: 'actor-a' });
+
+    const found = await client2.loadFromStorage(modelId);
+    expect(found).toBe(true);
+
+    const ops = await client2.getOps();
     expect(ops.length).toBe(1);
     expect(ops[0].type).toBe('add_cube');
     expect(ops[0].actorId).toBe('actor-a');
   });
 
-  it('two actors converge via DirectNetworkAdapter', async () => {
-    const storageA = new MemoryStorageAdapter();
-    const storageB = new MemoryStorageAdapter();
-    const modelId = 'converge-test';
+  it('two actors converge via server', async () => {
+    const server = makeServer();
+    const modelId = 'converge';
 
-    const server = makeServer({ mergeDocs: syncMergeDocs });
+    const { client: a } = makeClient(server, 'actor-a');
+    const { client: b } = makeClient(server, 'actor-b');
 
-    const netA = new DirectNetworkAdapter(async (mid, bytes) => server.sync(mid, bytes));
-    const netB = new DirectNetworkAdapter(async (mid, bytes) => server.sync(mid, bytes));
+    a.createDoc(modelId);
+    await a.addOp(makeOp('add_cube', { size: 2 }, 'actor-a'));
 
-    // Actor A: create doc + add op
-    let docA = await syncCreate();
-    docA = await syncApplyOp(docA, JSON.stringify(makeOp('add_cube', { size: 2 }, 'actor-a')));
-    await storageA.save(modelId, docA);
+    // A syncs first
+    await a.syncWithServer();
+    expect(await server.opCount(modelId)).toBe(1);
 
-    // Actor A syncs to server
-    const mergedA = await netA.postSync(modelId, docA, 'actor-a');
-    if (mergedA) { docA = mergedA; await storageA.save(modelId, docA); }
-    expect(await syncGetOpCount(docA)).toBe(1);
+    // B starts fresh, adds different op
+    b.createDoc(modelId);
+    await b.addOp(makeOp('add_sphere', { radius: 1 }, 'actor-b'));
 
-    // Actor B: create separate doc + add different op
-    let docB = await syncCreate();
-    docB = await syncApplyOp(docB, JSON.stringify(makeOp('add_sphere', { radius: 1 }, 'actor-b')));
-    await storageB.save(modelId, docB);
+    // B syncs — server merges A+B
+    await b.syncWithServer();
+    expect(await b.getOpCount()).toBe(2, 'B must see A\'s op');
 
-    // Actor B syncs — server merges A + B
-    const mergedB = await netB.postSync(modelId, docB, 'actor-b');
-    if (mergedB) { docB = mergedB; await storageB.save(modelId, docB); }
-    expect(await syncGetOpCount(docB)).toBe(2, 'B must see A\'s op after sync');
+    // A re-syncs — gets B's op
+    await a.syncWithServer();
+    expect(await a.getOpCount()).toBe(2, 'A must see B\'s op');
 
-    // Actor A re-syncs — gets B's op
-    const remergedA = await netA.postSync(modelId, docA, 'actor-a');
-    if (remergedA) docA = remergedA;
-    expect(await syncGetOpCount(docA)).toBe(2, 'A must see B\'s op after re-sync');
-
-    // Both have same op IDs
-    const opsA = JSON.parse(await syncGetOps(docA));
-    const opsB = JSON.parse(await syncGetOps(docB));
-    const idsA = opsA.map((o: any) => o.id).sort();
-    const idsB = opsB.map((o: any) => o.id).sort();
+    // Both converge to same op IDs
+    const opsA = await a.getOps();
+    const opsB = await b.getOps();
+    const idsA = opsA.map(o => o.id).sort();
+    const idsB = opsB.map(o => o.id).sort();
     expect(idsA).toEqual(idsB);
   });
 
-  it('onRemoteOps fires when remote change arrives via DirectNetworkAdapter', async () => {
-    const storageA = new MemoryStorageAdapter();
-    const storageB = new MemoryStorageAdapter();
-    const modelId = 'remote-ops-test';
+  it('onRemoteOps fires after syncWithServer brings new ops', async () => {
+    const server = makeServer();
+    const modelId = 'remote-ops';
 
-    const server = makeServer({ mergeDocs: syncMergeDocs });
-    const netA = new DirectNetworkAdapter(async (mid, bytes) => server.sync(mid, bytes));
-    const netB = new DirectNetworkAdapter(async (mid, bytes) => server.sync(mid, bytes));
+    const { client: a } = makeClient(server, 'actor-a');
+    const { client: b, net: netB } = makeClient(server, 'actor-b');
 
-    // A registers remote change handler
+    // A adds op + syncs
+    a.createDoc(modelId);
+    await a.addOp(makeOp('add_sphere', { radius: 1 }, 'actor-a'));
+    await a.syncWithServer();
+
+    // B starts empty
+    b.createDoc(modelId);
+    b.listen(modelId);
+
     let remoteOpsFired = false;
-    let remoteSyncCount = 0;
-    netA.onRemoteChange(modelId, () => { remoteSyncCount++; });
+    b.onRemoteOps = () => { remoteOpsFired = true; };
 
-    // B adds op + syncs
-    let docB = await syncCreate();
-    docB = await syncApplyOp(docB, JSON.stringify(makeOp('add_sphere', { radius: 1 }, 'actor-b')));
-    await netB.postSync(modelId, docB, 'actor-b');
+    // Simulate SSE doc-changed arriving at B, then B syncs
+    netB.triggerRemoteChange(modelId);
+    await b.syncWithServer();
 
-    // Simulate SSE `doc-changed` arriving at A
-    netA.triggerRemoteChange(modelId);
-    expect(remoteSyncCount).toBe(1);
-
-    // A syncs — picks up B's op
-    let docA = await syncCreate();
-    const merged = await netA.postSync(modelId, docA, 'actor-a');
-    if (merged) docA = merged;
-    expect(await syncGetOpCount(docA)).toBe(1, 'A must see B\'s op after triggered sync');
+    expect(remoteOpsFired).toBe(true);
+    expect(await b.getOpCount()).toBe(1);
   });
 
-  it('undo op — set_op_enabled false — survives storage round-trip', async () => {
-    const storage = new MemoryStorageAdapter();
-    const modelId = 'undo-test';
+  it('undo (setOpEnabled false) survives server sync round-trip', async () => {
+    const server = makeServer();
+    const modelId = 'undo';
 
-    const op1 = makeOp('add_cube', { size: 1 }, 'actor-a');
+    const { client: a } = makeClient(server, 'actor-a');
+    a.createDoc(modelId);
+
+    const op1 = makeOp('add_cube',   { size: 1 }, 'actor-a');
     const op2 = makeOp('add_sphere', { radius: 1 }, 'actor-a');
-
-    let doc = await syncCreate();
-    doc = await syncApplyOp(doc, JSON.stringify(op1));
-    doc = await syncApplyOp(doc, JSON.stringify(op2));
+    await a.addOp(op1);
+    await a.addOp(op2);
 
     // Undo op2
-    doc = await syncSetOpEnabled(doc, op2.id, false);
-    await storage.save(modelId, doc);
+    await a.setOpEnabled(op2.id, false);
+    await a.syncWithServer();
 
-    // Reload
-    const loaded = await storage.load(modelId);
-    const replay = JSON.parse(await syncGetReplayOps(loaded!));
-    expect(replay.length).toBe(1, 'only enabled op replays');
+    // Re-sync — undo must survive
+    await a.syncWithServer();
+    const replay = await a.getReplayOps();
+    expect(replay.length).toBe(1, 'undo must survive server sync');
     expect(replay[0].type).toBe('add_cube');
 
-    const all = JSON.parse(await syncGetOps(loaded!));
-    expect(all.length).toBe(2, 'both ops stored');
-    expect(all[1].enabled).toBe(false, 'undo persisted');
+    const all = await a.getOps();
+    expect(all.length).toBe(2);
+    expect(all[1].enabled).toBe(false, 'disabled op persisted');
   });
 
-  it('offline → online flushes pending sync', async () => {
-    const storage = new MemoryStorageAdapter();
-    const modelId = 'offline-test';
-    let syncCallCount = 0;
+  it('offline queues sync, online flushes it', async () => {
+    const server = makeServer();
+    const modelId = 'offline';
+    let syncCount = 0;
 
     const net = new DirectNetworkAdapter(async (mid, bytes) => {
-      syncCallCount++;
-      return bytes; // echo back
+      syncCount++;
+      return server.sync(mid, bytes);
+    });
+    const client = new SyncClient(realWasm, new MemoryStorageAdapter(), net, {
+      actorId: 'actor-a',
+      debounceMs: 0, // immediate
     });
 
-    let doc = await syncCreate();
-    doc = await syncApplyOp(doc, JSON.stringify(makeOp('add_cube', { size: 1 }, 'actor-a')));
-    await storage.save(modelId, doc);
+    client.createDoc(modelId);
+    client.goOffline();
 
-    // Simulate offline — no sync should fire
-    // (In real SyncClient this is handled by _pendingSync flag)
-    // Here we test the network adapter directly
-    expect(syncCallCount).toBe(0);
+    await client.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
+    expect(syncCount).toBe(0, 'no sync while offline');
 
-    // Go online — sync fires
-    await net.postSync(modelId, doc, 'actor-a');
-    expect(syncCallCount).toBe(1);
+    client.goOnline();
+    // goOnline triggers pending sync — give microtask a tick
+    await new Promise(r => setTimeout(r, 10));
+    expect(syncCount).toBe(1, 'sync fired on reconnect');
   });
 
-  it('re-sync is idempotent — no ping-pong', async () => {
-    const storage = new MemoryStorageAdapter();
-    const modelId = 'pingpong-test';
-    const server = makeServer({ mergeDocs: syncMergeDocs });
-    const net = new DirectNetworkAdapter(async (mid, bytes) => server.sync(mid, bytes));
+  it('re-sync is idempotent — no ping-pong op inflation', async () => {
+    const server = makeServer();
+    const modelId = 'pingpong';
+    const { client: a } = makeClient(server, 'actor-a');
 
-    let doc = await syncCreate();
-    doc = await syncApplyOp(doc, JSON.stringify(makeOp('add_cube', { size: 1 }, 'actor-a')));
+    a.createDoc(modelId);
+    await a.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
 
-    const m1 = await net.postSync(modelId, doc, 'actor-a');
-    const count1 = await syncGetOpCount(m1!);
+    await a.syncWithServer();
+    const count1 = await a.getOpCount();
 
-    const m2 = await net.postSync(modelId, m1!, 'actor-a');
-    const count2 = await syncGetOpCount(m2!);
+    await a.syncWithServer();
+    const count2 = await a.getOpCount();
 
     expect(count2).toBe(count1, 're-sync must not inflate op count');
   });
 
-  it('structured log captures every sync event', async () => {
-    // Test the SyncClient's log directly using a simplified harness
-    // We verify the log format rather than the full client behavior
-    const entry = {
-      ts: Date.now(),
-      modelId: 'log-test',
-      actorId: 'actor-a',
-      event: 'add_op' as const,
-      detail: { opType: 'add_cube', opCount: 1 },
-    };
-    expect(entry.event).toBe('add_op');
-    expect(typeof entry.ts).toBe('number');
-    expect(entry.detail.opType).toBe('add_cube');
+  it('structured log captures sync events', async () => {
+    const server = makeServer();
+    const { client: a } = makeClient(server, 'actor-a');
+    const modelId = 'log-test';
+
+    a.createDoc(modelId);
+    await a.addOp(makeOp('add_cube', { size: 1 }, 'actor-a'));
+    await a.syncWithServer();
+
+    const events = a.syncLog.map(e => e.event);
+    expect(events).toContain('add_op');
+    expect(events).toContain('save_storage');
+    expect(events).toContain('sync_start');
+    expect(events).toContain('sync_complete');
+
+    // All entries have required fields
+    for (const entry of a.syncLog) {
+      expect(typeof entry.ts).toBe('number');
+      expect(entry.actorId).toBe('actor-a');
+      expect(typeof entry.event).toBe('string');
+    }
+  });
+
+  it('dual-write: server + client both apply same op — no duplicate', async () => {
+    const server = makeServer();
+    const modelId = 'dualwrite';
+    const { client: a } = makeClient(server, 'actor-a');
+
+    const sharedOp = makeOp('add_sphere', { radius: 2 }, 'mcp-server');
+
+    // Server applies op directly (simulates MCP executeServerDirect)
+    const base = await syncCreate();
+    const serverDoc = await syncApplyOp(base, JSON.stringify(sharedOp));
+    // Manually put into server store
+    await server.sync(modelId, serverDoc);
+
+    // Client also applies same op (simulates SSE applyServerOp)
+    a.createDoc(modelId);
+    await a.addOp(sharedOp);
+
+    // Sync — CRDT dedup must prevent duplicate
+    await a.syncWithServer();
+
+    const ops = await a.getOps();
+    expect(ops.length).toBe(1, 'dual-write must not duplicate op');
+    expect(ops[0].id).toBe(sharedOp.id);
   });
 });

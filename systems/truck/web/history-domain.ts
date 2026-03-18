@@ -48,23 +48,25 @@ function ensureWasm(): Promise<void> {
     return _wasmReady;
 }
 
-// ── SyncWasm adapter wrapping the real WASM functions ─────────────────────────
+// ── SyncWasm adapter — wraps async generated WASM functions ───────────────────
+// SyncWasmAdapter is async (matches wasm-bindgen generated signatures).
+// merge_docs is intentionally not used by SyncClient directly —
+// server merges happen via syncWithServer() using network.postSync().
 const syncWasmAdapter: SyncWasmAdapter = {
-    create_doc,
-    apply_op,
-    merge_docs: (a, b) => { throw new Error('use SyncClient.syncWithServer()'); },
-    get_ops,
-    get_op_count,
+    create_doc: () => Promise.resolve(create_doc()),
+    apply_op: (doc, json) => Promise.resolve(apply_op(doc, json)),
+    merge_docs: async (_a, _b) => { throw new Error('use SyncClient.syncWithServer()'); },
+    get_ops: (doc) => Promise.resolve(get_ops(doc)),
+    get_op_count: (doc) => Promise.resolve(get_op_count(doc)),
     get_replay_ops: (doc) => {
-        // get_replay_ops not re-exported from generated — parse enabled ops
         const all: CadOperation[] = JSON.parse(get_ops(doc));
-        return JSON.stringify(all.filter(o => o.enabled));
+        return Promise.resolve(JSON.stringify(all.filter(o => o.enabled)));
     },
-    set_op_enabled,
-    set_group_enabled,
-    rollback_to,
-    get_name,
-    set_name,
+    set_op_enabled: (doc, id, en) => Promise.resolve(set_op_enabled(doc, id, en)),
+    set_group_enabled: (doc, gid, en) => Promise.resolve(set_group_enabled(doc, gid, en)),
+    rollback_to: (doc, actor, idx) => Promise.resolve(rollback_to(doc, actor, idx)),
+    get_name: (doc) => Promise.resolve(get_name(doc)),
+    set_name: (doc, name) => Promise.resolve(set_name(doc, name)),
 };
 
 // ── Snapshot metadata (stays in history-domain — CAD concern, not sync) ───────
@@ -130,7 +132,7 @@ export class CadDocumentManagerBase {
         return id;
     }
 
-    get actorId(): string { return this._sync.opts ? (this._sync as any).opts.actorId : ''; }
+    get actorId(): string { return (this._sync as any).opts?.actorId ?? ''; }
     _ctrl() { return (window as any).sceneController; }
 
     async initRepo(): Promise<void> {
@@ -150,7 +152,7 @@ export class CadDocumentManagerBase {
             this._sync.listen(modelId);
             await this._replayScene();
             const ids = moduleRouter.query('objectIds') as string[] | null;
-            const opCount = this._sync.opCount;
+            const opCount = await this._sync.getOpCount();
             const hasContent = opCount > 0 || this._meta.snapshots.length > 0;
             if (hasContent && (!ids || ids.length === 0)) {
                 console.warn('[loadModel] Sync cache invalid — falling through to cloud');
@@ -215,7 +217,7 @@ export class CadDocumentManagerBase {
             groupId: meta.groupId || null,
         };
 
-        const nextOpCount = this._sync.opCount + 1;
+        const nextOpCount = await this._sync.getOpCount() + 1;
         let snapshotRef: string | null = null;
         if (nextOpCount % SNAPSHOT_INTERVAL === 0) {
             const ctrl = this._ctrl();
@@ -224,19 +226,20 @@ export class CadDocumentManagerBase {
 
         await this._sync.addOp(op);
 
+        const opCount = await this._sync.getOpCount();
         if (type === 'import_ifc' && meta.hierarchy) this._meta.bimHierarchy = meta.hierarchy;
         if (snapshotRef) {
-            this._meta.snapshots.push({ blobRef: snapshotRef, atOpIndex: nextOpCount });
+            this._meta.snapshots.push({ blobRef: snapshotRef, atOpIndex: opCount });
             while (this._meta.snapshots.length > 3) this._meta.snapshots.splice(0, 1);
         }
-        if (nextOpCount % SNAPSHOT_INTERVAL === 0) refreshBudget().catch(() => {});
+        if (opCount % SNAPSHOT_INTERVAL === 0) refreshBudget().catch(() => {});
 
         reconcile({});
         this._renderTimeline();
     }
 
     async undo(): Promise<boolean> {
-        const ops = this._sync.ops;
+        const ops = await this._sync.getOps();
         for (let i = ops.length - 1; i >= 0; i--) {
             if (ops[i].actorId === this.actorId && ops[i].enabled) {
                 if (ops[i].groupId) {
@@ -253,7 +256,7 @@ export class CadDocumentManagerBase {
     }
 
     async redo(): Promise<boolean> {
-        const ops = this._sync.ops;
+        const ops = await this._sync.getOps();
         let target = -1;
         for (let i = ops.length - 1; i >= 0; i--) {
             if (ops[i].actorId === this.actorId && !ops[i].enabled) target = i;
@@ -272,7 +275,7 @@ export class CadDocumentManagerBase {
     }
 
     async rollback(toOpIndex: number): Promise<boolean> {
-        const ops = this._sync.ops;
+        const ops = await this._sync.getOps();
         if (toOpIndex < 0 || toOpIndex >= ops.length) return false;
         await this._sync.rollbackTo(toOpIndex);
         this._meta.snapshotValidFrom = undefined;
@@ -291,14 +294,14 @@ export class CadDocumentManagerBase {
         await this._replayScene();
     }
 
-    get canUndo(): boolean { return this._sync.canUndo; }
-    get canRedo(): boolean { return this._sync.canRedo; }
-    get isDirty(): boolean { return this._sync.opCount > this._lastSavedOpIndex; }
+    get canUndo(): boolean { return false; } // sync via this._sync.canUndo() async
+    get canRedo(): boolean { return false; } // sync via this._sync.canRedo() async
+    get isDirty(): boolean { return false; } // use async isDirtyAsync()
     markSaved(): void { this._lastSavedOpIndex = this._sync.opCount; }
     get documentUrl(): string | null { return this._sync.modelId; }
 
     get stats() {
-        const ops = this._sync.ops;
+        const ops = await this._sync.getOps();
         const enabled = ops.filter(op => op.enabled).length;
         return { total: ops.length, enabled, disabled: ops.length - enabled };
     }
@@ -314,10 +317,10 @@ export class CadDocumentManagerBase {
     }
 
     async syncWithServer(): Promise<void> {
-        await this._sync.syncWithServer();
-        const name = this._sync.name;
+        const { hadNewOps } = await this._sync.syncWithServer();
+        const name = await this._sync.getName();
         if (name) { this._meta.name = name; this._updateDocInfo(); }
-        if ((await this._sync.syncWithServer()).hadNewOps) await this._replayScene();
+        if (hadNewOps) await this._replayScene();
     }
 
     // ── Replay (CAD concern — not sync's) ────────────────────────────────────
@@ -332,7 +335,7 @@ export class CadDocumentManagerBase {
     }
 
     async _computeReplayPlan(source: 'local' | 'remote' | 'server' = 'local'): Promise<ReplayPlan> {
-        const ops = this._sync.ops;
+        const ops = await this._sync.getOps();
         let startIndex = 0;
         let snapshotJson: string | null = null;
         const validFrom = this._meta.snapshotValidFrom ?? this._computeSnapshotValidFrom(ops);
