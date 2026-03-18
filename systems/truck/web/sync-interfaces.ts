@@ -139,7 +139,7 @@ export class FetchServerSync implements ServerSync {
         try {
             const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
                 method: 'POST',
-                body: docBytes as unknown as BodyInit,
+                body: docBytes.buffer as ArrayBuffer,
                 headers: { 'content-type': 'application/octet-stream' },
             });
             if (!resp.ok) return null;
