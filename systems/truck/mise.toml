@@ -1,6 +1,7 @@
-# systems/truck/.mise.toml — truck-cad system tasks
+# systems/truck/mise.toml — truck-cad system tasks
 #
-# Ports + tool versions inherited from root .mise.toml [env] + [tools].
+# Self-contained: pins its own tools so this system is runnable standalone.
+# Tool versions must be kept in sync with root mise.toml and other systems.
 # Run from repo root OR from systems/truck/ — both work.
 #
 # Usage (from systems/truck/):
@@ -8,6 +9,11 @@
 #   mise run build:wasm   Build WASM (incremental — skips if Rust unchanged)
 #   mise run test         Run Rust + TS tests
 #   mise run kill         Kill truck dev ports
+
+[tools]
+bun               = "1.3.10"   # JS runtime + package manager
+node              = "22"       # Required for vitest-pool-workers
+"cargo:wasm-pack" = "0.14.0"  # Rust → WASM build tool
 
 [tasks.kill]
 description = "Kill truck dev ports"

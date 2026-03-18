@@ -69,6 +69,8 @@ systems/docs/website/public/videos/*.webm
 .env.local
 
 # mise local overrides — personal credentials and URL overrides, never committed
+# mise.toml (no dot) is the committed shared config — do not ignore it
+.mise.toml
 .mise.local.toml
 mise.local.toml
 

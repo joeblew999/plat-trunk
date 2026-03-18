@@ -1,60 +1,53 @@
 # Global mise setup
 
-mise supports a global config at `~/.config/mise/config.toml` that applies
-across all repos on your machine. This is the right place to pin tool versions
-that are shared across all plat-trunk systems (and any other repos you work in).
+plat-trunk uses `mise.toml` (no dot, committed) as the shared config at every
+level — repo root and each system. This is mise's intended pattern for shared
+configs. See: https://mise.jdx.dev/configuration.html
 
-## Why
+## File conventions
 
-Each system (`sync`, `truck`, `auth`) pins its own `[tools]` in its `.mise.toml`
-so it is **standalone** — runnable in CI or as a submodule without the root.
-But on your dev machine, you only want one copy of `bun`, `node`, `wasm-pack` etc.
+| File | Purpose | Committed |
+|---|---|---|
+| `mise.toml` | Shared config — tools, env, tasks | ✅ Yes |
+| `.mise.toml` | Local overrides (gitignored) | ❌ No |
+| `mise.local.toml` | Local overrides (gitignored) | ❌ No |
 
-The global config is the single source of truth for your machine. Per-repo
-`.mise.toml` versions override it when they differ.
+## Structure
 
-## Setup
-
-```bash
-mkdir -p ~/.config/mise
+```
+mise.toml                        ← repo root — tools, env (ports), all tasks
+systems/sync/mise.toml           ← sync system — standalone [tools] + tasks
+systems/truck/mise.toml          ← truck system — standalone [tools] + tasks
+systems/auth/mise.toml           ← auth system — tasks only
+systems/docs/mise.toml           ← docs system — tasks only
+systems/plugins/howick/mise.toml ← howick plugin — standalone [tools] + tasks
+lib/observe/mise.toml            ← observe lib — standalone [tools] + tasks
 ```
 
-Then create `~/.config/mise/config.toml`:
+## Tool version policy
 
-```toml
-# ~/.config/mise/config.toml — global mise config for plat-trunk dev machine
-# https://mise.jdx.dev/configuration.html#global-config
-#
-# These versions match root .mise.toml and all systems/*.mise.toml [tools].
-# Update here first, then propagate to the per-system files.
+Systems with a WASM build (`sync`, `truck`, `howick`, `lib/observe`) pin their
+own `[tools]` so they are **fully standalone** — runnable in CI or as a
+submodule without the root. These versions must always match root `mise.toml`.
 
-[tools]
-bun               = "1.3.10"   # JS runtime + package manager
-node              = "22"       # Node.js 22 — vitest-pool-workers requirement
-"cargo:wasm-pack" = "0.14.0"  # Rust → WASM
-doppler           = "latest"  # Secrets manager
-gh                = "2.87.3"  # GitHub CLI
-"cargo:tauri-cli" = "2"       # Tauri CLI (macOS/iOS builds)
-xcodegen          = "latest"  # Xcode project gen (Tauri iOS)
-ruby              = "3.3"     # cocoapods dependency (Tauri iOS)
-"gem:cocoapods"   = "latest"  # Tauri iOS
+Systems without WASM (`auth`, `docs`, `test`) inherit tools from the root and
+don't need their own `[tools]` block.
 
-# Rust: do NOT pin here — let rust-toolchain.toml in each repo control it.
-# mise respects rust-toolchain.toml automatically when you cd into a repo.
-```
-
-## Install all tools globally
+## Dev machine setup
 
 ```bash
-mise install --global
+# Install all tools at pinned versions (run once, or after tool version bumps)
+mise install
+
+# Verify
+mise doctor
 ```
 
 ## Keeping versions in sync
 
-When you bump a tool version, update in this order:
+When bumping a tool version, update in this order:
 
-1. `~/.config/mise/config.toml` (global — your machine)
-2. `/.mise.toml` (repo root)
-3. Each `systems/*/.mise.toml` `[tools]` block that pins it
+1. Root `mise.toml` `[tools]`
+2. `systems/sync/mise.toml`, `systems/truck/mise.toml`, `systems/plugins/howick/mise.toml`, `lib/observe/mise.toml`
 
-The per-system pins exist for CI/standalone use. They should always match root.
+All `[tools]` blocks should always have identical versions.
