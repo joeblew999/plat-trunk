@@ -45,6 +45,13 @@ declare global {
     // Set by tier-manager.ts
     __warmCount: number;
 
+    // Set by storage-budget.ts
+    __storagePct: number;
+
+    // Set by worker-relay.ts (SSE presence events)
+    __presenceActors: Array<[string, string]>;
+    __presenceCount: number;
+
     // Set by worker-relay.ts
     __workerRelay: any;
 

@@ -98,7 +98,7 @@ export class CadDocumentManagerBase {
         return id;
     }
 
-    get actorId(): string { return (this._sync as any).opts?.actorId ?? ''; }
+    get actorId(): string { return this._sync.actorId; }
 
     async initRepo(): Promise<void> {
         await ensureWasm();
@@ -173,13 +173,13 @@ export class CadDocumentManagerBase {
 
     // ── Op recording ──────────────────────────────────────────────────────────
 
-    async record(type: string, params: Record<string, any> = {}, meta: any = {}): Promise<void> {
+    async record(type: string, params: Record<string, unknown> = {}, meta: { objectId?: string; groupId?: string; hierarchy?: unknown } = {}): Promise<void> {
         if (!this._sync.docBytes || !this._sync.modelId) return;
 
         const op: CadOperation = {
             id: crypto.randomUUID(),
             type,
-            params: { ...params, _replayId: meta.objectId || null },
+            params: { ...(params as Record<string, unknown>), _replayId: meta.objectId ?? null },
             enabled: true,
             timestamp: Date.now(),
             actorId: this.actorId,
@@ -327,11 +327,11 @@ export class CadDocumentManagerBase {
         if (!moduleRouter.ready || this._replayInProgress) return;
         this._replayInProgress = true;
         try {
-            const prevSelectedId = (window as any)._ds?.root?.selectedId ?? null;
+            const prevSelectedId = window._ds?.root?.selectedId ?? null;
             const plan = await this._computeReplayPlan(source);
             await executeReplayPlan(plan);
             const ids = (moduleRouter.query('objectIds') as string[] | null) ?? [];
-            const ds = (window as any)._ds;
+            const ds = window._ds;
             let newSel: string | null = null;
             if (prevSelectedId && ids.includes(prevSelectedId)) newSel = prevSelectedId;
             else if (ids.length > 0) newSel = ids[ids.length - 1];

@@ -276,6 +276,7 @@ export class SyncClient {
 
   get docBytes(): Uint8Array | null { return this._docBytes; }
   get modelId(): string | null { return this._modelId; }
+  get actorId(): string { return this.opts.actorId; }
 
   async canUndo(): Promise<boolean> {
     return (await this.getOps()).some(op => op.actorId === this.opts.actorId && op.enabled);
