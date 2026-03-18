@@ -286,7 +286,7 @@ export class CadDocumentManagerBase {
     get documentUrl(): string | null { return this._sync.modelId; }
 
     get stats() {
-        const ops = await this._sync.getOps();
+        const ops = this._cachedOps;
         const enabled = ops.filter(op => op.enabled).length;
         return { total: ops.length, enabled, disabled: ops.length - enabled };
     }
