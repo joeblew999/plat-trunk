@@ -62,6 +62,10 @@ cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null || true
 description = "Regenerate sync-schema.json from Rust types only (no WASM build)"
 run = "cd crate && cargo run --bin generate-sync-schema > ../sync-schema.json"
 
+[tasks."build:wasm:watch"]
+description = "Auto-rebuild sync WASM on Rust source changes"
+run = "mise watch build:wasm:self"
+
 # ── Install ───────────────────────────────────────────────────────────────────
 
 [tasks.install]

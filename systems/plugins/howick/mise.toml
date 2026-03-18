@@ -8,9 +8,9 @@
 #   # OR from root:
 #   mise run --cd systems/plugins/howick ci
 #
-# Root mise.toml exposes:
-#   mise run build:plugins:howick   ← full build (WASM + TS bundle)
-#   mise run howick:ci              ← full CI gate
+# Root exposes:
+#   mise run build:plugins          ← build all plugins (delegates here)
+#   mise run plugins:ci             ← CI all plugins (delegates here)
 
 [tools]
 bun               = "1.3.10"   # JS runtime + package manager

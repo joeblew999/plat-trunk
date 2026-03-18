@@ -12,11 +12,7 @@ Browser + Cloudflare Workers CAD system. [truck](https://github.com/ricosjp/truc
 ```sh
 # ── First time on a new machine ───────────────────────────────────────────────
 curl -fsSL https://mise.run | sh                  # install mise
-brew install dopplerhq/cli/doppler                # secret manager (mise plugin broken)
-mise install                                      # installs bun, node, go, gh, wasm-pack
-doppler login                                     # browser OAuth — one-time
-mise run secrets:pull                             # generates .env from Doppler
-bun install                                       # install JS deps
+mise run setup                                    # one-time: installs tools, pulls secrets, builds WASM
 
 # ── Every day ─────────────────────────────────────────────────────────────────
 bun run dev             # Start all workers + Vite dev server

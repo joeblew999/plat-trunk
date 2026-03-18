@@ -37,6 +37,15 @@ run = "cd ../.. && bun run build:truck"
 description = "Auto-rebuild WASM on Rust changes"
 run = "mise watch build:wasm"
 
+[tasks."dev:watch"]
+description = "Dev with auto-rebuild — watches Rust (WASM rebuild) and TS (worker restart) in parallel"
+depends = ["build:wasm", "kill"]
+run = [
+  "mise watch build:wasm",
+  "cd ../.. && bunx wrangler dev --config systems/truck/worker/wrangler.toml",
+  "cd web && bunx vite --port $TRUCK_WEB_PORT",
+]
+
 [tasks.dev]
 description = "Start truck-cad worker + Vite web dev (WASM built first, then kill, then start)"
 depends = ["build:wasm", "kill"]

@@ -18,8 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # mise installs bun, gh, wasm-pack from .mise.toml.
-      # Rust + wasm targets are handled by rust-toolchain.toml — mise respects it automatically.
+      # mise reads mise.toml (committed shared config) — installs bun, node, wasm-pack etc.
+      # Rust + wasm targets handled by rust-toolchain.toml — mise respects it automatically.
       - uses: jdx/mise-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -28,6 +28,9 @@ jobs:
       - name: Sync .src repos
         run: mise run src:sync
 
+      # ── Cargo cache — registry + build targets + WASM outputs ──────────────
+      # Key includes Cargo.lock hash so cache busts on dependency changes.
+      # WASM pkg/ dirs cached separately — they're the expensive build outputs.
       - uses: actions/cache@v4
         with:
           path: |
@@ -38,6 +41,29 @@ jobs:
             .src/ezpz/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            systems/sync/crate/target
+            systems/truck/crate/target
+            systems/plugins/howick/crate/target
+            systems/plugins/example/crate/target
+          key: ${{ runner.os }}-crate-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-crate-target-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            systems/sync/worker/pkg-sync
+            systems/truck/web/pkg-sync
+            systems/truck/worker/pkg-sync
+            systems/truck/web/pkg-browser-renderer
+            systems/truck/worker/pkg
+            systems/plugins/howick/crate/pkg
+            systems/plugins/example/crate/pkg
+          key: ${{ runner.os }}-wasm-pkg-${{ hashFiles('systems/sync/crate/src/**/*.rs', 'systems/truck/crate/src/**/*.rs', 'systems/plugins/howick/crate/src/**/*.rs', '**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-wasm-pkg-
 
       - name: Check required secrets
         run: mise run ci:check-secrets

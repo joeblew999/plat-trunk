@@ -1,0 +1,65 @@
+name: Sync CI
+
+# Dedicated workflow for the sync system — triggers on any sync change.
+# Gives fast feedback on the CRDT core without waiting for the full CI pipeline.
+# All logic lives in mise tasks — this file is infrastructure only.
+#
+# What runs (defined in systems/sync/mise.toml ci task):
+#   build:wasm:self → wasm-pack (3 targets: web + 2x bundler)
+#   test:rust       → cargo test -p truck-sync (CRDT math)
+#   typecheck       → tsc --noEmit on sync worker
+#   test:ts         → vitest (WASM boundary + message contract)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'systems/sync/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'systems/sync/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            systems/sync/crate/target
+          key: ${{ runner.os }}-sync-${{ hashFiles('systems/sync/crate/Cargo.toml', 'Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sync-
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            systems/sync/worker/pkg-sync
+            systems/truck/web/pkg-sync
+            systems/truck/worker/pkg-sync
+          key: ${{ runner.os }}-sync-wasm-${{ hashFiles('systems/sync/crate/src/**/*.rs', 'Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-sync-wasm-
+
+      - name: Install JS deps
+        run: mise --cd systems/sync run install
+
+      - name: CI
+        run: mise --cd systems/sync run ci

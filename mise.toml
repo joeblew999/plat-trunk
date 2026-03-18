@@ -75,6 +75,24 @@ description = "Start all workers (router + truck + auth + test + web devservers)
 depends = ["install", "kill"]
 run = "bun run dev"
 
+# ── Setup (one-time, new machine) ────────────────────────────────────────────
+
+[tasks.setup]
+description = "One-time setup for a new machine — install tools, pull secrets, JS deps, build WASM"
+run = """
+echo "▶ [1/4] Checking Doppler login..."
+doppler me 2>/dev/null || (echo "  → Run: doppler login" && exit 1)
+echo "▶ [2/4] Installing JS deps..."
+bun scripts/install-all.mjs
+echo "▶ [3/4] Pulling secrets from Doppler..."
+mise run secrets:pull
+echo "▶ [4/4] Building WASM (sync + truck)..."
+bun run build:sync
+bun run build:truck
+echo ""
+echo "✓ Setup complete — run: mise run dev"
+"""
+
 # ── Install ───────────────────────────────────────────────────────────────────
 
 [tasks.install]
