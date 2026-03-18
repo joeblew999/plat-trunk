@@ -3,6 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-03-09
 - **Related:** ADR-0004 (WASM Boundary Contracts), ADR-0001 (Multi-Actor Sync)
+- **See also:** ADR-0016 (Browser Threading) — D3 (cached HeadlessController), D8 (timeline debounce), D9 (tier-manager gating) and D10 (parallel boot) are all superseded or simplified once ADR-0016 lands. The geometry worker eliminates the main-thread blocking that motivates many browser-side decisions. ADR-0006 browser decisions (D7-D10) remain valid as incremental wins before ADR-0016 is implemented.
 
 ## Context
 

@@ -2,7 +2,8 @@
 
 ## Status
 
-**Proposed** — 2026-03-06
+**Proposed** — 2026-03-06  
+**See also**: ADR-0016 (Browser Threading) — the GeometryStore extraction in ADR-0002 is a prerequisite for running geometry in a Web Worker. The Data Plane / Control Plane split defined here is the Rust-level foundation for the browser threading architecture defined there.
 
 ## Principle
 
