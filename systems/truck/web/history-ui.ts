@@ -124,4 +124,10 @@ class CadDocumentManager extends CadDocumentManagerBase {
     }
 }
 
-window.cadDocManager = new CadDocumentManager();
+// ── Module singleton ──────────────────────────────────────────────────────────
+// Prefer importing cadDocManager directly rather than using window.cadDocManager.
+// window.cadDocManager is kept for backward compat with E2E tests and inline
+// scripts that can't import ES modules.
+
+export const cadDocManager: CadDocumentManagerBase = new CadDocumentManager();
+window.cadDocManager = cadDocManager;

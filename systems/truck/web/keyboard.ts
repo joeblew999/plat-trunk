@@ -2,8 +2,9 @@
 // Extracted from ui.ts to separate concerns.
 
 import { cadCommand } from './dispatch';
+import { cadDocManager } from './history-ui';
 
-function docMgr() { return window.cadDocManager?._sync?.modelId ? window.cadDocManager : null; }
+function docMgr() { return cadDocManager?._sync?.modelId ? cadDocManager : null; }
 
 document.addEventListener('keydown', (e) => {
     // 's' — open sketch tab (unmodified, not in input)

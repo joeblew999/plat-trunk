@@ -21,7 +21,8 @@ declare global {
     // Set by WASM / cad-viewport.ts
     sceneController: any;  // WASM instance, no TS bindings
 
-    // Set by history-domain.ts
+    // Set by history-ui.ts (module singleton — prefer importing from history-ui.ts
+    // in TS modules; window.cadDocManager kept for E2E tests and inline scripts)
     cadDocManager: CadDocumentManagerBase;
     resetTierState: (() => void) | undefined;
 

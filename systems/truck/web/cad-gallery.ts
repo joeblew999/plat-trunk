@@ -8,6 +8,7 @@
 import { LitElement, html } from 'lit';
 import { client } from './api-client';
 import type { components } from './api-types.generated';
+import { cadDocManager } from './history-ui';
 
 type ModelManifest = components['schemas']['ModelManifest'];
 
@@ -70,7 +71,7 @@ export class CadGallery extends LitElement {
     // Skip if already on this model
     if (id === window.__modelId) return;
     // Dirty check: warn if there are ops recorded since last cloud save
-    const mgr = window.cadDocManager;
+    const mgr = cadDocManager;
     if (mgr?.isDirty && !confirm('You have unsaved changes. Leave this model?')) return;
     window.location.href = `/model/${id}`;
   }

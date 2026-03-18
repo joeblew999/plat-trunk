@@ -9,6 +9,7 @@
 
 import { moduleRouter } from './core/module-router';
 import type { WasmResult, DocManagerMeta } from './types';
+import { cadDocManager } from './history-ui';
 
 // ── reconcileSignals: selection state from command result ────────
 // r: any — Datastar root signal tree, no TS bindings available
@@ -125,7 +126,7 @@ export function reconcile(result: WasmResult): WasmResult {
   if (!moduleRouter.ready || !ds?.root) return {};
 
   const ids = moduleRouter.query('objectIds') as string[];
-  const mgr = window.cadDocManager?._sync?.modelId ? window.cadDocManager : null;
+  const mgr = cadDocManager?._sync?.modelId ? cadDocManager : null;
   const r = ds.root;
 
   ds.beginBatch();

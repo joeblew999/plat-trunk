@@ -4,6 +4,7 @@
 import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { client } from './api-client';
+import { cadDocManager } from './history-ui';
 
 const modelId = window.__modelId || 'default';
 
@@ -53,7 +54,7 @@ const relay = {
     eventSource.addEventListener('sync-op', (e) => {
       try {
         const op = JSON.parse(e.data);
-        const mgr = window.cadDocManager;
+        const mgr = cadDocManager;
         if (mgr?._sync?.modelId) {
           mgr.applyServerOp(op).catch(err => console.warn('[worker-relay] sync-op apply failed:', err));
         }
@@ -73,7 +74,7 @@ const relay = {
         docChangedTimer = setTimeout(() => {
           docChangedTimer = null;
           console.log(`[worker-relay] doc-changed from ${data.actorId}, syncing...`);
-          window.cadDocManager?.syncWithServer();
+          cadDocManager?.syncWithServer();
         }, 500);
       } catch (err) {
         console.warn('[worker-relay] doc-changed parse error:', err);
@@ -100,7 +101,7 @@ const relay = {
         body: { ...state, broadcast: false },
       }).catch(() => {});
       // Sync local doc with server on connect (ADR-0001 Part B2)
-      window.cadDocManager?.syncWithServer();
+      cadDocManager?.syncWithServer();
     };
 
     eventSource.onerror = () => {

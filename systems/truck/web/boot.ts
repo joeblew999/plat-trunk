@@ -10,6 +10,7 @@
 
 import { loadModel } from './model-loader';
 import { refreshBudget } from './storage-budget';
+import { cadDocManager } from './history-ui';
 
 export async function boot() {
     // Bail out if redirecting — prevent stale Automerge doc from loading
@@ -70,10 +71,10 @@ export async function boot() {
     setModeIndicators();
 
     // ── 4. Initialize Automerge repo + load model ───────────────────
-    await waitFor(() => window.cadDocManager, 3000, 'cadDocManager');
-    await window.cadDocManager.initRepo();
-    await loadModel(window.__modelId, window.cadDocManager);
-    console.log('Automerge doc ready:', window.cadDocManager.documentUrl);
+    // cadDocManager is the module singleton from history-ui.ts — no waitFor needed
+    await cadDocManager.initRepo();
+    await loadModel(window.__modelId, cadDocManager);
+    console.log('Automerge doc ready:', cadDocManager.documentUrl);
 
     // ── 5. Start worker relay (online mode only) ─────────────────────
     if (!window.__cadLocalMode) {

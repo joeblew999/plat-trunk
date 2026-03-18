@@ -2,7 +2,7 @@
  * history-domain.ts — Thin CAD wrapper over SyncClient (ADR-0008).
  *
  * This file owns:
- *   - Op recording (knowing WHEN and WHAT to record after cadCommand executes)
+ *   - Op recording (knowing WHEN and WHAT to record after window.cadCommand executes)
  *   - Scene replay (knowing HOW to replay ops into the WASM geometry engine)
  *   - Snapshot management (IDB blob cache for fast replay)
  *   - UI state (canUndo/canRedo signals, timeline render)
@@ -22,8 +22,6 @@ import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './doc-store'
 import { openCadSyncDb, DOCS_STORE } from './idb';
 import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
-import { cadCommand } from './dispatch';
-import { reconcile } from './reconcile';
 import { moduleRouter } from './core/module-router';
 import { executeReplayPlan, type ReplayPlan } from './replay-executor';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
@@ -142,9 +140,9 @@ export class CadDocumentManagerBase {
         this._meta = { name: `Model ${modelId}`, snapshots: [] };
 
         if (sceneJson) {
-            cadCommand('clear', {}, { record: false, reconcile: false });
-            cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
-            reconcile({});
+            window.cadCommand('clear', {}, { record: false, reconcile: false });
+            window.cadCommand('import_scene', { json: sceneJson }, { record: false, reconcile: false });
+            window.reconcile({});
             const snapshotRef = await storeBlob(sceneJson) as string;
             this._meta.snapshots.push({ blobRef: snapshotRef, atOpIndex: 0 });
             console.log(`[loadModel] Loaded from ${source}`);
@@ -161,11 +159,11 @@ export class CadDocumentManagerBase {
 
         const ops = await this._sync.getReplayOps();
         if (ops.length > 0) {
-            cadCommand('clear', {}, { record: false, reconcile: false });
+            window.cadCommand('clear', {}, { record: false, reconcile: false });
             for (const op of ops) {
-                cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
+                window.cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
             }
-            reconcile({});
+            window.reconcile({});
             console.log(`[loadModel] Adopted server doc (${ops.length} ops)`);
         }
         await this._sync.saveToStorage();
@@ -205,7 +203,7 @@ export class CadDocumentManagerBase {
         }
         if (opCount % SNAPSHOT_INTERVAL === 0) refreshBudget().catch(() => {});
 
-        reconcile({});
+        window.reconcile({});
         this._renderTimeline();
     }
 
@@ -284,10 +282,10 @@ export class CadDocumentManagerBase {
 
     async applyServerOp(op: CadOperation): Promise<void> {
         if (!this._sync.docBytes || !this._sync.modelId) return;
-        cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
+        window.cadCommand(op.type, op.params, { record: false, reconcile: false, source: 'server' });
         await this._sync.addOp(op);
         await this._refreshUndoState();
-        reconcile({});
+        window.reconcile({});
         this._renderTimeline();
     }
 
@@ -337,9 +335,9 @@ export class CadDocumentManagerBase {
             let newSel: string | null = null;
             if (prevSelectedId && ids.includes(prevSelectedId)) newSel = prevSelectedId;
             else if (ids.length > 0) newSel = ids[ids.length - 1];
-            if (newSel) cadCommand('select', { id: newSel }, { reconcile: false, source: 'replay' });
+            if (newSel) window.cadCommand('select', { id: newSel }, { reconcile: false, source: 'replay' });
             if (ds?.root) ds.root.selectedId = newSel;
-            reconcile({ selectedId: newSel });
+            window.reconcile({ selectedId: newSel });
             this._renderTimeline();
             this._emitSceneChanged(plan);
         } finally {

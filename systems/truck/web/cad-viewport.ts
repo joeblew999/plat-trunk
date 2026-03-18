@@ -20,6 +20,7 @@ import { LitElement, html } from 'lit';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { startTierManager, touchObject } from './tier-manager';
+import { cadDocManager } from './history-ui';
 
 export class CadViewport extends LitElement {
   /**
@@ -233,8 +234,8 @@ export class CadViewport extends LitElement {
       canvas.releasePointerCapture(e.pointerId);
 
       const result = window.sceneController.end_gizmo_drag();
-      if (result && result.objectId && window.cadDocManager?._sync?.modelId) {
-        window.cadDocManager.record('translate', {
+      if (result && result.objectId && cadDocManager?._sync?.modelId) {
+        cadDocManager.record('translate', {
           objectId: result.objectId,
           dx: result.dx, dy: result.dy, dz: result.dz,
         });

@@ -15,6 +15,7 @@ import { reconcile } from './reconcile';
 import { storeBlob } from './blob-store';
 import { client } from './api-client';
 import { scheduleThumbnailCapture, getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail';
+import { cadDocManager } from './history-ui';
 
 // ─── Style (write path) ──────────────────────────────────────────
 // loadStyle / loadBim (read path) live in reconcile.ts — called during reconcileView.
@@ -86,7 +87,7 @@ function showCommandFeedback(type: string, result: WasmResult) {
 // isJsControlPlane(type) checks membership — no hardcoded list needed.
 
 async function handleJsCommand(type: string, params: Record<string, unknown>): Promise<WasmResult> {
-  const mgr = window.cadDocManager;
+  const mgr = cadDocManager;
 
   switch (type) {
     case 'undo':
@@ -146,7 +147,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
       const thumb = getLatestThumbnail() || await captureCanvasThumbnail();
       if (thumb) await uploadThumbnail(mid, thumb);
       (document.querySelector('cad-gallery') as any)?.refresh();
-      window.cadDocManager?.markSaved();
+      cadDocManager?.markSaved();
       return { success: true, modelId: mid };
     }
 
@@ -264,7 +265,7 @@ export async function cadCommand(type: string, params?: Record<string, unknown>,
     const result = moduleRouter.execute(type, p);
 
     // Record to Automerge
-    const mgr = window.cadDocManager?._sync?.modelId ? window.cadDocManager : null;
+    const mgr = cadDocManager?._sync?.modelId ? cadDocManager : null;
     if (mgr) {
       // Strip large blob data from import commands (ADR-0025 Phase 0).
       // Blob param derived from schema: first required string param on import commands.
