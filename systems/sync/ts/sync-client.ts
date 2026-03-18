@@ -47,6 +47,12 @@ export interface SyncStorageAdapter {
 }
 
 /**
+ * DocStore — alias for SyncStorageAdapter used by R2DocStore in the CF worker.
+ * Keeping this name for backward compat with worker/src/doc-store.ts imports.
+ */
+export type DocStore = SyncStorageAdapter;
+
+/**
  * Network adapter — HTTP+SSE in production, direct function call in tests.
  *
  * NOTE: The adapter owns the connection lifecycle. `postSync` sends local doc

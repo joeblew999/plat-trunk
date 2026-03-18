@@ -10,7 +10,7 @@
  * Supports optimistic concurrency via R2 etag for concurrent MCP writes.
  */
 
-import type { DocStore } from '../../../sync/ts/doc-ops';
+import type { DocStore } from '../../../sync/ts/sync-client';
 
 const PREFIX = 'models/';
 

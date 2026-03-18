@@ -279,7 +279,7 @@ interface GeneratedFile {
 const outputs: GeneratedFile[] = [
   { path: 'systems/truck/worker/src/truck-wasm.generated.ts', content: genCfTruckWasm() },
   { path: 'systems/truck/worker/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
-  { path: 'systems/sync/worker/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
+  { path: 'systems/sync/test/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
   { path: 'systems/truck/web/cad-dispatch.generated.ts', content: genBrowserDispatch() },
   { path: 'systems/truck/crate/src/commands_generated.rs', content: genNativeCommands() },
 ];

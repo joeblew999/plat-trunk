@@ -19,7 +19,7 @@
     "test": "bun scripts/test.mjs",
     "test:crate": "cargo test -p truck-cad --no-default-features --features native --test contract && cargo test -p truck-sync && cargo test --release -p truck-cad --no-default-features --features native",
     "test:api": "cd systems/truck/worker && bun x vitest run",
-    "test:sync": "cd systems/sync/worker && bun x vitest run",
+    "test:sync": "cd systems/sync/test && bun x vitest run",
     "test:auth": "cd systems/auth/worker && bun x vitest run",
     "test:api:watch": "cd systems/truck/worker && bun x vitest watch",
     "test:e2e": "cd systems/truck/e2e && bun x playwright test",

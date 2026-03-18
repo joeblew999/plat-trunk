@@ -15,7 +15,7 @@ import {
   waitForAutomerge,
   waitForObjectCount,
   apiCommand,
-} from './helpers';
+} from '../../truck/e2e/helpers';
 
 test.describe('Cross-Tab Scene Sync', () => {
   test('BroadcastChannel: Tab A change appears in Tab B immediately', async ({ browser }, testInfo) => {

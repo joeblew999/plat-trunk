@@ -6,10 +6,10 @@
 # This wrangler.toml exists solely to provide the execution
 # context that @cloudflare/vitest-pool-workers requires.
 #
-# Tests: bun run test:sync  (or: cd systems/sync/worker && bun x vitest run)
+# Tests: bun run test:sync  (or: cd systems/sync/test && bun x vitest run)
 # ───────────────────────────────────────────────────────
 
-name = "sync-tests"
+name = "sync-test"
 main = "src/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]

@@ -20,7 +20,7 @@ import initSyncWasm, {
     create_doc, apply_op, get_ops, get_op_count, get_name, set_name,
     set_op_enabled, set_group_enabled, rollback_to,
 } from './pkg-sync/truck_sync.js';
-import { saveDoc, loadDoc } from './doc-store';
+import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './doc-store';
 import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
 import { cadCommand } from './dispatch';
@@ -69,14 +69,7 @@ const syncWasmAdapter: SyncWasmAdapter = {
     set_name: (doc, name) => Promise.resolve(set_name(doc, name)),
 };
 
-// ── Snapshot metadata (stays in history-domain — CAD concern, not sync) ───────
-interface SnapshotRef { blobRef: string; atOpIndex: number; }
-interface DocMeta {
-    name: string;
-    snapshots: SnapshotRef[];
-    bimHierarchy?: unknown;
-    snapshotValidFrom?: number;
-}
+// ── Snapshot metadata imported from doc-store (CAD concern, not sync) ───────────
 
 // ── CadDocumentManagerBase ────────────────────────────────────────────────────
 

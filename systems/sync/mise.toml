@@ -15,7 +15,7 @@
 #   mise run test:rust         Run Rust CRDT tests only (fast, no WASM build)
 #   mise run test:ts           Run TS boundary tests (WASM must be built)
 #   mise run test              Build WASM + run all tests
-#   mise run typecheck         Typecheck sync worker TS
+#   mise run typecheck         Typecheck sync test runner TS
 #   mise run ci                Full standalone CI gate
 #
 # Rust is pinned in ../../rust-toolchain.toml — mise respects it automatically.
@@ -37,7 +37,7 @@ sources = [
 outputs = [
   "../truck/web/pkg-sync/truck_sync_bg.wasm",
   "../truck/worker/pkg-sync/truck_sync_bg.wasm",
-  "worker/pkg-sync/truck_sync_bg.wasm",
+  "test/pkg-sync/truck_sync_bg.wasm",
 ]
 run = "cd ../.. && bun run build:sync"
 
@@ -48,13 +48,13 @@ sources = [
   "crate/Cargo.toml",
 ]
 outputs = [
-  "worker/pkg-sync/truck_sync_bg.wasm",
+  "test/pkg-sync/truck_sync_bg.wasm",
 ]
 run = """
 cd crate
 wasm-pack build --target web     --release --out-dir ../../truck/web/pkg-sync    2>/dev/null || true
 wasm-pack build --target bundler --release --out-dir ../../truck/worker/pkg-sync 2>/dev/null || true
-wasm-pack build --target bundler --release --out-dir ../worker/pkg-sync
+wasm-pack build --target bundler --release --out-dir ../test/pkg-sync
 cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null || true
 """
 
@@ -69,8 +69,8 @@ run = "mise watch build:wasm:self"
 # ── Install ───────────────────────────────────────────────────────────────────
 
 [tasks.install]
-description = "Install JS deps for sync worker"
-run = "cd worker && bun install"
+description = "Install JS deps for sync test runner"
+run = "cd test && bun install"
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -81,22 +81,22 @@ run = "cd crate && cargo test"
 [tasks."test:ts"]
 description = "Run TS WASM boundary + message contract tests (WASM must be built first)"
 depends = ["install"]
-run = "cd worker && bunx vitest run"
+run = "cd test && bunx vitest run"
 
 [tasks.test]
 description = "Build WASM standalone + run all sync tests (Rust CRDT + TS boundary)"
 depends = ["build:wasm:self", "install"]
 run = [
   "cd crate && cargo test",
-  "cd worker && bunx vitest run",
+  "cd test && bunx vitest run",
 ]
 
 # ── Typecheck ─────────────────────────────────────────────────────────────────
 
 [tasks.typecheck]
-description = "Typecheck sync worker TS (WASM must be built first for generated types)"
+description = "Typecheck sync test runner TS (WASM must be built first for generated types)"
 depends = ["install"]
-run = "cd worker && bunx tsc --noEmit"
+run = "cd test && bunx tsc --noEmit"
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 # Fully standalone — does not require the root pipeline.
@@ -108,6 +108,6 @@ description = "Full standalone CI gate — build WASM + typecheck + Rust tests +
 depends = ["build:wasm:self", "install"]
 run = [
   "cd crate && cargo test",
-  "cd worker && bunx tsc --noEmit",
-  "cd worker && bunx vitest run",
+  "cd test && bunx tsc --noEmit",
+  "cd test && bunx vitest run",
 ]
