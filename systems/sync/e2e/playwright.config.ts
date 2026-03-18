@@ -30,7 +30,8 @@ const chromeWithWebGPU = {
 
 export default defineConfig({
   // Reuse existing dev server if running — sync tests need the full stack.
-  webServer: {
+  // Skip local dev server when BASE_URL points to a remote host (e.g. CF preview URL).
+  webServer: BASE_URL.startsWith('http://localhost') ? {
     command: 'bun run dev',
     cwd: REPO_ROOT,
     url: 'http://localhost:8788/api/health',
@@ -38,7 +39,7 @@ export default defineConfig({
     timeout: 180_000,
     stdout: 'pipe',
     stderr: 'pipe',
-  },
+  } : undefined,
 
   testDir: '.',
   outputDir: './test-results',

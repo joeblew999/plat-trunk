@@ -24,6 +24,7 @@ xcodegen           = "latest"  # Generates Xcode project for Tauri iOS
 ruby               = "3.3"     # Required for cocoapods (Tauri iOS)
 "gem:cocoapods"    = "latest"  # Required for Tauri iOS builds
 # Rust is managed by rust-toolchain.toml (pins version + wasm targets + components) — do not add here
+# playwright browsers installed separately via mise run install:playwright
 
 # ── Port registry — single source of truth for all system ports ───────────────
 # Add new systems here. Ports must be unique across all systems.
@@ -125,6 +126,50 @@ run = "bun scripts/smoke.ts"
 [tasks."smoke:prod"]
 description = "Quick live check — production (cad.ubuntusoftware.net)"
 run = "bun scripts/smoke.ts --prod"
+
+# ── E2E ───────────────────────────────────────────────────────────────────────
+
+[tasks."install:playwright"]
+description = "Install Playwright browsers (Chromium with WebGPU support)"
+run = """
+cd systems/truck/e2e && bunx playwright install chromium
+cd systems/sync/e2e  && bunx playwright install chromium
+echo "✓ Playwright browsers installed"
+"""
+
+[tasks."test:e2e"]
+description = "Run truck e2e tests against local dev server (requires mise run dev)"
+run = "cd systems/truck/e2e && bunx playwright test"
+
+[tasks."test:e2e:preview"]
+description = "Deploy preview to CF then run e2e tests against it (no local dev server needed)"
+depends = ["ci:check-secrets"]
+run = """
+: "${CLOUDFLARE_API_TOKEN:?}"
+: "${CLOUDFLARE_ACCOUNT_ID:?}"
+
+echo "▶ Deploying preview..."
+DEPLOY_OUT=$(bun scripts/cf-deploy.ts upload --target truck --preview-alias e2e-preview 2>&1)
+echo "$DEPLOY_OUT"
+PREVIEW_URL=$(echo "$DEPLOY_OUT" | grep -o 'https://e2e-preview-[^ ]*\.workers\.dev' | head -1)
+if [ -z "$PREVIEW_URL" ]; then
+  # fallback: any workers.dev URL from output
+  PREVIEW_URL=$(echo "$DEPLOY_OUT" | grep -o 'https://[^ ]*\.workers\.dev' | head -1)
+fi
+if [ -z "$PREVIEW_URL" ]; then
+  echo "ERROR: could not extract preview URL — check deploy output above"
+  exit 1
+fi
+echo "✓ Preview URL: $PREVIEW_URL"
+echo "▶ Running e2e tests (truck)..."
+BASE_URL="$PREVIEW_URL" bunx playwright test --config systems/truck/e2e/playwright.config.ts
+echo "▶ Running e2e tests (sync)..."
+BASE_URL="$PREVIEW_URL" bunx playwright test --config systems/sync/e2e/playwright.config.ts
+"""
+
+[tasks."test:e2e:sync"]
+description = "Run sync cross-tab e2e tests against local dev server"
+run = "cd systems/sync/e2e && bunx playwright test"
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 

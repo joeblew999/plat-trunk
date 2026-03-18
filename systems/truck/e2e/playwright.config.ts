@@ -29,7 +29,9 @@ export default defineConfig({
   // Auto-start the full dev stack if not already running.
   // reuseExistingServer: developer has `bun run dev` running → Playwright skips start.
   // Cold start: builds WASM + starts router + truck-cad + Vite (allow 3 min).
-  webServer: {
+  // Skip local dev server when BASE_URL points to a remote host (e.g. CF preview URL).
+  // Set BASE_URL=https://... and webServer is not started.
+  webServer: BASE_URL.startsWith('http://localhost') ? {
     command: 'bun run dev',
     cwd: REPO_ROOT,
     url: 'http://localhost:8788/api/health',  // via router → confirms full routing chain ready
@@ -37,7 +39,7 @@ export default defineConfig({
     timeout: 180_000,
     stdout: 'pipe',
     stderr: 'pipe',
-  },
+  } : undefined,
 
   testDir: '.',
   outputDir: './test-results',
