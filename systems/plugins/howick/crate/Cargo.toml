@@ -24,7 +24,7 @@ howick-rs     = { git = "https://github.com/joeblew999/howick-rs" }
 # Native-only: Truck B-Rep geometry for FrameExtractor
 # The .src/truck vendored copy is used via workspace path
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-monstertruck-modeling = { path = "../../../../.src/truck/crates/modeling", optional = true }
+monstertruck-modeling = { path = "../../../../.src/truck/monstertruck-modeling", optional = true }
 
 [profile.release]
 # Plugins share the 3MB Worker limit — optimise hard for size
