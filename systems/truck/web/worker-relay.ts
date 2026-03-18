@@ -6,6 +6,7 @@ import { reconcile } from './reconcile';
 import { client } from './api-client';
 import { cadDocManager } from './history-ui';
 import { MODEL_ID } from './app-config';
+import { getSceneController } from './scene-controller';
 
 const modelId = MODEL_ID;
 
@@ -123,10 +124,9 @@ const relay = {
 export { relay };
 window.__workerRelay = relay; // kept for E2E tests
 
-// Initial start if not in local mode
+// Initial start if not in local mode — wait for WASM SceneController via promise
 if (!window.__cadLocalMode) {
-  (function waitAndStart() {
-    if (!window.sceneController) { setTimeout(waitAndStart, 500); return; }
-    relay.connect();
-  })();
+  import('./scene-controller').then(({ sceneControllerReady }) => {
+    sceneControllerReady.then(() => relay.connect());
+  });
 }

@@ -22,6 +22,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { startTierManager, touchObject } from './tier-manager';
 import { cadDocManager } from './history-ui';
 import { MODEL_ID } from './app-config';
+import { setSceneController, getSceneController } from './scene-controller';
 
 export class CadViewport extends LitElement {
   /**
@@ -101,9 +102,9 @@ export class CadViewport extends LitElement {
   updated(changedProperties: Map<PropertyKey, unknown>) {
     if (changedProperties.has('selectedId')) {
       // Tell WASM which object is selected (for highlight rendering)
-      if (window.sceneController) {
+      if (getSceneController()) {
         try {
-          window.sceneController.select(this.selectedId || '');
+          getSceneController().select(this.selectedId || '');
         } catch (_) { /* select may not exist yet */ }
       }
     }
@@ -127,7 +128,7 @@ export class CadViewport extends LitElement {
         await window.__wasmInit();
         const controller = await new window.__SceneController('cad-canvas');
         controller.run();
-        window.sceneController = controller;
+        setSceneController(controller); // notifies all waiters + sets window.sceneController
         // Register with Module Router (ADR-0019) — the single WASM gate
         if (window.moduleRouter) {
           window.moduleRouter.register('core', controller);
@@ -187,7 +188,7 @@ export class CadViewport extends LitElement {
 
   _setupInteraction(canvas: HTMLElement): void {
     canvas.addEventListener('pointerdown', (e: PointerEvent) => {
-      if (e.button !== 0 || !window.sceneController) return;
+      if (e.button !== 0 || !getSceneController()) return;
       const [ndcX, ndcY] = this._toNdc(e, canvas);
 
       // Boolean pick-B mode: skip gizmo
@@ -195,8 +196,8 @@ export class CadViewport extends LitElement {
       const pickingB = r?.boolSelA && !r?.boolSelB;
 
       // Try gizmo hit first (only if something is selected and not picking B)
-      if (!pickingB && window.sceneController.get_interaction_mode() === 'selected') {
-        const axis = window.sceneController.begin_gizmo_drag(ndcX, ndcY);
+      if (!pickingB && getSceneController().get_interaction_mode() === 'selected') {
+        const axis = getSceneController().begin_gizmo_drag(ndcX, ndcY);
         if (axis) {
           this._isDraggingGizmo = true;
           this.controls!.enabled = false; // LOCK orbit during gizmo drag
@@ -216,25 +217,25 @@ export class CadViewport extends LitElement {
     });
 
     canvas.addEventListener('pointermove', (e: PointerEvent) => {
-      if (!this._isDraggingGizmo || !window.sceneController) return;
+      if (!this._isDraggingGizmo || !getSceneController()) return;
       const [ndcX, ndcY] = this._toNdc(e, canvas);
 
       // Push latest camera to WASM before gizmo calc (ray parity)
       this._syncCameraToWasm();
 
-      window.sceneController.update_gizmo_drag(ndcX, ndcY, this._prevNdc[0], this._prevNdc[1]);
+      getSceneController().update_gizmo_drag(ndcX, ndcY, this._prevNdc[0], this._prevNdc[1]);
       this._prevNdc = [ndcX, ndcY];
       e.stopPropagation();
     });
 
     canvas.addEventListener('pointerup', (e: PointerEvent) => {
-      if (!this._isDraggingGizmo || !window.sceneController) return;
+      if (!this._isDraggingGizmo || !getSceneController()) return;
       this._isDraggingGizmo = false;
       this.controls!.enabled = true; // UNLOCK orbit
       canvas.style.cursor = '';
       canvas.releasePointerCapture(e.pointerId);
 
-      const result = window.sceneController.end_gizmo_drag();
+      const result = getSceneController().end_gizmo_drag();
       if (result && result.objectId && cadDocManager?._sync?.modelId) {
         cadDocManager.record('translate', {
           objectId: result.objectId,
@@ -248,12 +249,12 @@ export class CadViewport extends LitElement {
     // Escape: cancel gizmo or deselect
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this._isDraggingGizmo && window.sceneController) {
+        if (this._isDraggingGizmo && getSceneController()) {
           this._isDraggingGizmo = false;
           this.controls!.enabled = true;
           canvas.style.cursor = '';
-          window.sceneController.cancel_gizmo_drag();
-        } else if (window.sceneController) {
+          getSceneController().cancel_gizmo_drag();
+        } else if (getSceneController()) {
           window.cadQuery('deselect', {});
         }
         e.preventDefault();
@@ -265,7 +266,7 @@ export class CadViewport extends LitElement {
 
   /** Read initial camera from WASM's get_state (one-time bootstrap) */
   _syncFromWasm() {
-    if (!window.cadQuery || !window.sceneController) {
+    if (!window.cadQuery || !getSceneController()) {
       setTimeout(() => this._syncFromWasm(), 100);
       return;
     }

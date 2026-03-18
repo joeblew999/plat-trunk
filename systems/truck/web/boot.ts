@@ -12,6 +12,7 @@ import { loadModel } from './model-loader';
 import { refreshBudget } from './storage-budget';
 import { cadDocManager } from './history-ui';
 import { MODEL_ID, RESET_REQUESTED, REDIRECTING } from './app-config';
+import { sceneControllerReady } from './scene-controller';
 
 export async function boot() {
     // Bail out if redirecting — prevent stale Automerge doc from loading
@@ -65,7 +66,10 @@ export async function boot() {
     }
 
     // ── 3. Wait for WASM SceneController ────────────────────────────
-    await waitFor(() => window.sceneController, 6000, 'WASM SceneController');
+    await Promise.race([
+        sceneControllerReady,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('WASM SceneController timeout')), 6000)),
+    ]);
     console.log('CAD running.');
 
     // Mode indicators

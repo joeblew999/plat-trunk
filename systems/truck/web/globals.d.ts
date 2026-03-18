@@ -19,7 +19,9 @@ declare global {
     __SceneController: any;  // WASM class constructor, no TS bindings
     __appReady: boolean;
 
-    // Set by WASM / cad-viewport.ts
+    // Set by cad-viewport.ts via setSceneController() from scene-controller.ts
+    // Prefer: import { getSceneController } from './scene-controller'
+    // window.sceneController kept for E2E tests and HTML onclick handlers
     sceneController: any;  // WASM instance, no TS bindings
 
     // Set by history-ui.ts (module singleton — prefer importing from history-ui.ts
@@ -27,10 +29,9 @@ declare global {
     cadDocManager: CadDocumentManagerBase;
     resetTierState: (() => void) | undefined;
 
-    // Set by core/module-router.ts (internal — prefer importing moduleRouter directly)
-    // window.__moduleRouter kept for legacy access only; use import { moduleRouter } from './core/module-router'
+    // Prefer: import { moduleRouter } from './core/module-router'
+    // window.moduleRouter kept for Datastar HTML attribute handlers
     moduleRouter: any;
-    __moduleRouter: any;
 
     // Set by state.ts (window globals for inline HTML handlers + E2E tests)
     cadCommand: (type: string, params?: Record<string, unknown>, opts?: CadOptions) => Promise<WasmResult>;

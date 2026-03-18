@@ -1,4 +1,5 @@
 // object-store.js — Per-object IndexedDB store (ADR-0025 Phase 1+3).
+import { getSceneController } from './scene-controller';
 // Each ExportEntry is stored individually, keyed by {modelId}/{objectId}.
 // Enables: evict one object to Warm, promote one object back to Hot.
 // Phase 3 additions: bulkPutObjects, listObjectsWithSpheres.
@@ -159,7 +160,7 @@ export async function clearObjects(modelId: string) {
  * Returns true if successful.
  */
 export async function evictObject(modelId: string, objectId: string) {
-    const ctrl = window.sceneController;
+    const ctrl = getSceneController();
     if (!ctrl) return false;
     const entryJson = ctrl.export_entry(objectId);
     if (!entryJson || entryJson === 'null') return false;
@@ -173,7 +174,7 @@ export async function evictObject(modelId: string, objectId: string) {
  * Returns the objectId if successful, null otherwise.
  */
 export async function promoteObject(modelId: string, objectId: string) {
-    const ctrl = window.sceneController;
+    const ctrl = getSceneController();
     if (!ctrl) return null;
     const entryJson = await getObject(modelId, objectId);
     if (!entryJson) return null;

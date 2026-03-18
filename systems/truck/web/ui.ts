@@ -4,8 +4,9 @@
 
 import { cadCommand, cadQuery, showFeedback } from './dispatch';
 import { MODEL_ID } from './app-config';
+import { getSceneController } from './scene-controller';
 
-function ctrl() { return window.sceneController; }
+function ctrl() { return getSceneController(); }
 
 // ─── Model lifecycle (all via cadCommand) ────────────────────────
 

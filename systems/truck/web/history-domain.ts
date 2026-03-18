@@ -27,6 +27,7 @@ import { executeReplayPlan, type ReplayPlan } from './replay-executor';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
 import { SyncClient, type SyncMessage } from '../../sync/ts/sync-client';
 import { IdbStorageAdapter, NullNetworkAdapter } from '../../sync/ts/adapters';
+import { getSceneController } from './scene-controller';
 
 export type { CadOperation, SyncMessage }; // SyncMessage owned by sync-client.ts
 
@@ -98,7 +99,6 @@ export class CadDocumentManagerBase {
     }
 
     get actorId(): string { return (this._sync as any).opts?.actorId ?? ''; }
-    _ctrl() { return window.sceneController; }
 
     async initRepo(): Promise<void> {
         await ensureWasm();
@@ -189,7 +189,7 @@ export class CadDocumentManagerBase {
         const nextOpCount = await this._sync.getOpCount() + 1;
         let snapshotRef: string | null = null;
         if (nextOpCount % SNAPSHOT_INTERVAL === 0) {
-            const ctrl = this._ctrl();
+            const ctrl = getSceneController();
             if (ctrl) snapshotRef = await storeBlob(ctrl.export_scene()) as string;
         }
 

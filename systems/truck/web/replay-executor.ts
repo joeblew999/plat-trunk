@@ -8,6 +8,7 @@ import { resetTierState, registerWarmObjects } from './tier-manager';
 import type { CadOptions, SceneEntry } from './types';
 import type { CadOperation } from '../../sync/ts/sync-types.generated';
 import { MODEL_ID } from './app-config';
+import { getSceneController } from './scene-controller';
 
 const PROGRESSIVE_THRESHOLD = 50;
 
@@ -57,7 +58,7 @@ async function replayRemainingOps(ops: CadOperation[], startIndex: number, REPLA
 }
 
 async function progressiveLoad(entries: SceneEntry[], ops: CadOperation[], startIndex: number, REPLAY: CadOptions): Promise<void> {
-  const ctrl = window.sceneController;
+  const ctrl = getSceneController();
   if (!ctrl) return;
   const modelId = MODEL_ID;
   cadCommand('clear', {}, REPLAY);

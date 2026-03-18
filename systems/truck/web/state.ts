@@ -9,12 +9,13 @@
 import { moduleRouter } from './core/module-router';
 import { reconcile, loadStyle } from './reconcile';
 import { cadCommand, cadQuery, addShape, applyStyle, showFeedback } from './dispatch';
+import { getSceneController } from './scene-controller';
 
 // If WASM was already initialized before state.ts loaded, register now.
 // Normally boot.ts calls moduleRouter.register() after WASM init,
 // but on fast loads WASM may already be ready.
-if (window.sceneController && !moduleRouter.ready) {
-  moduleRouter.register('core', window.sceneController);
+if (getSceneController() && !moduleRouter.ready) {
+  moduleRouter.register('core', getSceneController());
 }
 
 // Window globals: only what's needed for inline HTML handlers and E2E tests.

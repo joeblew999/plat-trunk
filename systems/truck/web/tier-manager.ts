@@ -4,6 +4,7 @@
 
 import { evictObject, promoteObject, clearObjects, listObjectsWithSpheres } from './object-store';
 import { currentBudget } from './storage-budget';
+import { getSceneController } from './scene-controller';
 
 // ── Thresholds (tunable via setThresholds) ──────────────────────────────────
 
@@ -55,7 +56,7 @@ async function tick() {
 }
 
 async function _tickInner() {
-    const ctrl = window.sceneController;
+    const ctrl = getSceneController();
     if (!ctrl || !window.cadQuery) return;
 
     // Get camera + selection from WASM state.
@@ -208,7 +209,7 @@ export function registerWarmObjects(sphereMap: Map<string, { center: number[]; r
 /** Aggressive pass — same as tick but no idle-time requirement, higher eviction limit.
  *  Triggered by cad-scene-changed from remote/server replays. */
 async function aggressivePass() {
-    const ctrl = window.sceneController;
+    const ctrl = getSceneController();
     if (!ctrl || !window.cadQuery) return;
     const state = window.cadQuery('get_state', {}, { reconcile: false });
     if (!state?.camera?.matrixWorld) return;
