@@ -144,28 +144,14 @@ run = "cd systems/truck/e2e && bunx playwright test"
 [tasks."test:e2e:preview"]
 description = "Deploy preview to CF then run e2e tests against it (no local dev server needed)"
 depends = ["ci:check-secrets"]
-run = """
-: "${CLOUDFLARE_API_TOKEN:?}"
-: "${CLOUDFLARE_ACCOUNT_ID:?}"
-
-echo "▶ Deploying preview..."
-DEPLOY_OUT=$(bun scripts/cf-deploy.ts upload --target truck --preview-alias e2e-preview 2>&1)
-echo "$DEPLOY_OUT"
-PREVIEW_URL=$(echo "$DEPLOY_OUT" | grep -o 'https://e2e-preview-[^ ]*\.workers\.dev' | head -1)
-if [ -z "$PREVIEW_URL" ]; then
-  # fallback: any workers.dev URL from output
-  PREVIEW_URL=$(echo "$DEPLOY_OUT" | grep -o 'https://[^ ]*\.workers\.dev' | head -1)
-fi
-if [ -z "$PREVIEW_URL" ]; then
-  echo "ERROR: could not extract preview URL — check deploy output above"
-  exit 1
-fi
-echo "✓ Preview URL: $PREVIEW_URL"
-echo "▶ Running e2e tests (truck)..."
-BASE_URL="$PREVIEW_URL" bunx playwright test --config systems/truck/e2e/playwright.config.ts
-echo "▶ Running e2e tests (sync)..."
-BASE_URL="$PREVIEW_URL" bunx playwright test --config systems/sync/e2e/playwright.config.ts
-"""
+run = [
+  "bun scripts/cf-deploy.ts upload --target truck --preview-alias e2e-preview 2>&1 | tee /tmp/deploy-out.txt",
+  "grep -o 'https://[^ ]*workers[.]dev' /tmp/deploy-out.txt | head -1 > /tmp/preview-url.txt",
+  "test -s /tmp/preview-url.txt || (echo 'ERROR: no preview URL found' && exit 1)",
+  "echo Preview URL: $(cat /tmp/preview-url.txt)",
+  "BASE_URL=$(cat /tmp/preview-url.txt) bunx playwright test --config systems/truck/e2e/playwright.config.ts",
+  "BASE_URL=$(cat /tmp/preview-url.txt) bunx playwright test --config systems/sync/e2e/playwright.config.ts",
+]
 
 [tasks."test:e2e:sync"]
 description = "Run sync cross-tab e2e tests against local dev server"

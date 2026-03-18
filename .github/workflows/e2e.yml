@@ -64,10 +64,7 @@ jobs:
         run: |
           OUT=$(bun scripts/cf-deploy.ts upload --target truck --preview-alias e2e-${{ github.run_id }} 2>&1)
           echo "$OUT"
-          URL=$(echo "$OUT" | grep -o 'https://e2e-[^ ]*\.workers\.dev' | head -1)
-          if [ -z "$URL" ]; then
-            URL=$(echo "$OUT" | grep -o 'https://[^ ]*\.workers\.dev' | head -1)
-          fi
+          URL=$(echo "$OUT" | grep -oP 'https://[^ ]+workers[.]dev' | head -1)
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "Preview URL: $URL"
         env:
