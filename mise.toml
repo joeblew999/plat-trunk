@@ -18,12 +18,11 @@ node               = "22"      # Node.js 22 — required for node:sqlite (vitest
 gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 "cargo:wasm-pack"  = "0.14.0"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
 doppler            = "latest"  # Secrets manager CLI — https://doppler.com
-# ── Tauri (macOS + iOS builds only — skipped on Linux/CI) ───────────────────
-[tools.macos]
-"cargo:tauri-cli" = "2"       # Tauri CLI — cargo tauri dev/build/ios
-xcodegen          = "latest"  # Generates Xcode project for Tauri iOS
-ruby              = "3.3"     # Required for cocoapods (Tauri iOS)
-"gem:cocoapods"   = "latest"  # Required for Tauri iOS builds
+# ── Tauri (macOS + iOS builds — install manually on macOS) ──────────────────
+# These are not in [tools] because they only work on macOS and would fail on
+# Linux CI. Install manually on macOS:
+#   mise use cargo:tauri-cli@2 xcodegen ruby@3.3
+#   gem install cocoapods
 # Rust is managed by rust-toolchain.toml (pins version + wasm targets + components) — do not add here
 # playwright browsers installed separately via mise run install:playwright
 
