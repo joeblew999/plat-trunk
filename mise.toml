@@ -18,10 +18,13 @@ node               = "22"      # Node.js 22 — required for node:sqlite (vitest
 gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 "cargo:wasm-pack"  = "0.14.0"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
 doppler            = "latest"  # Secrets manager CLI — https://doppler.com
-# ── Tauri (macOS + iOS builds — install manually on macOS) ──────────────────
-# These are not in [tools] because they only work on macOS and would fail on
-# Linux CI. Install manually on macOS:
-#   mise use cargo:tauri-cli@2 xcodegen ruby@3.3
+# ── VM automation — UTM + Windows/Pi/Android guest management ───────────────
+"github:joeblew999/utm-dev" = "latest"  # UTM VM automation (Windows ARM64, Pi, Android) — https://github.com/joeblew999/utm-dev
+# ── Tauri (macOS + Windows builds; iOS extras macOS only) ───────────────────
+"cargo:tauri-cli" = {version = "2",      os = ["macos", "windows"]}  # Tauri v2 — builds macOS + Windows apps
+xcodegen          = {version = "latest", os = ["macos"]}              # generates Xcode project from spec (macOS/iOS only)
+ruby              = {version = "3.3",    os = ["macos"]}              # required by CocoaPods (macOS/iOS only)
+# CocoaPods is a Ruby gem — install manually after ruby is available:
 #   gem install cocoapods
 # Rust is managed by rust-toolchain.toml (pins version + wasm targets + components) — do not add here
 # playwright browsers installed separately via mise run install:playwright
@@ -271,13 +274,21 @@ echo "────────────────────────�
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 [tasks."docs:sync"]
-description = "Copy lib/*/docs/ into VitePress docs/libs/ — incremental via sources/outputs"
+description = "Copy lib/*/docs/ into VitePress docs/libs/ + push to utm-dev — incremental via sources/outputs"
 sources = ["lib/*/docs/**/*.md"]
 outputs = ["systems/docs/website/docs/libs/**/*.md"]
 run = """
 mkdir -p systems/docs/website/docs/libs/billing
 cp -r lib/billing/docs/. systems/docs/website/docs/libs/billing/
 echo "✓ docs:sync complete"
+
+# Also sync into utm-dev if it's checked out alongside
+UTM_DEV=${UTM_DEV:-../utm-dev}
+if [ -d "$UTM_DEV" ]; then
+  mkdir -p "$UTM_DEV/docs/web"
+  cp -r systems/docs/website/docs/. "$UTM_DEV/docs/web/"
+  echo "✓ synced to utm-dev at $UTM_DEV/docs/web/"
+fi
 """
 
 [tasks."docs:dev"]
