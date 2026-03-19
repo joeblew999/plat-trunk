@@ -1,12 +1,16 @@
-# This folder contains symlinks to lib/*/docs/ directories.
-# Each lib that has a docs/ folder gets a symlink here so VitePress
-# can render it without duplicating content.
+# docs/libs/ — lib documentation mount point
 #
-# Convention:
-#   docs/libs/{name}     → ../../../../lib/{name}/docs/
-#   docs/libs/{name}.md  → ../../../../lib/{name}/README.md  (single-file libs)
+# macOS / Linux: symlinks (committed, recreated on clone)
+#   docs/libs/billing  →  ../../../../lib/billing/docs/
+#
+# Windows / CI production build: copy script
+#   mise run docs:sync   (runs scripts/docs-sync.mjs)
+#   copies lib/*/docs/ → docs/libs/*/
 #
 # To add a new lib:
-#   cd systems/docs/website/docs/libs
-#   ln -s ../../../../lib/{name}/docs {name}
-#   Add sidebar entry in .vitepress/config.ts
+#   1. Create lib/{name}/docs/*.md
+#   2. Add symlink (macOS/Linux):
+#        cd systems/docs/website/docs/libs
+#        ln -s ../../../../lib/{name}/docs {name}
+#   3. Add to scripts/docs-sync.mjs libs[] array
+#   4. Add sidebar entry in .vitepress/config.ts

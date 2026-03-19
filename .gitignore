@@ -100,3 +100,6 @@ mise.local.toml
 *.bak
 *.orig
 .playwright-cli/
+
+# lib docs copied by docs:sync (symlinks are tracked instead on macOS/Linux)
+systems/docs/website/docs/libs/billing/

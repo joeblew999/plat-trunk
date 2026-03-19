@@ -268,6 +268,24 @@ echo "────────────────────────�
 
 # ── Repo visibility ───────────────────────────────────────────────────────────
 
+# ── Docs ──────────────────────────────────────────────────────────────────────
+
+[tasks."docs:sync"]
+description = "Copy lib/*/docs/ into VitePress docs/libs/ (fallback for Windows; symlinks handle this on macOS/Linux)"
+run = "bun scripts/docs-sync.mjs"
+
+[tasks."docs:dev"]
+description = "Sync lib docs then start VitePress dev server"
+depends = ["docs:sync"]
+run = "mise --cd systems/docs run dev"
+
+[tasks."docs:build"]
+description = "Sync lib docs then build VitePress site"
+depends = ["docs:sync"]
+run = "mise --cd systems/docs run build"
+
+# ── Repo visibility ───────────────────────────────────────────────────────────
+
 [tasks."repo:public"]
 description = "Pre-flight secret scan then make repo public (enables free GitHub Actions CI)"
 run = '''
