@@ -1,0 +1,73 @@
+# Tauri desktop build — macOS (.dmg) + Windows (.msi / .exe)
+#
+# Triggered manually only — activate push/PR triggers when builds are stable.
+# iOS build is excluded from CI (requires Apple signing cert + dev team).
+#
+# Platform config overrides:
+#   src-tauri/tauri.macos.conf.json   → targets: dmg, app
+#   src-tauri/tauri.windows.conf.json → targets: msi, nsis
+#
+# To run manually: Actions tab → "Tauri Build" → Run workflow
+
+name: Tauri Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # mise reads mise.toml:
+      #   macOS  → installs cargo:tauri-cli, xcodegen, ruby (+ bun, node, etc.)
+      #   Windows → installs cargo:tauri-cli (+ bun, node, etc.); skips xcodegen + ruby
+      - uses: jdx/mise-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Rust + wasm targets handled by rust-toolchain.toml — mise respects it automatically.
+      # lib/observe is a separate Cargo workspace from the root — cache keyed to its lock.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tauri-${{ matrix.os }}-cargo-${{ hashFiles('lib/observe/Cargo.lock') }}
+          restore-keys: tauri-${{ matrix.os }}-cargo-
+
+      # Windows: WebView2 Runtime is pre-installed on windows-latest.
+      # Windows: MSVC build tools are pre-installed on windows-latest.
+      # No extra setup needed.
+
+      - name: Install JS deps
+        working-directory: lib/observe/demo-tauri
+        run: bun install
+
+      # Generate TypeScript bindings from Rust command signatures (debug build only).
+      # Must run before tauri build so src/bindings.ts exists.
+      - name: Generate bindings
+        working-directory: lib/observe/demo-tauri
+        run: bun run gen:bindings
+
+      - name: Build
+        working-directory: lib/observe/demo-tauri
+        run: bunx tauri build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: observe-tauri-${{ matrix.os }}
+          path: |
+            lib/observe/target/release/bundle/dmg/*.dmg
+            lib/observe/target/release/bundle/macos/*.app
+            lib/observe/target/release/bundle/msi/*.msi
+            lib/observe/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
