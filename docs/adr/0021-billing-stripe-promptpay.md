@@ -43,28 +43,87 @@ duplicating logic.
 
 ### Folder Structure
 
-Follows the `lib/observe` pattern: schema drives codegen, generated artefacts are
-imported by both worker and browser.
+Mirrors `lib/observe` exactly: schema drives codegen, demos are standalone CF Workers,
+`dev/` holds codegen scripts, `shared/` holds everything imported by both worker and browser.
 
 ```
 lib/
   billing/
-    schema.ts          ← source of truth: tiers, features, limits, stripe price IDs
-    codegen.ts         ← generates types, zod validators, mcp-gates, api-contract
-    generated/
-      types.ts         ← Tier enum, SubscriptionStatus
-      zod.ts           ← Zod validators for Stripe webhook payloads
-      api-contract.ts  ← Hono route types (checkout session, portal, webhook)
-      mcp-gates.ts     ← per-tier allowed MCP tool list
+    package.json           ← scripts: gen, check, dev:demo, test, deploy:demo
+    mise.toml              ← toolchain pins matching lib/observe
+    index.ts               ← public API re-exports
+
+    shared/                ← imported by worker AND browser, no CF-specific deps
+      schema.ts            ← source of truth: tiers, features, limits, stripe price IDs
+      types.ts             ← Tier enum, SubscriptionStatus (generated from schema)
+      zod.ts               ← Zod validators for Stripe webhook payloads (generated)
+      api-contract.ts      ← Hono route types: checkout, portal, webhook (generated)
+      mcp-gates.ts         ← per-tier allowed MCP tool list (generated)
+      tsconfig.json
+
+    dev/                   ← codegen scripts, run via `bun dev/gen-*.ts`
+      gen-types.ts
+      gen-zod.ts
+      gen-mcp-gates.ts
+      gen-api-contract.ts
+      gen.ts               ← runs all of the above
+
+    demo-worker/           ← standalone CF Worker: full billing flow in test mode
+      worker.ts            ← Hono app with /billing/* routes + inline browser UI
+      wrangler.toml        ← CF observability enabled, D1 binding for test DB
+      .dev.vars.example    ← STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PUBLISHABLE_KEY
+
+    tests/
+      integration.test.ts  ← webhook handler, tier gate, D1 writes
+      e2e.spec.ts          ← Playwright: full checkout → QR scan simulation → SSE unlock
 
 systems/
   billing/
-    stripe-webhook.ts  ← Hono POST /webhook handler (worker only)
-    subscription.ts    ← D1 read/write helpers (worker only)
+    stripe-webhook.ts      ← Hono POST /webhook handler (worker only)
+    subscription.ts        ← D1 read/write helpers (worker only)
 ```
 
-`lib/billing/` is shared — imported by worker and browser alike.
+`lib/billing/shared/` is imported by worker and browser alike.
 `systems/billing/` is worker-only — never touches the browser.
+
+### lib/observe Dependency
+
+`lib/billing` imports `lib/observe` for all logging. Every billing event —
+checkout session created, webhook received, tier updated, tool gate denied —
+is emitted as a structured log via the existing `pt-log` infrastructure.
+
+This means billing events flow into the same CF observability stack
+(Workers Logs, Logpush, OTLP) as the rest of plat-trunk. No separate
+billing log sink to maintain.
+
+```typescript
+// systems/billing/stripe-webhook.ts
+import { setupLog } from '../../lib/observe/setup'
+
+const { createLogger } = setupLog(app, 'billing')
+const billing = createLogger('stripe')
+
+// inside webhook handler:
+billing.info('subscription.created', { userId, tier, stripeCustomerId })
+billing.warn('subscription.deleted', { userId, previousTier })
+```
+
+### Demo Worker
+
+`lib/billing/demo-worker/` is a self-contained CF Worker that exercises
+the full billing flow against Stripe test mode:
+
+- `GET /`                   — browser UI: plan selector + payment button + SSE status panel
+- `POST /billing/checkout`  — creates Stripe Checkout Session, returns URL
+- `POST /billing/webhook`   — handles Stripe events, writes to local D1, fires SSE
+- `GET  /billing/status`    — SSE stream: pushes tier update when webhook fires
+- `GET  /billing/tier`      — returns current tier for a user (D1 read)
+
+The browser UI shows the PromptPay QR (rendered by Stripe Checkout),
+then listens on the SSE stream and updates a tier indicator in real time
+when Stripe fires the test webhook. This is the exact same pattern as
+`lib/observe/demo1/` — run it, poke it, verify the chain works end to end
+before wiring into the main truck-cad worker.
 
 ### Tier Schema (source of truth)
 
