@@ -226,6 +226,206 @@ STRIPE_PUBLISHABLE_KEY   ← exposed to browser via worker env
 
 ---
 
+## Use Cases
+
+### UC-1: Individual Designer — Free to Pro (e.g. Max Kusterman)
+
+Max is an industrial designer using Fusion 360 / Siemens NX. He finds plat-trunk
+via the Show HN post, signs up free, and tries the sketch tools.
+
+```
+1. Signs up → lands on Free tier automatically (no Stripe interaction)
+2. Hits a gated tool (e.g. boolean operations, export) → UI shows upgrade prompt
+3. Clicks "Upgrade to Pro" → POST /billing/checkout → redirected to Stripe Checkout
+4. Pays by card (Visa/Mastercard) — takes ~30 seconds
+5. Stripe fires webhook → D1 updated → Datastar SSE pushes tier: "pro"
+6. Tool palette unlocks in real time — no page reload
+7. Monthly invoice emailed automatically by Stripe Billing
+8. Can self-serve cancel via Customer Portal (post-launch)
+```
+
+**What Max sees:** Plan selector page, Stripe-hosted checkout (his card details
+never touch plat-trunk servers), then the tool palette simply expands.
+
+---
+
+### UC-2: Thai User — PromptPay QR
+
+A Thai architect discovers plat-trunk, wants to pay in THB without a card.
+
+```
+1. Lands on checkout → Stripe Payment Element detects TH locale
+2. PromptPay option surfaces automatically — no extra code on our side
+3. Stripe renders a QR code on the checkout page
+4. User opens their Thai bank app (Kasikorn, SCB, Bangkok Bank, etc.)
+5. Scans QR → bank app shows amount + "STRIPE PAYMENTS (THAILAND) LTD"
+6. Authenticates with PIN or biometric — entirely inside their bank app
+7. Stripe fires webhook → same flow as UC-1 from step 5 onwards
+```
+
+**Our UI does nothing for steps 4–6.** The bank app owns that experience entirely.
+
+**Known limitation:** Merchant name on the bank app is "STRIPE PAYMENTS (THAILAND) LTD"
+not plat-trunk. This is a Stripe constraint — PromptPay does not support custom
+statement descriptors.
+
+---
+
+### UC-3: RICOS Partnership — Enterprise Tier
+
+RICOS Co. Ltd (Fukumitsu-san, Tanimura-san) are the Truck kernel authors.
+Their use case is enterprise: multiple seats, FEA pipeline integration, no hard
+tool limits, priority support.
+
+```
+1. Enterprise deal negotiated offline
+2. Stripe subscription created manually via Dashboard (or API) — not self-serve
+3. stripe_customer_id stored against their organisation user record in D1
+4. All RICOS users under that org inherit the enterprise tier via D1 lookup
+5. All MCP tools unlocked: geometry authoring, IFC integration, MVT export,
+   FEA solver pipeline, assembly hierarchy ops
+6. Invoice issued monthly to RICOS accounts (JPY or USD)
+```
+
+**No self-serve checkout for enterprise.** The tier is provisioned manually
+and billed via Stripe Invoicing. This is standard practice — enterprise pricing
+is always negotiated, not listed.
+
+---
+
+### UC-4: AI Agent — MCP Tool Gate
+
+An AI agent (Claude Code, Cursor, or any MCP client) connects to plat-trunk's
+MCP server and attempts to call CAD tools on behalf of a user.
+
+```
+1. Agent connects to MCP server, presents user session token
+2. Agent calls cadCommand("boolean_subtract", { solidA, solidB })
+3. Tool dispatch calls isToolAllowed("boolean_subtract", userTier)
+4. If Free → returns MCP error: { code: "TIER_REQUIRED", required: "pro" }
+5. If Pro/Enterprise → executes, returns result
+```
+
+**The agent cannot trigger a payment.** Payment always requires a human
+in the loop on the Stripe-hosted checkout page. The gate either allows
+or denies — the agent is responsible for surfacing the upgrade message
+to the human user.
+
+**Why this matters:** without gating at the tool dispatch layer, a Pro user
+could share their MCP credentials and an agent could use Pro tools on behalf
+of Free accounts. The gate fires on every call regardless of who initiated it.
+
+---
+
+### UC-5: Subscription Lapse — Downgrade
+
+A Pro user's card fails, or they cancel. Stripe fires `customer.subscription.deleted`.
+
+```
+1. Stripe fires webhook → subscription.deleted event
+2. D1 updated: subscription_tier = "free", subscription_status = "inactive"
+3. Datastar SSE pushes tier: "free" if user is currently active in browser
+4. Tool palette shrinks to Free set — gated tools show upgrade prompt again
+5. User's existing geometry data is untouched — data is never deleted on downgrade
+6. Pro-only exports (if any) are blocked until resubscription
+```
+
+**Data is never deleted on downgrade.** A user who resubscribes gets
+everything back immediately.
+
+---
+
+### UC-6: Webhook Replay / Recovery
+
+Stripe guarantees webhook delivery with retries. If our worker is down briefly,
+Stripe retries for up to 72 hours. When the worker recovers, the event arrives
+and D1 is updated correctly. No special recovery code needed on our side.
+
+If D1 gets out of sync with Stripe (unlikely but possible), the source of truth
+is **Stripe**. The `stripe.subscriptions.retrieve(stripeCustomerId)` call
+can always be used to reconcile D1 against Stripe's state.
+
+---
+
+## Who Holds What
+
+This section is the definitive answer to "where does X live?"
+
+### Stripe Holds (permanent, queryable via API or Dashboard)
+
+| Data | Where in Stripe |
+|---|---|
+| Customer name, email, country | Customer object |
+| Card / bank details (tokenised) | PaymentMethod object — **we never see raw card numbers** |
+| Every charge, amount, currency, timestamp | Charge / PaymentIntent objects |
+| Subscription status, tier, renewal date | Subscription object |
+| Invoices and receipts (PDF) | Invoice objects — emailed automatically |
+| Refund records | Refund objects |
+| Product names and descriptions | Product objects |
+| Price IDs, amounts, currencies | Price objects |
+| Webhook event log (72hr) | Stripe Dashboard → Developers → Webhooks |
+
+**Stripe is the source of truth for all payment and financial data.**
+Never replicate this into D1 — just query Stripe when needed.
+
+---
+
+### D1 Holds (plat-trunk's operational state)
+
+| Data | Table / Column |
+|---|---|
+| Foreign key link to Stripe | `users.stripe_customer_id` |
+| Current tier (free/pro/enterprise) | `users.subscription_tier` |
+| Subscription status (active/inactive) | `users.subscription_status` |
+| Payment event log (foreign keys only) | `payments` table |
+
+**D1 is the source of truth for access control decisions.**
+Every MCP gate check and UI feature flag reads from D1 — not from Stripe.
+This keeps latency low (D1 is local to the CF Worker) and means Stripe
+being temporarily unreachable does not break the product.
+
+D1 is kept in sync by the webhook handler. It is a **derived view** of
+Stripe state, not an independent ledger.
+
+---
+
+### Browser Holds (ephemeral, in-memory via Datastar signals)
+
+| Data | Source |
+|---|---|
+| Current tier (for UI rendering) | SSE push from worker on login + on change |
+| Tool palette visibility state | Derived from tier signal |
+| Stripe publishable key | Injected by worker into page HTML — not secret |
+
+**The browser never holds:** card details, customer IDs, subscription IDs,
+or any Stripe secret keys. The publishable key is safe to expose — it is
+design intentionally public and can only be used to tokenise payment details
+on Stripe's servers.
+
+---
+
+### plat-trunk Holds (source code + config)
+
+| Data | Location |
+|---|---|
+| Tier definitions | `lib/billing/shared/schema.ts` |
+| Stripe price IDs | `lib/billing/shared/schema.ts` (post-Dashboard creation) |
+| Stripe secret keys | Wrangler secrets — never in source, never in git |
+| Webhook signing secret | Wrangler secrets |
+| Generated types / validators / gates | `lib/billing/shared/generated/` — in git, regenerated from schema |
+
+---
+
+### Nobody Holds
+
+| Data | Why |
+|---|---|
+| Raw card numbers (PAN) | Stripe handles PCI compliance — we never touch them |
+| Bank account details | Same — Stripe's tokenisation layer |
+| Thai national ID numbers | PromptPay links phone/ID to bank — this lives entirely in the Thai banking system, not in Stripe or plat-trunk |
+
+---
+
 ## Implementation Order
 
 1. **`lib/billing/schema.ts`** — define tiers and Stripe price ID placeholders
