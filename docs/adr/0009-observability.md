@@ -169,6 +169,60 @@ The implementation has two distinct types of work:
 
 **CF** handles everything after emission: storage, indexing, querying, aggregation, alerting, export, retention.
 
+---
+
+### Amendment (March 2026): WASM boundary constraint
+
+**Decision:** `scrub_entry` and `sample_keep` are removed from the WASM crate and
+kept as pure TypeScript in `LogBuffer`. The WASM crate's responsibility is
+**types and codegen only** at runtime, plus `pt-log` for Rust structured emission.
+
+**Reasoning:**
+
+`LogBuffer.push()` calls scrubbing and sampling on every single log entry — in
+the hot path of every request. Crossing the WASM boundary for this is the wrong
+trade-off:
+
+- The WASM call is async (`await loadObserveWasm()` + promise overhead)
+- `LogBuffer.push()` is synchronous by design — it must stay that way
+- The logic itself is trivial — a Set lookup and an LCG hash — not worth the boundary
+
+**The WASM crate has two distinct jobs that must not be confused:**
+
+| Job | What | How |
+|-----|------|-----|
+| **Codegen** | `LogEntry`, `LogLevel`, `LogKind`, `EntryFilter` types + JSON Schema | `ts-rs` + `schemars` → `shared/` generated files |
+| **Rust emission** | `pt-log` — structured `tracing::` calls from Truck/sync Rust code | `tracing-web` + `tracing-subscriber` → `console.log` JSON |
+
+Neither job requires `scrub_entry` or `sample_keep` to cross the WASM boundary
+into TypeScript. Those functions exist in the crate only because they were added
+before this boundary constraint was understood.
+
+**What gets removed from the crate:**
+- `scrub_entry()` — `#[wasm_bindgen]` export removed; Rust implementation kept
+  for use within `pt-log` panic hook only (scrubbing panic context before emission)
+- `sample_keep()` — `#[wasm_bindgen]` export removed entirely; pure TS version
+  in `LogBuffer` is the only implementation needed
+
+**What stays in TS (`index.ts`) unchanged:**
+- `scrubEntry()` — synchronous Set lookup, correct home
+- `sampleKeep()` — synchronous LCG hash, correct home
+- `LogBuffer` — ring buffer, rate limiter, level filter, `console.log` dispatch
+
+**What stays in the crate:**
+- `format_traceparent()`, `parse_trace_id()` — these are legitimately called
+  infrequently (once per request) and the WASM overhead is acceptable
+- `observe_version()` — demo/health use only
+- All types in `types.rs` — source of truth for codegen pipeline
+
+**Bundle size impact:**
+Each CF Worker that imports `lib/observe` does not load the observe WASM at
+runtime for scrubbing or sampling — those are pure TS. The observe WASM is only
+loaded if `format_traceparent` or `parse_trace_id` is explicitly called, and
+even then it is lazy-loaded once per isolate lifetime.
+
+---
+
 ### Rust crate: `pt-log`
 
 Location: `lib/observe/crate/` (co-located with the TypeScript lib — both are the observability system)
