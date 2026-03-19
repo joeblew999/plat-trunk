@@ -271,8 +271,14 @@ echo "────────────────────────�
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 [tasks."docs:sync"]
-description = "Copy lib/*/docs/ into VitePress docs/libs/ (fallback for Windows; symlinks handle this on macOS/Linux)"
-run = "bun scripts/docs-sync.mjs"
+description = "Copy lib/*/docs/ into VitePress docs/libs/ — incremental via sources/outputs"
+sources = ["lib/*/docs/**/*.md"]
+outputs = ["systems/docs/website/docs/libs/**/*.md"]
+run = """
+mkdir -p systems/docs/website/docs/libs/billing
+cp -r lib/billing/docs/. systems/docs/website/docs/libs/billing/
+echo "✓ docs:sync complete"
+"""
 
 [tasks."docs:dev"]
 description = "Sync lib docs then start VitePress dev server"
