@@ -42,6 +42,13 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
     ],
   },
   {
+    text: 'Library Guides',
+    collapsed: false,
+    items: [
+      { text: 'Billing — Stripe Setup', link: '/libs/billing/stripe-setup' },
+    ],
+  },
+  {
     text: 'Use Cases',
     link: '/who-is-this-for',
   },

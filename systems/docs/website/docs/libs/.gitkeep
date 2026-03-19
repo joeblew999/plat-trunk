@@ -1,0 +1,12 @@
+# This folder contains symlinks to lib/*/docs/ directories.
+# Each lib that has a docs/ folder gets a symlink here so VitePress
+# can render it without duplicating content.
+#
+# Convention:
+#   docs/libs/{name}     → ../../../../lib/{name}/docs/
+#   docs/libs/{name}.md  → ../../../../lib/{name}/README.md  (single-file libs)
+#
+# To add a new lib:
+#   cd systems/docs/website/docs/libs
+#   ln -s ../../../../lib/{name}/docs {name}
+#   Add sidebar entry in .vitepress/config.ts

@@ -66,7 +66,7 @@ and implementation order.
 
 For step-by-step Stripe account and local dev setup, see the billing library guide:
 
-→ [`lib/billing/docs/stripe-setup.md`](https://github.com/joeblew999/plat-trunk/blob/main/lib/billing/docs/stripe-setup.md)
+→ [Billing — Stripe Setup Guide](/libs/billing/stripe-setup)
 
 Covers:
 - Creating your Stripe account and completing business verification
