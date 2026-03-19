@@ -38,6 +38,7 @@ const sidebars = (): DefaultTheme.SidebarItem[] => [
       { text: 'Automerge (CRDT)', link: '/technical/automerge' },
       { text: 'kkrpc', link: '/technical/kkrpc' },
       { text: 'MCP Integration', link: '/technical/mcp' },
+      { text: 'Billing & Payments', link: '/technical/billing' },
     ],
   },
   {
