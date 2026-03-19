@@ -31,6 +31,8 @@ ADRs must be implemented in this order — each depends on the one before it.
 | [ADR-0011](0011-plugin-directory-contract.md) | Proposed |
 | [ADR-0012](0012-deployment-topologies.md) | Proposed |
 | [ADR-0013](0013-factory-hardware-integration.md) | Proposed |
+| [ADR-0019](0019-arkit-tauri-integration.md) | Proposed |
+| [ADR-0020](0020-tauri-v2-native-shell.md) | Accepted |
 
 ## New ADRs (March 2026)
 
@@ -38,3 +40,5 @@ ADRs must be implemented in this order — each depends on the one before it.
 |-----|------|-----|
 | [ADR-0012](0012-deployment-topologies.md) | Cloud, LAN (Tauri), Hybrid topologies | First factory customer needs LAN-only option. Same code everywhere via storage adapter abstraction. |
 | [ADR-0013](0013-factory-hardware-integration.md) | Howick FRAMA + OPC UA edge agent | Prin's factory, Si Racha Thailand. FrameBuilderMRD → plat-trunk pipeline. howick-rs crate + opcua-howick edge agent. |
+| [ADR-0019](0019-arkit-tauri-integration.md) | ARKit integration via Tauri v2 — AR preview, measurement, LiDAR scan, RoomPlan | Spatial input/output for plat-trunk on iOS/macOS. Extends Tauri v2 shell with native AR capabilities. |
+| [ADR-0020](0020-tauri-v2-native-shell.md) | Tauri v2 as native shell — desktop + mobile wrapper for the web frontend | Enables iOS/macOS native APIs (ARKit, file system, OPC UA) without rewriting the CAD platform. |
