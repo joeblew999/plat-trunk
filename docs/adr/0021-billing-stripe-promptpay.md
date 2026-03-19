@@ -214,15 +214,140 @@ export function isToolAllowed(tool: string, tier: Tier): boolean {
 Called at the MCP tool dispatch boundary — one check, no duplication between
 human UI and AI agent paths.
 
-### Stripe Secrets (CF Workers)
+### Secrets — Doppler + Wrangler
 
-Stored as Wrangler secrets, never in source:
+All secrets follow the existing plat-trunk pattern:
+**Doppler is the source of truth → pulled to `.env` via `mise run secrets:pull` → synced to CF via `wrangler secret put`**
 
+---
+
+#### Doppler Project: `plat-trunk` / Config: `dev` (and `staging`, `production`)
+
+| Doppler Key | Description | How to get it |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | Stripe API secret key — server-side only, never exposed | Stripe Dashboard → Developers → API Keys → Secret key |
+| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key — safe to expose to browser | Stripe Dashboard → Developers → API Keys → Publishable key |
+| `STRIPE_WEBHOOK_SECRET` | Webhook signing secret — verifies events came from Stripe | Stripe Dashboard → Developers → Webhooks → your endpoint → Signing secret |
+
+**Test vs Live keys:**
+
+| Environment | Doppler Config | Key Prefix |
+|---|---|---|
+| Local dev | `dev` | `sk_test_...` / `pk_test_...` / `whsec_...` |
+| Staging | `staging` | `sk_test_...` / `pk_test_...` / `whsec_...` |
+| Production | `production` | `sk_live_...` / `pk_live_...` / `whsec_...` |
+
+Never mix test and live keys. Doppler configs enforce the separation.
+
+---
+
+#### Wrangler Secrets (CF Workers runtime)
+
+These three are registered as Wrangler secrets on the truck-cad worker
+(and the billing demo-worker separately). They are **never** in `wrangler.toml` or source:
+
+```bash
+# Set once after Doppler pull — or run mise run secrets:set:stripe
+wrangler secret put STRIPE_SECRET_KEY      --name truck-cad
+wrangler secret put STRIPE_WEBHOOK_SECRET  --name truck-cad
+# STRIPE_PUBLISHABLE_KEY is not secret but set as a var for consistency:
+# add to wrangler.toml [vars] section — it's safe to commit
 ```
-STRIPE_SECRET_KEY
-STRIPE_WEBHOOK_SECRET
-STRIPE_PUBLISHABLE_KEY   ← exposed to browser via worker env
+
+---
+
+#### Local Dev: `.dev.vars` (gitignored)
+
+Wrangler reads `.dev.vars` automatically during `wrangler dev`.
+The file is populated from Doppler via `mise run secrets:pull`:
+
+```bash
+# systems/billing/demo-worker/.dev.vars  ← gitignored
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PUBLISHABLE_KEY=pk_test_...
 ```
+
+A `.dev.vars.example` (committed, no real values) documents the required keys:
+
+```bash
+# systems/billing/demo-worker/.dev.vars.example
+STRIPE_SECRET_KEY=sk_test_REPLACE
+STRIPE_WEBHOOK_SECRET=whsec_REPLACE
+STRIPE_PUBLISHABLE_KEY=pk_test_REPLACE
+```
+
+---
+
+#### Stripe CLI (local webhook forwarding)
+
+During local dev, Stripe webhooks must be forwarded to your local worker.
+The Stripe CLI does this:
+
+```bash
+stripe listen --forward-to localhost:8789/billing/webhook
+# → prints a local webhook signing secret: whsec_...
+# → use THIS value as STRIPE_WEBHOOK_SECRET in .dev.vars (not the Dashboard secret)
+# → they are different secrets — the CLI generates a temporary one per session
+```
+
+The Dashboard webhook secret is only used in staging/production deployments.
+
+---
+
+#### mise.toml Tasks to Add
+
+Add to root `mise.toml` alongside existing `secrets:*` tasks:
+
+```toml
+[tasks."secrets:set:stripe"]
+description = "Sync Stripe secrets from Doppler → CF Worker (truck-cad)"
+run = """
+: "${STRIPE_SECRET_KEY:?not set — run: mise run secrets:pull}"
+: "${STRIPE_WEBHOOK_SECRET:?not set — run: mise run secrets:pull}"
+printf '%s' "$STRIPE_SECRET_KEY"     | wrangler secret put STRIPE_SECRET_KEY     --name truck-cad
+printf '%s' "$STRIPE_WEBHOOK_SECRET" | wrangler secret put STRIPE_WEBHOOK_SECRET --name truck-cad
+echo "✓ Stripe secrets synced to truck-cad worker"
+"""
+
+[tasks."secrets:rotate:stripe"]
+description = "Print Stripe rotation steps"
+run = """
+echo "── Stripe secret rotation ───────────────────────────────────────"
+echo " 1. Roll the secret key at: https://dashboard.stripe.com/apikeys"
+echo " 2. Roll the webhook secret at: https://dashboard.stripe.com/webhooks"
+echo " 3. Update both in Doppler:"
+echo "    https://dashboard.doppler.com/workplace/plat-trunk/configs/dev"
+echo " 4. mise run secrets:pull          (updates .env)"
+echo " 5. mise run secrets:set:stripe    (syncs to CF Worker)"
+echo " 6. Revoke old keys in Stripe Dashboard"
+echo "────────────────────────────────────────────────────────────────"
+"""
+```
+
+Update the existing `secrets:set` task to also cover Stripe:
+
+```toml
+[tasks."secrets:set"]
+# ... existing CF + GitHub lines, add:
+run = """
+...existing lines...
+mise run secrets:set:stripe
+echo "✓ all secrets synced"
+"""
+```
+
+---
+
+#### Full Secrets Inventory for plat-trunk billing
+
+| Secret | Doppler Key | Wrangler Secret | `.dev.vars` | Committed |
+|---|---|---|---|---|
+| Stripe secret key | `STRIPE_SECRET_KEY` | ✅ yes | ✅ yes | ❌ never |
+| Stripe webhook secret | `STRIPE_WEBHOOK_SECRET` | ✅ yes | ✅ yes (CLI value locally) | ❌ never |
+| Stripe publishable key | `STRIPE_PUBLISHABLE_KEY` | ❌ (use `[vars]`) | ✅ yes | ✅ safe in `[vars]` |
+| CF API token | `CLOUDFLARE_API_TOKEN` | ❌ (deploy only) | ❌ | ❌ never |
+| CF Account ID | `CLOUDFLARE_ACCOUNT_ID` | ❌ (deploy only) | ❌ | ❌ never |
 
 ---
 
