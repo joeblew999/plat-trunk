@@ -22,6 +22,8 @@ TEST1_PORT          = "3340"
 TEST1_INSPECTOR     = "9248"
 TEST2_PORT          = "3341"
 TEST2_INSPECTOR     = "9252"
+TEST_WORKER_PORT    = "3342"
+TEST_WORKER_INSPECTOR = "9253"
 
 # ── iOS ───────────────────────────────────────────────────────────────────────
 
@@ -162,15 +164,14 @@ description = "Typecheck + Rust unit tests in parallel"
 run = ["bunx tsc --noEmit", "cargo test -p plat-observe --lib"]
 
 [tasks.test]
-description = "Integration tests — starts test workers, waits for ready, runs tests, kills all"
+description = "Integration tests — starts test-worker, waits for ready, runs tests, kills all"
 depends = ["build:wasm"]
 run = '''
-  lsof -ti:$TEST1_PORT,$TEST2_PORT,$TEST1_INSPECTOR,$TEST2_INSPECTOR | xargs kill -9 2>/dev/null; true
-  (cd demo1 && bunx wrangler dev worker.ts --port $TEST1_PORT --inspector-port $TEST1_INSPECTOR) &
-  (cd demo2 && bunx wrangler dev worker.ts --port $TEST2_PORT --inspector-port $TEST2_INSPECTOR) &
+  lsof -ti:$TEST_WORKER_PORT,$TEST_WORKER_INSPECTOR | xargs kill -9 2>/dev/null; true
+  (cd test-worker && bunx wrangler dev worker.ts --port $TEST_WORKER_PORT --inspector-port $TEST_WORKER_INSPECTOR) &
   trap 'kill $(jobs -p) 2>/dev/null; true' EXIT INT TERM
-  bunx wait-on http://localhost:$TEST1_PORT http://localhost:$TEST2_PORT --timeout 30000
-  bun tests/integration.test.ts
+  bunx wait-on http://localhost:$TEST_WORKER_PORT --timeout 30000
+  TEST_WORKER_URL=http://localhost:$TEST_WORKER_PORT bun tests/integration.test.ts
 '''
 
 [tasks."test:e2e"]
@@ -193,15 +194,17 @@ run = ["bunx tsc --noEmit", "cargo test -p plat-observe --lib", "bun run test", 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
 [tasks.deploy]
-description = "Deploy demo1 + demo2 then router to CF (service binding order)"
+description = "Deploy test-worker + demo1 + demo2 + router to CF (service binding order)"
 run = '''
-  echo "▶ [1/3] log-demo (demo1) ..."
+  echo "▶ [1/4] observe-test (test-worker) ..."
+  bunx wrangler deploy --config test-worker/wrangler.toml
+  echo "▶ [2/4] log-demo (demo1) ..."
   bunx wrangler deploy --config demo1/wrangler.toml
-  echo "▶ [2/3] log-demo-2 (demo2) ..."
+  echo "▶ [3/4] log-demo-2 (demo2) ..."
   bunx wrangler deploy --config demo2/wrangler.toml
-  echo "▶ [3/3] observe-router (demo-main) ..."
+  echo "▶ [4/4] observe-router (demo-main) ..."
   bunx wrangler deploy --config demo-main/wrangler.toml
-  echo "✓ All three workers deployed."
+  echo "✓ All four workers deployed."
 '''
 
 [tasks."ci:check-secrets"]
@@ -230,7 +233,7 @@ run = ["bun install", "mise run build:wasm", "bun run gen"]
 
 [tasks.kill]
 description = "Kill all lib/observe dev ports"
-run = "lsof -ti:$DEMO1_BUN_PORT,$DEMO2_BUN_PORT,$DEMO1_PORT,$DEMO2_PORT,$DEMO_LINE_PORT,$ROUTER_PORT,$DEMO1_INSPECTOR,$DEMO2_INSPECTOR,$ROUTER_INSPECTOR,$TEST1_PORT,$TEST2_PORT,$TEST1_INSPECTOR,$TEST2_INSPECTOR | xargs kill -9 2>/dev/null; true"
+run = "lsof -ti:$DEMO1_BUN_PORT,$DEMO2_BUN_PORT,$DEMO1_PORT,$DEMO2_PORT,$DEMO_LINE_PORT,$ROUTER_PORT,$DEMO1_INSPECTOR,$DEMO2_INSPECTOR,$ROUTER_INSPECTOR,$TEST1_PORT,$TEST2_PORT,$TEST1_INSPECTOR,$TEST2_INSPECTOR,$TEST_WORKER_PORT,$TEST_WORKER_INSPECTOR | xargs kill -9 2>/dev/null; true"
 
 [settings]
 lockfile = true

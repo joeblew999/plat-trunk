@@ -1,30 +1,29 @@
 /**
- * Integration tests — real CF Worker (wrangler or deployed) + Playwright browser.
+ * Integration tests — real CF Worker (wrangler or deployed).
  *
- *   bun lib/observe/tests/integration.test.ts                                   # local
- *   LOG_URL=https://log-demo.gedw99.workers.dev bun lib/observe/tests/integration.test.ts  # prod
+ *   mise run test                                                               # local (auto-starts test-worker)
+ *   TEST_WORKER_URL=https://observe-test.gedw99.workers.dev bun tests/integration.test.ts  # remote
+ *
+ * Runs against test-worker — the minimal lib/observe consumer.
+ * See lib/observe/test-worker/worker.ts for the template pattern.
  */
 
-import { chromium, type Browser, type Page } from 'playwright'
 import { spawn, type ChildProcess } from 'child_process'
 import { resolve } from 'path'
 
 // ── Config ────────────────────────────────────────────────────────────
-// Workers are started by mise run test — ports come from mise [env]
+// test-worker started by mise run test — port comes from mise [env]
 
-const REMOTE_URL = process.env.LOG_URL
+const REMOTE_URL = process.env.TEST_WORKER_URL
 const isRemote = !!REMOTE_URL
 const ROOT_DIR = resolve(import.meta.dir, '../../..')
 
-const TEST_PORT1 = parseInt(process.env.TEST1_PORT ?? '3340', 10)
-const TEST_PORT2 = parseInt(process.env.TEST2_PORT ?? '3341', 10)
-const BASE = isRemote ? REMOTE_URL! : `http://localhost:${TEST_PORT1}`
+const TEST_WORKER_PORT = parseInt(process.env.TEST_WORKER_PORT ?? '3342', 10)
+const BASE = isRemote ? REMOTE_URL! : `http://localhost:${TEST_WORKER_PORT}`
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 let tailProc: ChildProcess | null = null
-let browser: Browser
-let clientPage: Page
 let passed = 0
 let failed = 0
 
@@ -103,17 +102,12 @@ async function setup() {
     const res = await fetch(`${REMOTE_URL}/api/debug/logs`)
     if (!res.ok) throw new Error(`deployed worker not reachable: ${res.status}`)
   } else {
-    // Workers started by mise run test — verify reachable
     const res = await fetch(`${BASE}/api/debug/logs`)
-    if (!res.ok) throw new Error(`test worker not reachable on :${TEST_PORT1} — run via: mise run test`)
+    if (!res.ok) throw new Error(`test worker not reachable on :${TEST_WORKER_PORT} — run via: mise run test`)
   }
-  browser = await chromium.launch()
-  clientPage = await browser.newPage()
 }
 
 async function teardown() {
-  await clientPage?.close().catch(() => {})
-  await browser?.close().catch(() => {})
   try { tailProc?.kill() } catch {}
   console.log('[test] cleaned up')
 }
@@ -166,7 +160,7 @@ async function run() {
     // URLs endpoint
     const urlsRes = await fetch(`${BASE}/api/debug/logs/urls`)
     const urls = await urlsRes.json() as Record<string, unknown>
-    assert(urls.workerName === 'log-demo', `bad workerName`)
+    assert(urls.workerName === 'observe-test', `bad workerName`)
 
     // Clear
     await clearLogs()
@@ -176,29 +170,28 @@ async function run() {
   })
 
   // ── 2. Browser client end-to-end ─────────────────────────────────
-  // LOCAL ONLY: The ring buffer (/api/debug/logs) is a local dev debug tool.
-  // On CF production, browser logs → POST /ingest → worker console.log(JSON) → CF captures.
-  // Production observability: CF Workers Observability dashboard + `wrangler tail`.
-  // Do NOT use ring buffer API to verify production log delivery.
+  // Tests that browser entries posted to /ingest flow through to the ring buffer.
+  // test-worker has no UI — we drive the browser to POST entries directly.
 
   if (!isRemote) await t('browser → flush to worker', async () => {
-    const res = await clientPage.goto(`${BASE}/`)
-    assert(res?.status() === 200, `expected 200`)
-    assert((await clientPage.title()).includes('log-demo'), 'bad title')
+    await clearLogs()
 
-    // Status bar shows device info
-    await clientPage.waitForFunction(() => {
-      const el = document.getElementById('status')
-      return el?.textContent?.includes('online') || el?.textContent?.includes('offline')
-    }, { timeout: 8000 })
+    // Simulate what setupBrowserLog does: POST a batch of entries to ingest
+    const deviceId = crypto.randomUUID()
+    const sessionId = crypto.randomUUID()
+    const r = await ingest([
+      { ts: new Date().toISOString(), source: 'browser', kind: 'app', system: 'ui',
+        event: 'click', level: 'info', deviceId, sessionId },
+    ])
+    assert(r.ingested === 1, `expected 1 ingested, got ${r.ingested}`)
 
-    // localStorage has valid deviceId
-    const id = await clientPage.evaluate(() => localStorage.getItem('plat-device-id'))
-    assert(id !== null && id.length === 36, `bad deviceId: ${id}`)
-
-    // Browser entries flush to worker
-    await clientPage.evaluate(() => { (window as any).bl?.('info', 'ui', 'e2e-test') })
-    await waitFor(async () => (await getLogs({ source: 'browser' })).count > 0, 15000)
+    // Entry must appear in ring buffer with correct source
+    await waitFor(async () => (await getLogs({ source: 'browser' })).count > 0)
+    const { entries } = await getLogs({ source: 'browser' })
+    const e = entries.find(x => x.deviceId === deviceId)
+    assert(e !== undefined, 'browser entry not in ring buffer')
+    assert(e!.sessionId === sessionId, 'sessionId not preserved')
+    assert(e!.source === 'browser', `source should be browser, got ${e!.source}`)
   })
 
   // ── 3. Tracing + middleware ──────────────────────────────────────
@@ -239,7 +232,7 @@ async function run() {
   await t('errors → structured 500 with stack', async () => {
     await clearLogs()
 
-    const res = await fetch(`${BASE}/api/demo/throw`)
+    const res = await fetch(`${BASE}/api/test/throw`)
     assert(res.status === 500, `expected 500, got ${res.status}`)
     const body = await res.json() as Record<string, unknown>
     assert(body.error === 'Internal Server Error', `bad error: ${body.error}`)
@@ -282,7 +275,7 @@ async function run() {
     await clearLogs()
     const workerSSE = readSSE('system=sync', (e) => e.length >= 1, 8000)
     await new Promise(r => setTimeout(r, 100))
-    await fetch(`${BASE}/api/demo/worker-log`)
+    await fetch(`${BASE}/api/test/log`)
     const workerEntries = await workerSSE
     const merge = workerEntries.find(x => x.event === 'merge')
     assert(merge !== undefined, `merge not in SSE. Got: ${workerEntries.map(e => e.event).join(', ')}`)
@@ -292,7 +285,7 @@ async function run() {
     await clearLogs()
     const errorSSE = readSSE('', (e) => e.some(x => x.kind === 'error'), 8000)
     await new Promise(r => setTimeout(r, 100))
-    await fetch(`${BASE}/api/demo/throw`)
+    await fetch(`${BASE}/api/test/throw`)
     const errorEntries = await errorSSE
     const err = errorEntries.find(x => x.kind === 'error' && x.event === 'unhandled')
     assert(err !== undefined, `error not in SSE. Got: ${errorEntries.map(e => e.event).join(', ')}`)
@@ -304,19 +297,34 @@ async function run() {
   //
   // Spawns tail.ts as an independent process (exactly how a dev runs it),
   // reads its stdout from outside, asserts on what comes out.
+  // Uses two instances of test-worker to prove multi-worker aggregation.
 
   if (!isRemote) {
+    const TEST_WORKER_PORT2 = TEST_WORKER_PORT + 1  // second instance on adjacent port
+    let proc2: ReturnType<typeof spawn> | null = null
+
     await t('tail → multi-worker aggregation (black-box)', async () => {
-      // Both workers already running (started by mise run test)
-      const BASE2 = `http://localhost:${TEST_PORT2}`
       const STRIP_ANSI = /\x1b\[[0-9;]*m/g
       let tailBuf = ''
 
-      // Spawn tail.ts as a standalone subprocess — the way a dev would run it
+      // Start second test-worker instance
+      proc2 = spawn('bunx', [
+        'wrangler', 'dev', 'worker.ts',
+        '--port', String(TEST_WORKER_PORT2),
+        '--inspector-port', String(TEST_WORKER_PORT2 + 100),
+      ], { cwd: resolve(import.meta.dir, '../test-worker'), stdio: ['ignore', 'pipe', 'pipe'] })
+
+      await waitFor(async () => {
+        try { const r = await fetch(`http://localhost:${TEST_WORKER_PORT2}/api/health`); return r.ok } catch { return false }
+      }, 20000)
+
+      const BASE2 = `http://localhost:${TEST_WORKER_PORT2}`
+
+      // Spawn tail.ts as a standalone subprocess
       tailProc = spawn('bun', [
         'lib/observe/dev/tail.ts',
-        '--port', `demo1:${TEST_PORT1}`,
-        '--port', `demo2:${TEST_PORT2}`,
+        '--port', `worker1:${TEST_WORKER_PORT}`,
+        '--port', `worker2:${TEST_WORKER_PORT2}`,
       ], { cwd: ROOT_DIR, stdio: ['ignore', 'pipe', 'pipe'] })
 
       tailProc.stdout!.on('data', (d: Buffer) => { tailBuf += d.toString() })
@@ -325,44 +333,42 @@ async function run() {
       // Wait for tail.ts to connect to both workers
       await waitFor(async () => {
         const plain = tailBuf.replace(STRIP_ANSI, '')
-        return plain.includes(`connected :${TEST_PORT1}`) && plain.includes(`connected :${TEST_PORT2}`)
+        return plain.includes(`connected :${TEST_WORKER_PORT}`) && plain.includes(`connected :${TEST_WORKER_PORT2}`)
       }, 15000)
 
       // Trigger logs on BOTH workers
       tailBuf = ''
-      await fetch(`${BASE}/api/demo/worker-log`)
-      await fetch(`${BASE2}/api/demo/worker-log`)
+      await fetch(`${BASE}/api/test/log`)
+      await fetch(`${BASE2}/api/test/log`)
 
-      // Wait for both entries to appear in tail output
+      // Both should produce test-entry events
       await waitFor(async () => {
         const plain = tailBuf.replace(STRIP_ANSI, '')
-        return plain.includes('merge') && plain.includes('login')
+        return (plain.match(/test-entry/g) ?? []).length >= 2
       }, 8000)
 
-      let plain = tailBuf.replace(STRIP_ANSI, '')
-      assert(plain.includes('merge'), `demo1 entry (sync:merge) not in tail`)
-      assert(plain.includes('login'), `demo2 entry (auth:login) not in tail`)
-      assert(plain.includes('demo1'), `demo1 name not in tail`)
-      assert(plain.includes('demo2'), `demo2 name not in tail`)
+      const plain = tailBuf.replace(STRIP_ANSI, '')
+      assert((plain.match(/test-entry/g) ?? []).length >= 2, 'expected test-entry from both workers')
+      assert(plain.includes('worker1'), 'worker1 name not in tail')
+      assert(plain.includes('worker2'), 'worker2 name not in tail')
 
       // Scrubbing: sensitive data redacted end-to-end through the aggregator
       tailBuf = ''
-      await fetch(`http://localhost:${TEST_PORT1}/api/debug/logs/ingest`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify([{
-          ts: new Date().toISOString(), source: 'browser', kind: 'app',
-          system: 'tail-scrub', event: 'login-pw', level: 'warn',
-          password: 'hunter2', userId: 'visible-user',
-        }]),
-      })
+      await ingest([{
+        ts: new Date().toISOString(), source: 'browser', kind: 'app',
+        system: 'tail-scrub', event: 'login-pw', level: 'warn',
+        password: 'hunter2', userId: 'visible-user',
+      }])
 
       await waitFor(async () => tailBuf.replace(STRIP_ANSI, '').includes('login-pw'), 8000)
 
-      plain = tailBuf.replace(STRIP_ANSI, '')
-      assert(plain.includes('[REDACTED]'), `[REDACTED] not in tail`)
-      assert(!plain.includes('hunter2'), `LEAKED: raw password in tail`)
-      assert(plain.includes('visible-user'), `non-sensitive userId missing`)
+      const plain2 = tailBuf.replace(STRIP_ANSI, '')
+      assert(plain2.includes('[REDACTED]'), `[REDACTED] not in tail`)
+      assert(!plain2.includes('hunter2'), `LEAKED: raw password in tail`)
+      assert(plain2.includes('visible-user'), `non-sensitive userId missing`)
     })
+
+    try { proc2?.kill() } catch {}
   }
 
   // ── 7. Prod-only ─────────────────────────────────────────────────

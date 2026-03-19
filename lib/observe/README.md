@@ -3,75 +3,86 @@
 Structured logging, tracing, and scrubbing for all Cloudflare Workers.
 Browser logs flush through the worker so CF captures everything in one pipeline.
 
-## PORTS 
+## Structure
 
-Make sure your dont have port clashing with other stuff first.
+```
+lib/observe/
+  index.ts            ← LogBuffer, Logger, types, scrubbing
+  setup.ts            ← setupLog() one-liner for Hono workers
+  browser.ts          ← setupBrowserLog() for browser-side
+  middleware.ts       ← request tracing + error handler
+  endpoint.ts         ← debug routes: /logs, /logs/tail, /logs/ingest
+  crate/              ← Rust source of truth → types + codegen (NOT runtime logic)
+  shared/             ← generated outputs: TS types, Zod, OpenAPI, MCP tools
+  test-worker/        ← minimal lib/observe consumer — CI target + system worker template
+  demo1/              ← interactive demo (sync/truck patterns)
+  demo2/              ← interactive demo (auth/session patterns)
+  demo-main/          ← router worker — proxies demo1 + demo2 + federated MCP
+  demo-line/          ← WASM demo
+  demo-tauri/         ← Tauri shell proof of concept (see ADR-0020)
+  dev/                ← dev tooling: tail.ts, orchestrate.ts, gen-*.ts
+  tests/              ← integration.test.ts (runs against test-worker)
+                         e2e.spec.ts (runs against demo1 + demo2)
+```
 
-We use the following ports: 
+## Ports (single source of truth: mise.toml)
 
-???
+| Worker | Dev port | Test port | Inspector |
+|--------|----------|-----------|-----------|
+| observe-router (demo-main) | 8686 | — | 9250 |
+| log-demo (demo1) | 3335 | — | 9240 |
+| log-demo-2 (demo2) | 3336 | — | 9241 |
+| observe-test (test-worker) | — | 3342 | 9253 |
+| demo-line | 3337 | — | — |
+| demo1 bun | 3333 | — | — |
+| demo2 bun | 3334 | — | — |
 
-## Local Commands
+## Local commands
 
 ```bash
-# --- keep these running in 2 terminals ---
+# Start router + all demos (wrangler multi-config)
+mise run dev
 
-# start all 3 workers
-bun run dev
+# Stream logs from running workers
+mise run tail
 
-# stream logs from local workers
-bun run tail
+# Integration tests (runs test-worker, 6 tests)
+mise run test
 
-# --- run against the running workers ---
+# Playwright e2e (runs demo1 + demo2, 7 tests)
+mise run test:e2e
 
-# integration tests (6/6)
-bun run test
-
-# playwright e2e
-bun run test:e2e
+# Full CI gate
+mise run ci
 ```
 
-## Remote Commands
+## Remote commands
 
-These MUST be the same commands with with ENVS !!
+Same commands with env overrides — always identical to local.
 
 ```bash
-# deploy all 3 workers
-bun run deploy
+# Deploy all 4 workers to CF
+mise run deploy
 
-# --- keep this running ---
+# Stream logs from deployed workers
+ROUTER_URL=https://observe-router.gedw99.workers.dev mise run tail
 
-# stream logs from CF
-ROUTER_URL=https://observe-router.gedw99.workers.dev bun run tail
-
-# --- run against deployed workers ---
-
-# integration tests (4/4)
-LOG_URL=https://log-demo.gedw99.workers.dev bun run test
-
-# playwright e2e
-ROUTER_URL=https://observe-router.gedw99.workers.dev bun run test:e2e
+# Integration tests against deployed test-worker
+TEST_WORKER_URL=https://observe-test.gedw99.workers.dev mise run test
 ```
 
-## 3 Workers
+## 4 Workers
 
-We have 3 because its the bare minimum to prove the architetcure works !
+| Worker | Purpose |
+|--------|---------|
+| `observe-test` | CI target + system worker template. No UI, minimal, just setupLog() wiring. |
+| `log-demo` (demo1) | Interactive demo — sync/truck logging patterns. |
+| `log-demo-2` (demo2) | Interactive demo — auth/session logging patterns. |
+| `observe-router` | Router — proxies demo1 + demo2, federated MCP endpoint. |
 
-The package.json commands call into:
+Service bindings show **"not connected"** on startup — normal. Wrangler connects lazily on first request.
 
-`dev/wrangler.sh` runs one `wrangler dev` with three configs:
-
-```
-demo-main/  (primary — router on :8686, service bindings to both demos)
-demo1/      (secondary — log-demo, routed via /demo1/*)
-demo2/      (secondary — log-demo-2, routed via /demo2/*)
-```
-
-All three workers run in a single process.
-
-Service bindings show **"not connected"** on startup — this is normal. Wrangler connects them lazily on the first request. After the first hit they show "connected".
-
-## Add to your worker
+## Add to a system worker
 
 ```ts
 import { setupLog, type LogEnv } from '../../lib/observe'
@@ -90,7 +101,9 @@ const sync = createLogger('sync')
 sync.info('merge', { modelId, opCount })
 ```
 
-## Add to your browser
+See `test-worker/worker.ts` for the full template pattern.
+
+## Add to the browser
 
 ```ts
 import { setupBrowserLog } from '../../lib/observe/browser'
@@ -106,6 +119,16 @@ ui.info('click', { button: 'save' })
 Browser logs queue in localStorage and flush to the worker every 2s.
 The worker `console.log`s them as structured JSON — CF captures from there.
 
+## Import generated types (no codegen needed in consumers)
+
+```ts
+import type { LogEntry, LogLevel } from '../../lib/observe/shared/log-entry.generated'
+import { LogEntrySchema } from '../../lib/observe/shared/schemas.zod'
+```
+
+Consumers never run codegen. Codegen runs once in `lib/observe` via `mise run gen`.
+The outputs in `shared/` are committed and consumed directly by import.
+
 ## How data flows
 
 ```
@@ -119,13 +142,11 @@ Worker also writes to:
              → SSE /tail → tail.ts (local aggregator)
 ```
 
-- **Production**: `console.log(JSON.stringify(entry))` → CF Workers Observability dashboard + `wrangler tail`
-- **Local dev only**: ring buffer + `/api/debug/logs` + SSE `/tail` — debug API, single process, single isolate
-- **Ring buffer is NOT available in production** — CF runs distributed isolates; use Workers Observability instead
+- **Production**: `console.log(JSON.stringify(entry))` → CF Workers Observability + `wrangler tail`
+- **Local dev only**: ring buffer + `/api/debug/logs` + SSE `/tail`
+- **Ring buffer is NOT available in production** — CF runs distributed isolates
 
-## wrangler.toml
-
-Every worker needs this:
+## wrangler.toml (every worker needs this)
 
 ```toml
 [observability]
@@ -134,26 +155,8 @@ head_sampling_rate = 1
 
 [observability.logs]
 invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
 ```
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `index.ts` | LogBuffer, Logger, types, scrubbing |
-| `setup.ts` | `setupLog()` one-liner |
-| `endpoint.ts` | Debug routes: `/logs`, `/logs/tail`, `/logs/ingest` |
-| `middleware.ts` | Request tracing + error handler |
-| `browser.ts` | `setupBrowserLog()` for browser-side |
-| `config.ts` | CF dashboard URL builder |
-| `trace.ts` | W3C traceparent helpers |
-| `dev/wrangler.sh` | Start local multi-config wrangler dev |
-| `dev/deploy.sh` | Deploy all 3 workers to CF |
-| `dev/tail.sh` | Live logs from deployed workers |
-| `dev/orchestrate.ts` | Wrangler lifecycle (start/stop workers for tests) |
-| `dev/tail.ts` | Terminal log aggregator |
-| `dev/run.mjs` | Command runner |
-| `demo-main/` | Primary router (multi-config) |
-| `demo1/` | Sync/truck service demo |
-| `demo2/` | Auth/session service demo |
-| `tests/` | Integration + e2e tests |
