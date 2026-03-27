@@ -464,3 +464,53 @@ Our current architecture (Worker + R2 + SSE + merge_docs) is **correct but subop
 Before building the DO layer ourselves, spike automerge-repo on DOs to see if it fits. If it does, wrap it with our API. If not, port y-partykit's storage patterns with Automerge sync protocol.
 
 Either way, the `@plat/sync/*` export boundaries don't change. Consumers are protected from the transport decision.
+
+## JS Automerge vs Rust WASM Automerge — compatibility
+
+### The reality: they're the SAME code
+
+`@automerge/automerge` (the npm package) is **not a separate JS implementation**. It's a thin JS wrapper around `@automerge/automerge-wasm`, which is the **same Rust code** compiled to WASM via wasm-bindgen.
+
+```
+@automerge/automerge (npm)
+  └── @automerge/automerge-wasm (npm)
+        └── automerge (Rust crate) compiled to WASM
+```
+
+So "JS Automerge" and "Rust WASM Automerge" are the same Rust code. The binary format is identical because it's the same implementation.
+
+### Version gap
+
+| | Our crate | npm package | Status |
+|--|-----------|-------------|--------|
+| **Rust crate** | `automerge = "0.7.4"` | — | We compile directly |
+| **npm (JS wrapper)** | — | `@automerge/automerge` 2.2.8–3.x | automerge-repo uses this |
+| **npm (WASM)** | — | `@automerge/automerge-wasm` | Ships inside npm package |
+| **Latest Rust crate** | — | — | `1.0.0-beta.3` (crates.io) |
+
+The Rust crate versions (crates.io): `0.7.4` → `0.8.0` → `1.0.0-alpha.0` → ... → `1.0.0-beta.3`
+
+The npm package versions: `2.x` → `3.x` (these are the JS wrapper versions, not the Rust crate versions)
+
+**Binary format**: Automerge 2.0+ uses the same binary format. Automerge 3.0 confirmed: "uses the same file format as Automerge 2". Our `0.7.4` crate is the Rust equivalent of the npm `2.x` era — **same binary format**.
+
+### What this means
+
+1. **Documents are compatible** — a doc created by our Rust 0.7.4 WASM can be read by `@automerge/automerge` npm v3, and vice versa. Same binary format.
+
+2. **Sync protocol is compatible** — `generateSyncMessage`/`receiveSyncMessage` are in the Rust crate (`automerge::sync`). The npm package calls the same Rust code via WASM. Our crate has the same functions.
+
+3. **We don't need both** — if we use automerge-repo (which brings `@automerge/automerge` npm), it includes its own WASM. We could drop our separate Rust WASM build and use automerge-repo's.
+
+4. **Or we keep both** — our Rust WASM for the op log (our custom `Op` struct, dedup, replay), automerge-repo's WASM for the sync protocol. They read the same docs.
+
+### Recommendation
+
+**For the PartyKit + automerge-repo migration (Option E)**:
+
+- **Browser**: Use automerge-repo's `@automerge/automerge` (it brings its own WASM). Our `SyncClient` wraps automerge-repo's `Repo` + `DocHandle` instead of raw doc bytes.
+- **Server (DO)**: Same — automerge-repo `Repo` instance with DO storage adapter.
+- **Our Rust crate**: Keep for the op-level API (`Op` struct, dedup, replay logic). These are our extensions on top of Automerge. Use automerge-repo for transport.
+- **Our WASM build**: May become unnecessary if automerge-repo handles all doc operations. Evaluate during spike.
+
+**No compatibility issue blocks the migration.** The formats are the same. The question is architecture, not interop.
