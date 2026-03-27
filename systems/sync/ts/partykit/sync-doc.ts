@@ -141,6 +141,8 @@ export interface SyncDocOptions {
   actorId: string;
   /** WebSocket protocol — 'ws' for local, 'wss' for production */
   protocol?: 'ws' | 'wss';
+  /** Party namespace in the URL (default: 'ops') — maps to DO binding name */
+  party?: string;
 }
 
 // ── SyncDoc ──────────────────────────────────────────────────────────────────
@@ -158,7 +160,8 @@ export class SyncDoc {
   constructor(opts: SyncDocOptions) {
     this.actorId = opts.actorId;
     const protocol = opts.protocol ?? 'ws';
-    const url = `${protocol}://${opts.host}/parties/main/${opts.room}`;
+    const party = opts.party ?? 'ops';
+    const url = `${protocol}://${opts.host}/parties/${party}/${opts.room}`;
 
     this.adapter = new SyncDocNetworkAdapter(url);
     this.repo = new Repo({

@@ -20,7 +20,7 @@ import {
 import { encode as cborEncode, decode as cborDecode } from 'cborg';
 import WebSocket from 'ws';
 
-const WS_URL = 'ws://127.0.0.1:1999/parties/main';
+const WS_URL = 'ws://127.0.0.1:1999/parties/sync';
 
 // ── Test NetworkAdapter (Node.js WebSocket → automerge-repo) ─────────────────
 

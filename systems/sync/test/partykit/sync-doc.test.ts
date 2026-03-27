@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 function createPeer(room: string, actorId: string): SyncDoc {
-  const peer = new SyncDoc({ host: HOST, room, actorId, protocol: 'ws' });
+  const peer = new SyncDoc({ host: HOST, room, actorId, protocol: 'ws', party: 'ops' });
   peers.push(peer);
   return peer;
 }

@@ -3,15 +3,21 @@ main = "worker.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
-# DO binding name "MAIN" maps to URL /parties/main/:room via hono-party
+# Three DO classes — one per feature, one per route:
+#   /parties/sync/:room      → Sync DO (raw Automerge transport)
+#   /parties/ops/:room       → Ops DO (SyncDoc add/undo/redo/group)
+#   /parties/presence/:room  → Presence DO (ephemeral broadcast)
+
 [durable_objects]
 bindings = [
-  { name = "MAIN", class_name = "Main" }
+  { name = "SYNC", class_name = "Sync" },
+  { name = "OPS", class_name = "Ops" },
+  { name = "PRESENCE", class_name = "Presence" },
 ]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["Main"]
+new_classes = ["Sync", "Ops", "Presence"]
 
 [dev]
 port = 1999
