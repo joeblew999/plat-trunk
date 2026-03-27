@@ -10,76 +10,123 @@ Package: `packages/automerge-partyserver/`
 
 Fork is at /Users/apple/workspace/go/src/github.com/joeblew999/partykit
 
-
-## Status
+## Done
 
 - [x] Fork PartyKit → `joeblew999/partykit`
 - [x] Create `feat/automerge-partyserver` branch
-- [x] Write server: `withAutomerge(Server)` mixin using automerge-repo `Repo` internally
+- [x] Write server: `withAutomerge(Server)` mixin using automerge-repo
 - [x] Write `DOStorageAdapter` — automerge-repo StorageAdapter for DO storage (128KB chunking)
 - [x] Write `PartyKitNetworkAdapter` — automerge-repo NetworkAdapter for PartyKit WebSocket
-- [x] Write client: `AutomergeProvider` with automerge-repo `Repo` + IndexedDB + BroadcastChannel
+- [x] Write client: `AutomergeProvider` with automerge-repo Repo + IndexedDB + BroadcastChannel
 - [x] Write README with Yjs vs Automerge comparison
-- [x] Add build config (tsdown, same as y-partyserver)
 - [x] TypeScript compiles with 0 errors
-- [ ] Test with PartyKit dev server (needs `npx partykit dev`)
-- [ ] Wire into `@plat/sync` as transport option
-- [ ] Push PR to upstream (or keep as fork)
+- [x] PartyKit dev server runs locally (:1999)
+- [x] 4/4 sync tests pass (connect, change, two-client convergence)
 
-## Architecture
+## The migration reality
 
-Uses automerge-repo internally — not a separate sync implementation:
+PartyKit **replaces** the current system. It does not sit alongside it.
 
-```
-Browser
-  AutomergeProvider
-    → automerge-repo Repo (sync protocol, DocHandle lifecycle)
-    → PartyKitWebSocketAdapter (WebSocket to PartyKit)
-    → IndexedDBStorageAdapter (local persistence)
-    → BroadcastChannelNetworkAdapter (cross-tab sync)
+| | Current (@plat/sync) | PartyKit |
+|--|---------------------|----------|
+| **Transport** | HTTP POST + SSE | WebSocket |
+| **Server state** | Stateless Worker (fresh each request) | Stateful DO (doc in memory) |
+| **Sync protocol** | `merge_docs` (full doc every time) | `generateSyncMessage` (incremental) |
+| **Storage** | R2 (single blob, full rewrite) | DO SQLite (incremental appends) |
+| **Client** | SyncClient + adapters | AutomergeProvider + automerge-repo Repo |
+| **Doc model** | Our custom Op struct in Automerge | Raw Automerge doc |
+| **Cross-tab** | BroadcastChannel (custom) | BroadcastChannel (automerge-repo) |
+| **Presence** | Custom PresenceState | Ephemeral messages |
 
-PartyKit Server (Durable Object)
-  withAutomerge(Server) mixin
-    → automerge-repo Repo (server-side sync, peer tracking)
-    → PartyKitNetworkAdapter (WebSocket ↔ automerge-repo messages)
-    → DOStorageAdapter (DO storage with 128KB chunking)
-    → WebSocket Hibernation (zero cost when idle)
-```
+**You can't "wire PartyKit into SyncClient."** They are different architectures.
 
-## What automerge-repo gives us (vs building ourselves)
+## What consumers care about
 
-| Feature | Without automerge-repo | With automerge-repo |
-|---------|----------------------|---------------------|
-| Sync protocol | Raw merge_docs (full doc every time) | Incremental sync (only changes since last sync) |
-| Sync state | None — fresh merge every request | Per-peer SyncState, encoded + persisted |
-| Document lifecycle | Manual flags | DocHandle state machine (idle → loading → ready) |
-| Peer tracking | None | Per-peer metadata (storageId, isEphemeral) |
-| Storage format | Single blob | Snapshot + incremental chunks |
-| Throttled saves | Manual debounce | Built-in (100ms configurable) |
-
-## Next: wire into @plat/sync
+Not transport. They care about the application API:
 
 ```typescript
-// @plat/sync/client — new transport option
-
-import { AutomergeProvider } from 'automerge-partyserver/provider';
-
-// SyncClient wraps AutomergeProvider
-// Consumers see @plat/sync/client — they don't know PartyKit exists
-class SyncClient {
-  private provider: AutomergeProvider;
-
-  constructor(opts) {
-    if (opts.partyHost) {
-      // PartyKit transport (WebSocket + automerge-repo)
-      this.provider = new AutomergeProvider({
-        host: opts.partyHost,
-        room: opts.modelId,
-      });
-    } else {
-      // Legacy transport (HTTP + merge_docs)
-      // ... existing code
-    }
-  }
-}
+await sync.addOp(op);
+await sync.getOps();
+await sync.getReplayOps();
+await sync.undo(opId);
+await sync.redo(opId);
+sync.onRemoteOps = (ops) => {};
+sync.setPresence({ cursor });
+sync.onPresence = (actors) => {};
 ```
+
+This API stays the same. The class behind it changes.
+
+## Migration phases
+
+### Phase 1 — SyncDoc (new client class)
+
+Build `SyncDoc` — PartyKit-native replacement for `SyncClient`. Same application API, PartyKit internals:
+
+```
+ts/client/sync-doc.ts — NEW
+  Wraps AutomergeProvider
+  Exposes: addOp, getOps, undo, redo, presence
+  Uses: WebSocket, IndexedDB (via automerge-repo), BroadcastChannel
+```
+
+`SyncClient` stays for now (deprecated). `SyncDoc` is the replacement.
+
+### Phase 2 — Test SyncDoc
+
+Use existing test structure:
+- `test/partykit/` — already has working server + 4 passing tests
+- Add SyncDoc API tests (same scenarios as `test/client/sync-client.test.ts`)
+- Verify: addOp, undo, redo, two-actor convergence, presence
+
+### Phase 3 — Switch truck
+
+Replace truck's usage:
+- `history-domain.ts`: `new SyncClient(...)` → `new SyncDoc(...)`
+- Remove: `NullNetworkAdapter`, `makeSyncFetch`, `IdbStorageAdapter` (AutomergeProvider handles all)
+- Remove: `worker-relay.ts` (WebSocket replaces SSE)
+- Remove: truck's POST /sync route (PartyKit server handles sync)
+- Keep: op recording, replay, MCP execution (truck-specific)
+
+### Phase 4 — Deprecate old transport
+
+- Mark `SyncClient`, `SyncWorker`, `createSyncHandler` as deprecated
+- Keep working for systems that haven't migrated
+- Eventually remove
+
+### Phase 5 — Deploy
+
+- Deploy PartyKit server (`npx partykit deploy` or self-hosted on CF)
+- Point truck at deployed PartyKit host
+- Remove truck's R2 sync (PartyKit DO storage replaces it)
+
+## What stays vs what goes
+
+| Component | Status |
+|-----------|--------|
+| `ts/shared/types.ts` (Operation type) | **Stays** |
+| `ts/shared/wasm-adapter.ts` | **Stays** |
+| `crate/` (Rust WASM for replay, op execution) | **Stays** |
+| `ts/client/sync-doc.ts` | **NEW** (replaces sync-client.ts) |
+| `ts/client/sync-client.ts` | **Deprecated** → sync-doc.ts |
+| `ts/client/adapters.ts` | **Deprecated** → AutomergeProvider |
+| `ts/worker/handler.ts` | **Deprecated** → PartyKit server |
+| `ts/worker/sync-worker.ts` | **Deprecated** → PartyKit server |
+| `test/partykit/` | **Stays** (primary test path) |
+| `test/client/` | **Stays** (test SyncDoc API) |
+| `test/worker/` | **Deprecated** |
+| `test/integration/` | **Rewrite** for WebSocket |
+
+## Open questions
+
+1. **Op struct**: SyncClient wraps ops in our `Op` struct inside Automerge. SyncDoc uses raw Automerge docs. Keep the Op abstraction or go raw?
+
+2. **Replay**: Truck replays ops through geometry WASM. Needs the op list. How do we structure the Automerge doc to support replay with raw docs?
+
+3. **Server-side op execution**: MCP applies ops server-side. With PartyKit, the server is a DO. Can we run WASM inside a DO for server-direct execution?
+
+4. **Deploy pipeline**: PartyKit has its own deploy (`npx partykit deploy`). How does this fit with our CF deploy pipeline (`cf-deploy.ts`)?
+
+5. **R2 backup**: DO storage is primary. Do we still want R2 as cold backup?
+
+6. **Offline**: automerge-repo + IndexedDB handles offline. But what about the "page closed while offline" case — does automerge-repo handle it, or do we need `loadAndSync` equivalent?
