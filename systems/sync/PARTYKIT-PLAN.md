@@ -117,6 +117,88 @@ Replace truck's usage:
 | `test/worker/` | **Deprecated** |
 | `test/integration/` | **Rewrite** for WebSocket |
 
+## PartyKit packages that make the CAD system amazing
+
+PartyKit isn't just WebSocket sync. It's a full platform. These packages solve problems we're currently hacking around:
+
+### Must use
+
+| Package | What it does | How it helps truck-cad |
+|---------|-------------|----------------------|
+| **partyserver** | Core DO + WebSocket server | Foundation — replaces our Worker + R2 + SSE |
+| **partysocket** | Smart WebSocket client with reconnect | Replaces our custom reconnect logic |
+| **partysub** | Pub/Sub with topic filtering | Replace SSE broadcast. Subscribe to `layer-3` changes only, not everything. Viewport-aware — only get updates for objects you can see. |
+| **partysync** | State sync with SQLite persistence | Replace our custom SyncClient. Optimistic updates, local-first, automatic consistency. Per-entity state (each object is a synced entity). |
+| **partysession** | One DO per user | Per-user state: active tool, color, viewport zoom, selection. Survives page reload without polluting the shared doc. |
+
+### Should use
+
+| Package | What it does | How it helps truck-cad |
+|---------|-------------|----------------------|
+| **partyfn** | Type-safe bidirectional RPC | Replace MCP's HTTP bridge. Client calls `server.addCube()` → type-safe, auto-complete, bidirectional. Server calls `client.replayScene()`. |
+| **partywhen** | Durable task scheduler (cron, delay, alarm) | Auto-save snapshots every hour. Scheduled renders. "Remind team to review changes Monday 9am." Export STL every night. |
+| **hono-party** | Hono middleware for PartyServer | We already use Hono. Clean integration: auth, routing, error handling on the PartyKit server. |
+| **partyagent** | Autonomous AI agents on DOs | AI design assistant lives as a DO. Maintains context across sessions. Hands off between agents (geometry agent → material agent). |
+| **partytracks** | WebRTC audio/video via CF SFU | Voice/video during collaborative design. See your collaborator while editing together. Cursor + voice = much better UX than cursor alone. |
+
+### What this means for the API
+
+Instead of our custom sync protocol, truck-cad would use:
+
+```typescript
+// ── State sync (partysync) ──────────────────
+// Each design object is a synced entity
+const scene = partysync.useEntity('scene', sceneSchema);
+scene.update({ objects: [...scene.objects, newCube] });
+// All collaborators see the update instantly
+
+// ── Pub/Sub (partysub) ──────────────────────
+// Subscribe to changes on specific layers
+partysub.subscribe(`layer:${activeLayer}`, (update) => {
+  renderUpdate(update);
+});
+
+// ── RPC (partyfn) ───────────────────────────
+// Type-safe server calls (replaces MCP HTTP bridge)
+const result = await server.addCube({ size: 1, position: [0, 0, 0] });
+// Server can call back to client
+server.onReplayNeeded(() => replayScene());
+
+// ── Presence (partysession) ─────────────────
+// Per-user state without polluting shared doc
+session.setState({ tool: 'select', viewport: { zoom: 2.5, center: [10, 20] } });
+// Other users see your cursor + tool + viewport
+
+// ── Scheduling (partywhen) ──────────────────
+// Automated tasks
+partywhen.schedule('0 * * * *', () => exportSnapshot('r2://backups'));
+partywhen.delay('5m', () => notifyTeam('Changes pending review'));
+
+// ── AI Agent (partyagent) ───────────────────
+// Design assistant as a persistent DO
+const agent = partyagent.connect('design-assistant');
+agent.send('Add a window to the north wall, 1.2m wide');
+// Agent maintains context: knows the building, materials, constraints
+
+// ── Video (partytracks) ─────────────────────
+// Voice + video during collaboration
+partytracks.joinRoom('design-session-42');
+// Automatic hardware detection, fallback, recovery
+```
+
+### The bigger picture
+
+We're not just replacing sync transport. We're replacing:
+- **Custom sync** → partysync + automerge-partyserver
+- **Custom SSE** → partysub (topic-based, filtered)
+- **Custom MCP bridge** → partyfn (type-safe RPC)
+- **Custom presence** → partysession
+- **Custom AI integration** → partyagent
+- **No video** → partytracks
+- **No scheduling** → partywhen
+
+Each of these is a package we'd have to build ourselves. PartyKit already has them, tested, on the same CF infrastructure.
+
 ## Open questions
 
 1. **Op struct**: SyncClient wraps ops in our `Op` struct inside Automerge. SyncDoc uses raw Automerge docs. Keep the Op abstraction or go raw?
