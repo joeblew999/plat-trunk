@@ -2,41 +2,113 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SyncDoc E2E Test GUI</title>
+  <title>PartyKit E2E Test Suite</title>
   <style>
-    body { font-family: monospace; margin: 20px; background: #1a1a2e; color: #e0e0e0; }
-    h1 { font-size: 16px; color: #7fdbca; }
-    .status { padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-    .status.connected { background: #2d6a4f; }
-    .status.disconnected { background: #6a2d2d; }
-    button { padding: 6px 12px; margin: 4px; cursor: pointer; background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+    h1 { font-size: 18px; color: #7fdbca; margin-bottom: 8px; }
+    h2 { font-size: 14px; color: #c792ea; margin: 12px 0 6px; }
+
+    .tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+    .tab { padding: 6px 14px; cursor: pointer; background: #2a2a4a; border: 1px solid #444; border-radius: 4px; font-size: 12px; color: #aaa; }
+    .tab.active { background: #3a3a6a; color: #7fdbca; border-color: #7fdbca; }
+    .tab .badge { font-size: 10px; color: #666; margin-left: 4px; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .status.connected { background: #2d6a4f; color: #a8e6cf; }
+    .status.disconnected { background: #6a2d2d; color: #f8a8a8; }
+
+    button { padding: 5px 10px; margin: 2px; cursor: pointer; background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; border-radius: 3px; font-size: 12px; font-family: monospace; }
     button:hover { background: #3a3a5a; }
-    #ops-list { margin-top: 12px; }
-    .op { padding: 4px 8px; margin: 2px 0; border-left: 3px solid #7fdbca; background: #2a2a4a; font-size: 13px; }
+    input { padding: 4px 8px; background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; border-radius: 3px; font-size: 12px; font-family: monospace; }
+
+    .op { padding: 3px 8px; margin: 1px 0; border-left: 3px solid #7fdbca; background: #2a2a4a; font-size: 12px; }
     .op.disabled { opacity: 0.4; border-left-color: #6a2d2d; text-decoration: line-through; }
-    #log { margin-top: 12px; font-size: 11px; color: #888; max-height: 200px; overflow-y: auto; }
-    #doc-id { font-size: 11px; color: #666; word-break: break-all; }
+
+    .msg { padding: 2px 6px; margin: 1px 0; background: #2a2a4a; font-size: 11px; border-left: 2px solid #c792ea; }
+
+    .log { font-size: 10px; color: #666; max-height: 150px; overflow-y: auto; margin-top: 8px; }
+    .log div { padding: 1px 0; }
+
+    #info { font-size: 11px; color: #888; margin-bottom: 8px; }
+    .route { font-size: 11px; color: #555; }
   </style>
 </head>
 <body>
-  <h1>SyncDoc E2E</h1>
-  <div>
-    <span id="status" class="status disconnected">disconnected</span>
-    <span id="actor-id"></span>
+  <h1>PartyKit E2E Test Suite</h1>
+  <div id="info">
+    <span id="actor-id"></span> |
+    <span id="room-id"></span> |
+    <span id="doc-id-display"></span>
   </div>
-  <div id="doc-id"></div>
-  <div>
-    <button id="btn-create">Create Doc</button>
-    <button id="btn-add-op">Add Op</button>
-    <button id="btn-undo-last">Undo Last</button>
-    <button id="btn-redo-last">Redo Last</button>
+
+  <div class="tabs">
+    <div class="tab active" data-panel="ops">Ops <span class="badge">/parties/ops</span></div>
+    <div class="tab" data-panel="presence">Presence <span class="badge">/parties/presence</span></div>
+    <div class="tab" data-panel="pubsub">PubSub <span class="badge">/parties/pub-sub</span></div>
+    <div class="tab" data-panel="rpc">RPC <span class="badge">/parties/rpc</span></div>
   </div>
-  <div>
-    <label>Join Doc ID: <input id="join-id" size="50" /></label>
-    <button id="btn-join">Join</button>
+
+  <!-- ── OPS ──────────────────────────────────────────── -->
+  <div id="panel-ops" class="panel active">
+    <h2>SyncDoc Ops</h2>
+    <span id="ops-status" class="status disconnected">disconnected</span>
+    <div style="margin: 6px 0;">
+      <button id="btn-create">Create Doc</button>
+      <button id="btn-add-op">Add Op</button>
+      <button id="btn-undo-last">Undo Last</button>
+      <button id="btn-redo-last">Redo Last</button>
+    </div>
+    <div style="margin: 6px 0;">
+      <label>Join: <input id="join-id" size="50" placeholder="docId" /></label>
+      <button id="btn-join">Join</button>
+    </div>
+    <div id="ops-list"></div>
+    <div id="ops-log" class="log"></div>
   </div>
-  <div id="ops-list"></div>
-  <div id="log"></div>
+
+  <!-- ── PRESENCE ─────────────────────────────────────── -->
+  <div id="panel-presence" class="panel">
+    <h2>Ephemeral Presence</h2>
+    <span id="presence-status" class="status disconnected">disconnected</span>
+    <div style="margin: 6px 0;">
+      <button id="btn-send-cursor">Send Cursor</button>
+      <input id="cursor-x" size="5" value="100" placeholder="x" />
+      <input id="cursor-y" size="5" value="200" placeholder="y" />
+    </div>
+    <div id="presence-messages"></div>
+    <div id="presence-log" class="log"></div>
+  </div>
+
+  <!-- ── PUBSUB ───────────────────────────────────────── -->
+  <div id="panel-pubsub" class="panel">
+    <h2>Topic PubSub</h2>
+    <span id="pubsub-status" class="status disconnected">disconnected</span>
+    <div style="margin: 6px 0;">
+      <label>Topic: <input id="pubsub-topic" size="15" value="updates" /></label>
+      <label>Data: <input id="pubsub-data" size="20" value="hello" /></label>
+      <button id="btn-publish">Publish</button>
+    </div>
+    <div id="pubsub-messages"></div>
+    <div id="pubsub-log" class="log"></div>
+  </div>
+
+  <!-- ── RPC ──────────────────────────────────────────── -->
+  <div id="panel-rpc" class="panel">
+    <h2>RPC (partyfn)</h2>
+    <span id="rpc-status" class="status disconnected">disconnected</span>
+    <div style="margin: 6px 0;">
+      <button id="btn-rpc-echo">Echo</button>
+      <button id="btn-rpc-add">Add 3+7</button>
+      <button id="btn-rpc-greet">Greet</button>
+    </div>
+    <div id="rpc-results"></div>
+    <div id="rpc-log" class="log"></div>
+  </div>
+
   <script type="module" src="./e2e-main.ts"></script>
 </body>
 </html>

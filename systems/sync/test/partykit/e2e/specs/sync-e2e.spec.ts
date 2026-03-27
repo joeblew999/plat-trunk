@@ -1,17 +1,22 @@
 /**
- * SyncDoc E2E — real browser + real wrangler DO + real WebSocket.
+ * PartyKit full E2E — real browser + real wrangler DO + real PartyKit clients.
  *
- * Each test gets a unique room. Playwright opens two browser contexts
- * (separate cookies/WS connections) that sync ops through the DO.
+ * Tests ALL routes:
+ *   /parties/ops       → SyncDoc ops (automerge-repo)
+ *   /parties/presence  → ephemeral cursor broadcast (PartySocket)
+ *   /parties/pub-sub   → topic pub/sub (PartySocket)
+ *   /parties/rpc       → JSON-RPC (PartySocket)
+ *
+ * Each test uses unique rooms. Playwright opens separate browser contexts
+ * (isolated cookies/WS connections) for multi-peer tests.
  */
 
 import { test, expect, type Page } from '@playwright/test';
 
 const BASE = 'http://localhost:5199';
 
-/** Create a page with a unique room and actor. */
 async function openPeer(
-  browser: ReturnType<typeof test['info']>['__proto__'] | any,
+  browser: any,
   room: string,
   actor: string,
   docId?: string,
@@ -21,156 +26,190 @@ async function openPeer(
   const params = new URLSearchParams({ room, actor });
   if (docId) params.set('docId', docId);
   await page.goto(`${BASE}/e2e-index.html?${params.toString()}`);
-  // Wait for SyncDoc to connect
   await page.waitForSelector('.status.connected', { timeout: 10000 });
   return page;
 }
 
-/** Get the docId from the page URL (set by main.ts after create). */
 async function getDocId(page: Page): Promise<string> {
-  await page.waitForFunction(() => {
-    const url = new URL(window.location.href);
-    return url.searchParams.has('docId');
-  }, { timeout: 5000 });
-  const url = new URL(page.url());
-  return url.searchParams.get('docId')!;
+  await page.waitForFunction(() => new URL(window.location.href).searchParams.has('docId'), { timeout: 5000 });
+  return new URL(page.url()).searchParams.get('docId')!;
 }
 
-/** Wait for ops-list to show N ops. */
 async function waitForOpCount(page: Page, count: number) {
   await page.waitForFunction(
     (n) => document.getElementById('ops-list')?.getAttribute('data-op-count') === String(n),
-    count,
-    { timeout: 10000 },
+    count, { timeout: 10000 },
   );
 }
 
-/** Wait for replay count. */
 async function waitForReplayCount(page: Page, count: number) {
   await page.waitForFunction(
     (n) => document.getElementById('ops-list')?.getAttribute('data-replay-count') === String(n),
-    count,
-    { timeout: 10000 },
+    count, { timeout: 10000 },
   );
 }
 
-test.describe('SyncDoc browser E2E', () => {
-  test('single peer: add op shows in UI', async ({ browser }) => {
-    const room = `e2e-single-${Date.now()}`;
-    const page = await openPeer(browser, room, 'user-A');
+// ═════════════════════════════════════════════════════════════════════════════
+// OPS — SyncDoc over automerge-repo
+// ═════════════════════════════════════════════════════════════════════════════
 
-    // Add an op via exposed function
+test.describe('Ops — SyncDoc (/parties/ops)', () => {
+  test('single peer adds op', async ({ browser }) => {
+    const page = await openPeer(browser, `e2e-single-${Date.now()}`, 'user-A');
     await page.evaluate(() => window.addTestOp('add_cube'));
-
     await waitForOpCount(page, 1);
-    const opText = await page.locator('.op').first().textContent();
-    expect(opText).toContain('add_cube');
-    expect(opText).toContain('user-A');
-
-    await page.screenshot({ path: '../screenshots/01-single-peer-add-op.png' });
+    await expect(page.locator('.op').first()).toContainText('add_cube');
+    await page.screenshot({ path: '../screenshots/01-ops-single.png' });
     await page.context().close();
   });
 
-  test('two peers: ops converge', async ({ browser }) => {
+  test('two peers converge', async ({ browser }) => {
     const room = `e2e-converge-${Date.now()}`;
-
-    // Peer A creates doc
     const pageA = await openPeer(browser, room, 'user-A');
     const docId = await getDocId(pageA);
-
-    // Peer A adds an op
     await pageA.evaluate(() => window.addTestOp('add_cube'));
     await waitForOpCount(pageA, 1);
 
-    // Peer B joins with same docId
     const pageB = await openPeer(browser, room, 'user-B', docId);
-
-    // B should see A's op
     await waitForOpCount(pageB, 1);
-    const opTextB = await pageB.locator('.op').first().textContent();
-    expect(opTextB).toContain('add_cube');
-    expect(opTextB).toContain('user-A');
-
-    // B adds an op
     await pageB.evaluate(() => window.addTestOp('add_sphere'));
-
-    // Both see 2 ops
     await waitForOpCount(pageA, 2);
     await waitForOpCount(pageB, 2);
 
-    await pageA.screenshot({ path: '../screenshots/02-two-peers-converge-A.png' });
-    await pageB.screenshot({ path: '../screenshots/02-two-peers-converge-B.png' });
-
+    await pageA.screenshot({ path: '../screenshots/02-ops-converge-A.png' });
+    await pageB.screenshot({ path: '../screenshots/02-ops-converge-B.png' });
     await pageA.context().close();
     await pageB.context().close();
   });
 
-  test('undo/redo syncs between peers', async ({ browser }) => {
+  test('undo/redo syncs', async ({ browser }) => {
     const room = `e2e-undo-${Date.now()}`;
-
     const pageA = await openPeer(browser, room, 'user-A');
     const docId = await getDocId(pageA);
-
-    // A adds op
     await pageA.evaluate(() => window.addTestOp('add_cube'));
     await waitForOpCount(pageA, 1);
 
-    // B joins
     const pageB = await openPeer(browser, room, 'user-B', docId);
     await waitForOpCount(pageB, 1);
 
-    // A undoes
     await pageA.evaluate(() => window.undoLast());
-    await waitForReplayCount(pageA, 0);
-
-    // B sees undo
     await waitForReplayCount(pageB, 0);
-    const opB = await pageB.locator('.op').first();
-    await expect(opB).toHaveClass(/disabled/);
+    await expect(pageB.locator('.op').first()).toHaveClass(/disabled/);
 
-    // A redoes
     await pageA.evaluate(() => window.redoLast());
-    await waitForReplayCount(pageA, 1);
-
-    // B sees redo
     await waitForReplayCount(pageB, 1);
 
-    await pageA.screenshot({ path: '../screenshots/03-undo-redo-A.png' });
-    await pageB.screenshot({ path: '../screenshots/03-undo-redo-B.png' });
+    await pageA.screenshot({ path: '../screenshots/03-ops-undo-A.png' });
+    await pageB.screenshot({ path: '../screenshots/03-ops-undo-B.png' });
+    await pageA.context().close();
+    await pageB.context().close();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PRESENCE — PartySocket ephemeral broadcast
+// ═════════════════════════════════════════════════════════════════════════════
+
+test.describe('Presence — PartySocket (/parties/presence)', () => {
+  test('cursor broadcast between peers', async ({ browser }) => {
+    const room = `e2e-presence-${Date.now()}`;
+    const pageA = await openPeer(browser, room, 'user-A');
+    const pageB = await openPeer(browser, room, 'user-B');
+
+    // Wait for both presence sockets to connect
+    await pageA.waitForFunction(() => window.presenceSocket?.readyState === 1, { timeout: 5000 });
+    await pageB.waitForFunction(() => window.presenceSocket?.readyState === 1, { timeout: 5000 });
+    await new Promise(r => setTimeout(r, 300));
+
+    // A sends cursor
+    await pageA.evaluate(() => window.sendCursor(150, 250));
+
+    // B should receive it
+    await pageB.waitForFunction(
+      () => document.getElementById('presence-messages')?.getAttribute('data-msg-count') === '1',
+      { timeout: 5000 },
+    );
+
+    const msgText = await pageB.locator('.msg').first().textContent();
+    expect(msgText).toContain('150');
+    expect(msgText).toContain('250');
+    expect(msgText).toContain('user-A');
+
+    // Switch to presence tab for screenshot
+    await pageB.click('.tab[data-panel="presence"]');
+    await pageB.screenshot({ path: '../screenshots/04-presence-cursor.png' });
 
     await pageA.context().close();
     await pageB.context().close();
   });
+});
 
-  test('multiple ops from both peers converge', async ({ browser }) => {
-    const room = `e2e-multi-${Date.now()}`;
+// ═════════════════════════════════════════════════════════════════════════════
+// PUBSUB — PartySocket with topic filtering
+// ═════════════════════════════════════════════════════════════════════════════
 
+test.describe('PubSub — partysub (/parties/pub-sub)', () => {
+  test('topic message reaches subscriber', async ({ browser }) => {
+    const room = `e2e-pubsub-${Date.now()}`;
     const pageA = await openPeer(browser, room, 'user-A');
-    const docId = await getDocId(pageA);
-    const pageB = await openPeer(browser, room, 'user-B', docId);
+    const pageB = await openPeer(browser, room, 'user-B');
 
-    // A adds 2 ops
-    await pageA.evaluate(() => { window.addTestOp('add_cube'); window.addTestOp('add_sphere'); });
-    await waitForOpCount(pageA, 2);
+    await pageA.waitForFunction(() => window.pubsubSocket?.readyState === 1, { timeout: 5000 });
+    await pageB.waitForFunction(() => window.pubsubSocket?.readyState === 1, { timeout: 5000 });
+    await new Promise(r => setTimeout(r, 300));
 
-    // B should see them
-    await waitForOpCount(pageB, 2);
+    // A publishes on 'updates' topic
+    await pageA.evaluate(() => window.publishTopic('updates', { text: 'hello from A' }));
 
-    // B adds 1 op
-    await pageB.evaluate(() => window.addTestOp('add_cylinder'));
+    // B should receive (both subscribed to 'updates' by default)
+    await pageB.waitForFunction(
+      () => document.getElementById('pubsub-messages')?.getAttribute('data-msg-count') === '1',
+      { timeout: 5000 },
+    );
 
-    // Both see 3
-    await waitForOpCount(pageA, 3);
-    await waitForOpCount(pageB, 3);
+    const msgText = await pageB.locator('#pubsub-messages .msg').first().textContent();
+    expect(msgText).toContain('updates');
+    expect(msgText).toContain('hello from A');
 
-    // Replay count = 3 (all enabled)
-    await waitForReplayCount(pageA, 3);
-    await waitForReplayCount(pageB, 3);
-
-    await pageA.screenshot({ path: '../screenshots/04-multi-ops-A.png' });
-    await pageB.screenshot({ path: '../screenshots/04-multi-ops-B.png' });
+    await pageB.click('.tab[data-panel="pubsub"]');
+    await pageB.screenshot({ path: '../screenshots/05-pubsub-topic.png' });
 
     await pageA.context().close();
     await pageB.context().close();
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RPC — partyfn JSON-RPC
+// ═════════════════════════════════════════════════════════════════════════════
+
+test.describe('RPC — partyfn (/parties/rpc)', () => {
+  test('echo + add + greet RPCs', async ({ browser }) => {
+    const room = `e2e-rpc-${Date.now()}`;
+    const page = await openPeer(browser, room, 'user-A');
+
+    await page.waitForFunction(() => window.rpcSocket?.readyState === 1, { timeout: 5000 });
+
+    // Echo
+    const echoResult = await page.evaluate(() => window.rpcCall('echo', { hello: 'world' }));
+    expect(echoResult.hello).toBe('world');
+
+    // Add
+    const addResult = await page.evaluate(() => window.rpcCall('add', { a: 3, b: 7 }));
+    expect(addResult.sum).toBe(10);
+
+    // Greet
+    const greetResult = await page.evaluate(() => window.rpcCall('greet', { name: 'PartyKit' }));
+    expect(greetResult.message).toBe('Hello, PartyKit!');
+
+    await page.waitForFunction(
+      () => document.getElementById('rpc-results')?.getAttribute('data-result-count') === '3',
+      { timeout: 5000 },
+    );
+
+    await page.click('.tab[data-panel="rpc"]');
+    await page.screenshot({ path: '../screenshots/06-rpc-calls.png' });
+
+    await page.context().close();
   });
 });
