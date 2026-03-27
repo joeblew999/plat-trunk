@@ -1,6 +1,0 @@
-plat-sync WASM size report (2026-03-27T04:44:41Z)
-
-web: 1127014 bytes raw (1100K), 369875 bytes gzipped (361K)
-bundler: 1127014 bytes raw (1100K), 369875 bytes gzipped (361K)
-
-Build profile: opt-level=z, lto=true, codegen-units=1, strip=true

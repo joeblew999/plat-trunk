@@ -18,6 +18,10 @@
 #   mise run typecheck         Typecheck sync test runner TS
 #   mise run ci                Full standalone CI gate
 #
+#   mise run partyserver:build    Build fork → .tgz in .packages/
+#   mise run partyserver:install  Build + install .tgz in test/partykit
+#   mise run test:partykit        Run automerge-partyserver tests (wrangler + DO)
+#
 # Rust is pinned in ../../rust-toolchain.toml — mise respects it automatically.
 # When used standalone (outside plat-trunk), copy rust-toolchain.toml alongside.
 
@@ -88,11 +92,46 @@ run = "cd crate && cargo run --bin generate-sync-schema > ../sync-schema.json"
 description = "Auto-rebuild sync WASM on Rust source changes"
 run = "mise watch build:wasm:self"
 
+# ── PartyKit (automerge-partyserver fork) ────────────────────────────────────
+# Fork: joeblew999/partykit → packages/automerge-partyserver
+# Builds to .tgz in plat-trunk/.packages/ — no npm publish needed.
+# Any consumer: "automerge-partyserver": "file:../../.packages/automerge-partyserver-0.1.0.tgz"
+#
+#   mise run partyserver:build    Build fork → .tgz in .packages/
+#   mise run partyserver:install  Build + install in sync test/partykit
+
+[tasks."partyserver:build"]
+description = "Build automerge-partyserver fork → .tgz in .packages/"
+run = """
+FORK="$(cd ../../.. && pwd)/partykit/packages/automerge-partyserver"
+ROOT="$(cd ../.. && pwd)"
+echo "→ Building $FORK"
+cd "$FORK"
+bun install --silent
+npx tsx scripts/build.ts
+
+# Pack to .tgz — npm pack outputs the filename
+TGZ=$(npm pack --pack-destination "$ROOT/.packages" 2>/dev/null)
+echo "✓ $ROOT/.packages/$TGZ"
+"""
+
+[tasks."partyserver:install"]
+description = "Build fork + install .tgz in sync test/partykit"
+depends = ["partyserver:build"]
+run = """
+ROOT="$(cd ../.. && pwd)"
+TGZ=$(ls -t "$ROOT/.packages"/automerge-partyserver-*.tgz | head -1)
+echo "→ Installing $TGZ"
+cd test/partykit
+bun add "$TGZ"
+echo "✓ Installed in systems/sync/test/partykit"
+"""
+
 # ── Install ───────────────────────────────────────────────────────────────────
 
 [tasks.install]
-description = "Install JS deps for sync test runner"
-run = "cd test && bun install"
+description = "Install JS deps for PartyKit test suite"
+run = "cd test/partykit && bun install"
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
@@ -100,53 +139,54 @@ run = "cd test && bun install"
 description = "Run Rust CRDT unit + integration tests — standalone, no .src repos needed"
 run = "cd crate && cargo test"
 
-[tasks."test:client"]
-description = "Run client boundary tests — @plat/sync/client + adapters in CF Workers runtime"
+[tasks."test:partykit"]
+description = "Run SyncDoc + automerge-partyserver E2E — real DO + wrangler (12 tests)"
 depends = ["install"]
-run = "cd test && bunx vitest run"
+run = """
+cd test/partykit
+# Start wrangler dev in background
+npx wrangler dev --port 1999 &
+WRANGLER_PID=$!
+# Wait for server to be ready
+for i in $(seq 1 20); do
+  curl -s http://localhost:1999/health > /dev/null 2>&1 && break
+  sleep 0.5
+done
+# Run tests
+npx vitest run
+EXIT=$?
+# Clean up
+kill $WRANGLER_PID 2>/dev/null
+exit $EXIT
+"""
+
+[tasks."test:e2e"]
+description = "Run Playwright E2E — real browser + real wrangler DO + Hono + hono-party"
+depends = ["install"]
+run = "cd test/partykit/e2e && npx playwright test"
 
 [tasks.test]
-description = "Build WASM + run all unit tests (Rust + client boundary)"
-depends = ["build:wasm:self", "install"]
+description = "Run all tests (Rust + PartyKit Node + Playwright E2E)"
 run = [
-  "cd crate && cargo test",
-  "cd test && bunx vitest run",
+  "mise run test:rust",
+  "mise run test:partykit",
+  "mise run test:e2e",
 ]
 
-# ── Typecheck ─────────────────────────────────────────────────────────────────
+# ── Dev ──────────────────────────────────────────────────────────────────────
 
-[tasks.typecheck]
-description = "Typecheck sync test runner TS (WASM must be built first for generated types)"
-depends = ["install"]
-run = "cd test && bunx tsc --noEmit"
-
-# ── Web (Test GUI) ────────────────────────────────────────────────────────────
+[tasks.dev]
+description = "Start PartyKit sync server (wrangler dev + DO on :1999)"
+run = "cd test/partykit && npx wrangler dev --port 1999"
 
 [tasks."dev:gui"]
-description = "Start sync test GUI (:5199) + sync worker (:5198 wrangler+R2)"
-depends = ["build:wasm:self"]
-run = [
-  "cp -r pkg/bundler/* test/worker/pkg-sync/",
-  "cd test/worker && npx wrangler dev &",
-  "cd test/integration && bun install --silent && bunx vite",
-]
-
-# ── Integration ──────────────────────────────────────────────────────────────
-# Real stack: IDB + Vite GUI + wrangler CF Worker + R2.
-# Playwright auto-starts both servers.
-
-[tasks."test:integration"]
-description = "Run integration tests — real browser + real CF Worker + R2"
-depends = ["build:wasm:self"]
-run = [
-  "cp -r pkg/bundler/* test/worker/pkg-sync/",
-  "cd test/integration && bun install --silent && bunx playwright test",
-]
-
-# Legacy alias
-[tasks."test:e2e"]
-description = "Alias for test:integration"
-run = "mise run test:integration"
+description = "Start sync test GUI (:5199) + DO server (:1999)"
+depends = ["install"]
+run = """
+cd test/partykit
+npx wrangler dev --port 1999 &
+npx vite --config e2e/vite.config.ts
+"""
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 # Fully standalone — does not require the root pipeline.
@@ -154,11 +194,8 @@ run = "mise run test:integration"
 # Also runnable directly from systems/sync/: mise run ci
 
 [tasks.ci]
-description = "Full standalone CI gate — build WASM + typecheck + Rust tests + workerd tests"
-depends = ["build:wasm:self", "install"]
+description = "Full standalone CI gate — Rust tests + PartyKit E2E"
 run = [
   "cd crate && cargo test",
-  "cd test && bunx tsc --noEmit",
-  "cd test && bunx vitest run",
+  "mise run test:partykit",
 ]
-# Browser tests (Playwright) require dev server — run separately via: mise run test:browser

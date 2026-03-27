@@ -3,20 +3,25 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npx partykit dev server.ts",
+    "dev": "npx wrangler dev --port 1999",
     "test": "vitest run"
   },
   "dependencies": {
     "@automerge/automerge": "^3.0.0",
     "@automerge/automerge-repo": "^2.2.0",
+    "automerge-partyserver": "/Users/apple/workspace/go/src/github.com/joeblew999/plat-trunk/.packages/automerge-partyserver-0.1.0.tgz",
     "cborg": "^4.0.0",
-    "partykit": "^0.0.115",
+    "hono": "^4.12.9",
+    "hono-party": "^2.0.3",
     "partyserver": "^0.4.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "@playwright/test": "^1.58.2",
     "@types/ws": "^8.18.1",
-    "partysocket": "^1.1.16",
+    "vite": "^8.0.3",
     "vitest": "^3.0.0",
+    "wrangler": "^4.77.0",
     "ws": "^8.20.0"
   }
 }

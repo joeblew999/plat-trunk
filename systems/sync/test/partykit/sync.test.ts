@@ -1,157 +1,208 @@
 /**
- * PartyKit transport tests.
+ * automerge-partyserver transport tests.
  *
- * Tests the Automerge sync protocol over PartyKit WebSocket.
- * Requires: npx partykit dev server.ts --port 1999 (running)
+ * Tests the REAL automerge-partyserver over wrangler dev with Durable Objects.
+ * Uses automerge-repo on BOTH sides — same as production.
+ *
+ * Requires: npx wrangler dev --port 1999 (running)
  *
  * Run: npx vitest run
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { next as Automerge } from '@automerge/automerge';
+import { describe, it, expect } from 'vitest';
+import {
+  Repo,
+  type PeerId,
+  NetworkAdapter,
+  type NetworkAdapterInterface,
+  type Message,
+} from '@automerge/automerge-repo';
+import { encode as cborEncode, decode as cborDecode } from 'cborg';
 import WebSocket from 'ws';
 
 const WS_URL = 'ws://127.0.0.1:1999/parties/main';
 
-/** Create a WebSocket client that runs the Automerge sync protocol. */
-function createClient(room: string) {
-  const url = `${WS_URL}/${room}`;
-  let doc = Automerge.init<{ items?: Array<{ text: string }> }>();
-  let syncState = Automerge.initSyncState();
-  let ws: WebSocket;
+// ── Test NetworkAdapter (Node.js WebSocket → automerge-repo) ─────────────────
 
-  const connected = new Promise<void>((resolve) => {
-    ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    ws.on('open', () => resolve());
-  });
+class TestWebSocketAdapter extends NetworkAdapter {
+  private ws: WebSocket | null = null;
+  private serverPeerId: string | null = null;
+  private resolveReady!: () => void;
+  private readyPromise: Promise<void>;
 
-  const messages: Uint8Array[] = [];
+  constructor(private url: string) {
+    super();
+    this.readyPromise = new Promise((resolve) => { this.resolveReady = resolve; });
+  }
 
-  ws!.on('message', (raw: ArrayBuffer) => {
-    const bytes = new Uint8Array(raw);
-    messages.push(bytes);
+  connect(peerId: PeerId): void {
+    this.peerId = peerId;
 
-    // Run sync protocol
-    const [newDoc, newSyncState] = Automerge.receiveSyncMessage(doc, syncState, bytes);
-    doc = newDoc;
-    syncState = newSyncState;
+    this.ws = new WebSocket(this.url);
+    this.ws.binaryType = 'arraybuffer';
 
-    // Reply if needed
-    const [nextState, reply] = Automerge.generateSyncMessage(doc, syncState);
-    syncState = nextState;
-    if (reply && ws.readyState === 1) {
-      ws.send(reply);
-    }
+    this.ws.on('open', () => {
+      // Send join message (automerge-repo protocol)
+      const joinMsg = {
+        type: 'join',
+        senderId: this.peerId,
+        peerMetadata: {},
+        supportedProtocolVersions: ['1'],
+      };
+      this.ws!.send(cborEncode(joinMsg));
+    });
+
+    this.ws.on('message', (raw: ArrayBuffer) => {
+      try {
+        const data = new Uint8Array(raw);
+        const message = cborDecode(data) as any;
+
+        if (message.type === 'peer' && message.senderId) {
+          this.serverPeerId = message.senderId;
+          this.emit('peer-candidate', {
+            peerId: message.senderId as PeerId,
+            peerMetadata: message.peerMetadata,
+          });
+          this.resolveReady();
+          return;
+        }
+
+        this.emit('message', message);
+      } catch { /* malformed */ }
+    });
+
+    this.ws.on('close', () => {
+      if (this.serverPeerId) {
+        this.emit('peer-disconnected', { peerId: this.serverPeerId as PeerId });
+      }
+    });
+  }
+
+  disconnect(): void {
+    this.ws?.close();
+    this.ws = null;
+  }
+
+  send(message: Message): void {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    try {
+      this.ws.send(cborEncode(message));
+    } catch { /* ignore */ }
+  }
+
+  isReady(): boolean {
+    return this.ws?.readyState === 1 && this.serverPeerId !== null;
+  }
+
+  whenReady(): Promise<void> {
+    return this.readyPromise;
+  }
+}
+
+// ── Helper: create a test peer with automerge-repo ───────────────────────────
+
+function createPeer(room: string) {
+  const adapter = new TestWebSocketAdapter(`${WS_URL}/${room}`);
+  const repo = new Repo({
+    network: [adapter as unknown as NetworkAdapterInterface],
+    peerId: `test-${Math.random().toString(36).slice(2, 8)}` as PeerId,
   });
 
   return {
-    connected,
-    getDoc: () => doc,
-    change: (fn: (d: any) => void) => {
-      doc = Automerge.change(doc, fn);
-      // Send sync message
-      const [nextState, msg] = Automerge.generateSyncMessage(doc, syncState);
-      syncState = nextState;
-      if (msg && ws.readyState === 1) {
-        ws.send(msg);
-      }
-    },
-    waitForOps: (count: number, timeoutMs = 5000) => {
-      return new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${count} ops`)), timeoutMs);
-        const check = () => {
-          const items = (doc as any).items;
-          if (items && items.length >= count) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(check, 100);
-          }
-        };
-        check();
-      });
-    },
-    close: () => ws.close(),
-    messageCount: () => messages.length,
+    repo,
+    adapter,
+    /** Wait for the server peer handshake to complete. */
+    ready: () => adapter.whenReady(),
+    close: () => adapter.disconnect(),
   };
 }
 
-describe('PartyKit Automerge sync', () => {
-  it('server responds to HTTP', async () => {
-    const res = await fetch('http://127.0.0.1:1999/parties/main/http-test');
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+describe('automerge-partyserver sync (real DO + wrangler)', () => {
+  it('server responds to HTTP health check', async () => {
+    const res = await fetch('http://127.0.0.1:1999/health');
     expect(res.ok).toBe(true);
     const json = await res.json();
-    expect(json.room).toBe('http-test');
+    expect(json.status).toBe('ok');
   });
 
-  it('client connects and receives sync message', async () => {
+  it('client connects and completes peer handshake', async () => {
     const room = `connect-${Date.now()}`;
-    const client = createClient(room);
-    await client.connected;
+    const peer = createPeer(room);
+    await peer.ready();
 
-    // Server sends initial sync on connect — wait for it
-    await new Promise(r => setTimeout(r, 500));
-    expect(client.messageCount()).toBeGreaterThanOrEqual(1);
-
-    client.close();
+    expect(peer.adapter.isReady()).toBe(true);
+    peer.close();
   });
 
   it('client change syncs to server and back', async () => {
     const room = `change-${Date.now()}`;
-    const client = createClient(room);
-    await client.connected;
-    await new Promise(r => setTimeout(r, 300)); // wait for initial sync
+    const peer = createPeer(room);
+    await peer.ready();
 
-    // Make a change
-    client.change((doc: any) => {
+    // Create a doc and make a change
+    const handle = peer.repo.create<{ items: Array<{ text: string }> }>();
+    handle.change((doc) => {
       doc.items = [{ text: 'hello' }];
     });
 
     // Wait for sync round-trip
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 1000));
 
-    const doc = client.getDoc() as any;
-    expect(doc.items).toBeDefined();
-    expect(doc.items.length).toBe(1);
-    expect(doc.items[0].text).toBe('hello');
+    const doc = handle.doc();
+    expect(doc?.items).toBeDefined();
+    expect(doc?.items.length).toBe(1);
+    expect(doc?.items[0].text).toBe('hello');
 
-    client.close();
+    peer.close();
   });
 
   it('two clients converge via server', async () => {
     const room = `converge-${Date.now()}`;
 
-    const clientA = createClient(room);
-    await clientA.connected;
-    await new Promise(r => setTimeout(r, 300));
+    // Peer A creates doc
+    const peerA = createPeer(room);
+    await peerA.ready();
 
-    const clientB = createClient(room);
-    await clientB.connected;
-    await new Promise(r => setTimeout(r, 300));
+    const handleA = peerA.repo.create<{ items: Array<{ text: string }> }>();
+    const docId = handleA.documentId;
 
-    // A adds an item
-    clientA.change((doc: any) => {
+    handleA.change((doc) => {
       doc.items = [{ text: 'from A' }];
     });
 
-    // Wait for B to receive
-    await clientB.waitForOps(1);
-    const docB = clientB.getDoc() as any;
-    expect(docB.items.length).toBe(1);
-    expect(docB.items[0].text).toBe('from A');
+    // Wait for server to receive
+    await new Promise(r => setTimeout(r, 500));
+
+    // Peer B joins and finds the same doc
+    const peerB = createPeer(room);
+    await peerB.ready();
+
+    const handleB = await peerB.repo.find<{ items: Array<{ text: string }> }>(docId);
+    await handleB.whenReady();
+
+    // Wait for sync
+    await new Promise(r => setTimeout(r, 1000));
+
+    // B should see A's change
+    const docB = handleB.doc();
+    expect(docB?.items).toBeDefined();
+    expect(docB?.items.length).toBe(1);
+    expect(docB?.items[0].text).toBe('from A');
 
     // B adds an item
-    clientB.change((doc: any) => {
+    handleB.change((doc: { items: Array<{ text: string }> }) => {
       doc.items.push({ text: 'from B' });
     });
 
     // Wait for A to receive
-    await clientA.waitForOps(2);
-    const docA = clientA.getDoc() as any;
-    expect(docA.items.length).toBe(2);
+    await new Promise(r => setTimeout(r, 1000));
 
-    clientA.close();
-    clientB.close();
+    const docA = handleA.doc();
+    expect(docA?.items.length).toBe(2);
+
+    peerA.close();
+    peerB.close();
   });
 });

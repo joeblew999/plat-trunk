@@ -1,13 +1,11 @@
 {
   "name": "@plat/sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Reusable CRDT op log — Automerge-backed sync for plat-trunk systems",
+  "description": "CRDT op log + PartyKit sync for plat-trunk systems",
   "type": "module",
   "exports": {
-    "./client": "./ts/client/sync-client.ts",
-    "./adapters": "./ts/client/adapters.ts",
-    "./worker": "./ts/worker/index.ts",
+    "./partykit": "./ts/partykit/index.ts",
     "./types": "./ts/shared/types.ts",
     "./wasm-adapter": "./ts/shared/wasm-adapter.ts"
   },
