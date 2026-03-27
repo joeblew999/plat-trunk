@@ -1,0 +1,6 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "sync-partykit-test",
+  "main": "server.ts",
+  "port": 1999
+}

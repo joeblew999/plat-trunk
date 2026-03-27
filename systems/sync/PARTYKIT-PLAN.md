@@ -2,9 +2,14 @@
 
 https://github.com/threepointone is the maintainer of PartyKit.
 
+PartyKit: https://github.com/cloudflare/partykit
+
 Fork: https://github.com/joeblew999/partykit
 Branch: `feat/automerge-partyserver`
 Package: `packages/automerge-partyserver/`
+
+Fork is at /Users/apple/workspace/go/src/github.com/joeblew999/partykit
+
 
 ## Status
 
