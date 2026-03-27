@@ -180,14 +180,57 @@ Durable Objects have [built-in SQLite storage](https://developers.cloudflare.com
 
 No R2 read/write per sync — only SQLite (local, fast, transactional).
 
-### PartyKit
+### y-partykit — reference implementation for CRDT + DO storage
 
-[PartyKit](https://www.partykit.io/) is a developer experience layer over DOs + WebSockets. PartyKit has Yjs integration (`y-partykit`). An Automerge + PartyKit integration may exist as community work but there is no official adapter in automerge-repo.
+PartyKit has **no Automerge adapter** (only Yjs via `y-partykit`). But `y-partykit` is the best reference for how to do CRDT sync with Durable Objects storage.
 
-Options:
-1. **Use raw DOs** — full control, stays within CF ecosystem, no extra dependency
-2. **Use PartyKit** — nicer DX, managed infra, but adds a dependency and may not have Automerge support built-in
-3. **Build our own DO sync class** — uses our SyncWorker patterns but with DO + WS instead of Worker + R2 + SSE
+Key patterns from `packages/y-partykit/src/storage.ts`:
+
+**Incremental update log with clock**:
+```
+["v1", docName, "update", 0] → first update bytes
+["v1", docName, "update", 1] → second update bytes
+["v1", docName, "update", 2] → ...
+["v1_sv", docName]           → state vector (for efficient sync)
+```
+
+Each op is stored as a separate DO storage entry with an incrementing clock. This allows:
+- **Append-only writes** — no rewriting the full doc on every op
+- **Efficient compaction** — merge old updates into one, clear range
+- **State vector** — separate key for quick sync without loading all updates
+
+**Compaction** (`compactUpdateLog`):
+- Triggered when `updates.length > maxUpdates` or `totalBytes > maxBytes`
+- Merges all updates into one, writes new state vector, clears old entries
+- Same as our `compactIfNeeded` but at the storage level, not the doc level
+
+**128KB chunking** (`levelPut`):
+- DO storage has a per-key size limit
+- Large values are split into chunks: `key#000`, `key#001`, etc.
+- `levelGet` reassembles chunks transparently
+
+**Transaction serialization** (`_transact`):
+- Promise chain prevents concurrent writes to the same doc
+- Critical for correctness — DO storage ops are not transactional by default
+
+**Mapping Yjs → Automerge concepts**:
+
+| Yjs (y-partykit) | Automerge equivalent |
+|-------------------|---------------------|
+| `applyUpdate(doc, update)` | `doc.apply_changes(changes)` or `receive_sync_message` |
+| `encodeStateAsUpdate(doc)` | `doc.save()` (full snapshot) |
+| `encodeStateVector(doc)` | Automerge sync state — `generate_sync_message` |
+| Store individual update | Store individual Automerge change |
+| `flushDocument` (compact) | `doc.save()` as snapshot + clear old changes |
+
+### Recommendation
+
+Build our own **Automerge DO sync class** following y-partykit's storage patterns:
+
+1. **Use raw DOs** — full control, stays within CF, no PartyKit dependency
+2. **Port the storage pattern** — incremental update log + clock + compaction
+3. **Add Automerge sync protocol** — `generateSyncMessage`/`receiveSyncMessage` over WebSocket
+4. **WebSocket Hibernation** — zero cost when idle
 
 ### What changes in @plat/sync
 
