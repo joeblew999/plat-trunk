@@ -381,6 +381,59 @@ PartyKit Server (Durable Object)
 
 The spike is the decision point. PartyKit + automerge-repo is the highest-leverage option — most functionality for least code. Try it before building from scratch.
 
+## Existing work: mergeparty
+
+**Someone already built Option E.**
+
+[`@substrate-system/mergeparty`](https://github.com/substrate-system/mergeparty) — PartyKit + automerge-repo, published on npm.
+
+**What it provides**:
+- `WithStorage` — PartyKit server class implementing automerge-repo `StorageAdapter` + `NetworkAdapter` for DOs
+- `Relay` — simpler PartyKit server that just relays messages between peers (no storage)
+- `PartykitNetworkAdapter` — client-side adapter connecting automerge-repo to PartyKit WebSocket
+- 1 PartyKit room per Automerge document (doc ID = room name)
+
+**How a consumer uses it**:
+
+Server (PartyKit):
+```typescript
+import { WithStorage } from '@substrate-system/mergeparty/server/storage';
+
+export default class Server extends WithStorage {
+  async onBeforeConnect(request) {
+    // auth logic
+  }
+}
+```
+
+Client (browser):
+```typescript
+import { Repo } from '@automerge/automerge-repo';
+import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
+import { PartykitNetworkAdapter } from '@substrate-system/mergeparty';
+
+const repo = new Repo({
+  network: [new PartykitNetworkAdapter(partysocket)],
+  storage: new IndexedDBStorageAdapter(),
+});
+```
+
+**Related projects**:
+- [`automerge-repo-sync-server`](https://github.com/automerge/automerge-repo-sync-server) — official Automerge sync server (Node/WebSocket). mergeparty is based on this.
+- [`automerge/sync-server`](https://github.com/automerge/sync-server) — simpler official sync server
+- [`partysync`](https://github.com/cloudflare/partykit/blob/main/packages/partysync/README.md) — PartyKit's own sync primitives
+
+### Updated recommendation
+
+| Timeframe | Action |
+|-----------|--------|
+| **Now** | Ship current system (Option D). It works. |
+| **Next** | Evaluate `@substrate-system/mergeparty`. Clone it, read the code, try the examples. |
+| **If it fits** | Wrap with our `@plat/sync/*` API. Our consumers don't see mergeparty/automerge-repo. |
+| **If it doesn't** | Fork and fix, or fall back to Option B (build on raw DOs). |
+
+We may not need to write ANY adapter code. The work is already done.
+
 ## Summary
 
 Our current architecture (Worker + R2 + SSE + merge_docs) is **correct but suboptimal**. The right Cloudflare architecture is **Durable Objects + WebSocket Hibernation + SQLite + incremental sync protocol**.
