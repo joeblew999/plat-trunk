@@ -176,14 +176,25 @@ When published to npm: replace `.tgz` with `bun add automerge-partyserver`.
 
 ## WASM Size
 
-The Rust CRDT crate (optional — only needed for server-side validation/replay):
+Two WASM modules in the stack:
 
-| Target | Raw | Gzipped |
-|--------|-----|---------|
-| web (browser ESM) | 1.1 MB | 362 KB |
-| bundler (CF Worker) | 1.1 MB | 362 KB |
+### @automerge/automerge (required — used by automerge-repo in browser + DO)
 
-Build profile: `opt-level=z`, LTO, single codegen unit, strip symbols.
+| Target | Raw | Gzipped | Where |
+|--------|-----|---------|-------|
+| web (browser) | 2.7 MB | 897 KB | Browser — loaded by SyncDoc via automerge-repo |
+| workerd (DO) | 2.7 MB | 897 KB | Durable Object — loaded by AutomergeServer |
+
+This is the upstream Automerge WASM. We don't build it — it ships with `@automerge/automerge` npm.
+
+### plat-sync (optional — our Rust crate for validation/replay)
+
+| Target | Raw | Gzipped | Where |
+|--------|-----|---------|-------|
+| web (browser ESM) | 1.1 MB | 362 KB | Browser — only if consumer needs op validation/Blake3 |
+| bundler (CF Worker) | 1.1 MB | 362 KB | Worker — only if consumer needs server-side replay |
+
+Build profile: `opt-level=z`, LTO, single codegen unit, strip symbols. SyncDoc does NOT require this — it's for truck-cad's headless replay.
 
 ## Screenshots
 
