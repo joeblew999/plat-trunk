@@ -3,21 +3,27 @@ main = "worker.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Three DO classes — one per feature, one per route:
-#   /parties/sync/:room      → Sync DO (raw Automerge transport)
-#   /parties/ops/:room       → Ops DO (SyncDoc add/undo/redo/group)
-#   /parties/presence/:room  → Presence DO (ephemeral broadcast)
+# 6 DO classes — one per PartyKit package, one per route:
+#   /parties/sync/:room       → Sync (automerge-partyserver)
+#   /parties/ops/:room        → Ops (SyncDoc)
+#   /parties/presence/:room   → Presence (ephemeral broadcast)
+#   /parties/pub-sub/:room    → PubSub (partysub topics)
+#   /parties/scheduler/:room  → Scheduler (partywhen cron/delay)
+#   /parties/rpc/:room        → Rpc (partyfn RPC)
 
 [durable_objects]
 bindings = [
   { name = "SYNC", class_name = "Sync" },
   { name = "OPS", class_name = "Ops" },
   { name = "PRESENCE", class_name = "Presence" },
+  { name = "PUB_SUB", class_name = "PubSub" },
+  { name = "SCHEDULER", class_name = "Scheduler" },
+  { name = "RPC", class_name = "Rpc" },
 ]
 
 [[migrations]]
 tag = "v1"
-new_classes = ["Sync", "Ops", "Presence"]
+new_classes = ["Sync", "Ops", "Presence", "PubSub", "Scheduler", "Rpc"]
 
 [dev]
 port = 1999

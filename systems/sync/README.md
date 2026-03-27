@@ -82,14 +82,14 @@ mise run dev:gui
 # → open another tab with ?actor=user-2&docId=<id-from-first-tab>
 ```
 
-## Tests — 19 total, all real
+## Tests — 26 total, all real
 
 ```bash
 cd systems/sync
 
 mise run test              # ALL: Rust + Node + Playwright
 mise run test:rust         # 24 Rust CRDT tests
-mise run test:partykit     # 15 Node tests (wrangler + DO)
+mise run test:partykit     # 22 Node tests (wrangler + 6 DOs)
 mise run test:e2e          # 4 Playwright browser tests
 ```
 
@@ -100,6 +100,9 @@ mise run test:e2e          # 4 Playwright browser tests
 | `sync.test.ts` | `/parties/sync` | Node + wrangler DO | 4 | automerge-repo transport: connect, handshake, sync, converge |
 | `sync-doc.test.ts` | `/parties/ops` | Node + wrangler DO | 8 | SyncDoc: add, undo, redo, group, name, two-peer convergence, replay |
 | `presence.test.ts` | `/parties/presence` | Node + wrangler DO | 3 | Ephemeral broadcast: HTTP status, 2-peer, 3-peer |
+| `pubsub.test.ts` | `/parties/pub-sub` | Node + wrangler DO | 2 | partysub: topic subscribe, topic filtering |
+| `rpc.test.ts` | `/parties/rpc` | Node + wrangler DO | 4 | partyfn: echo, add, greet, error handling |
+| `scheduler.test.ts` | `/parties/scheduler` | Node + wrangler DO | 1 | partywhen: DO routable (fails — see known issues) |
 | `e2e/specs/sync-e2e.spec.ts` | `/parties/ops` | Chromium (Playwright) | 4 | Real browser: add op, two-peer converge, undo/redo sync, multi-op |
 | `crate/src/lib.rs` | — | Rust native | 24 | CRDT math: merge, dedup, replay, rollback, Blake3 |
 
@@ -200,17 +203,35 @@ Build profile: `opt-level=z`, LTO, single codegen unit, strip symbols. SyncDoc d
 
 ## Screenshots
 
-Captured by Playwright during `mise run test:e2e`. Committed to `test/partykit/screenshots/` as proof that real browser tests run against real infrastructure.
+Captured by Playwright during `mise run test:e2e`. Real Chromium, real WebSocket, real Durable Objects.
 
-| Screenshot | What it shows |
-|-----------|--------------|
-| `01-single-peer-add-op.png` | One peer adds an op — shows in UI |
-| `02-two-peers-converge-A.png` | Peer A after both peers add ops |
-| `02-two-peers-converge-B.png` | Peer B — same ops, converged via DO |
-| `03-undo-redo-A.png` | Peer A after undo + redo cycle |
-| `03-undo-redo-B.png` | Peer B — sees A's undo/redo synced |
-| `04-multi-ops-A.png` | Peer A with 3 ops from both peers |
-| `04-multi-ops-B.png` | Peer B — all 3 ops converged |
+### Single peer adds an op
+![Single peer add op](test/partykit/screenshots/01-single-peer-add-op.png)
+
+### Two peers converge — both see both ops
+| Peer A | Peer B |
+|--------|--------|
+| ![Peer A](test/partykit/screenshots/02-two-peers-converge-A.png) | ![Peer B](test/partykit/screenshots/02-two-peers-converge-B.png) |
+
+### Undo/redo syncs between peers
+| Peer A (after redo) | Peer B (sees A's redo) |
+|---------------------|------------------------|
+| ![Undo A](test/partykit/screenshots/03-undo-redo-A.png) | ![Undo B](test/partykit/screenshots/03-undo-redo-B.png) |
+
+### Multiple ops from both peers converge
+| Peer A (3 ops) | Peer B (3 ops) |
+|-----------------|----------------|
+| ![Multi A](test/partykit/screenshots/04-multi-ops-A.png) | ![Multi B](test/partykit/screenshots/04-multi-ops-B.png) |
+
+## Known Issues
+
+| Package | Issue | Status |
+|---------|-------|--------|
+| **partywhen** | Scheduler SQL init crashes in miniflare local dev (`ctx.storage.sql` in constructor) | `it.fails` test documents it |
+| **partysession** | Published to npm but has no code (empty `dist/`) | Cannot test — package is a placeholder |
+| **automerge-repo** | `FinalizationRegistry` not available in miniflare — needs polyfill | Polyfilled in `polyfill.ts` |
+| **@automerge/automerge** | `/slim` conditional export not resolved by Vite/rolldown | Aliased in `e2e/vite.config.ts` |
+| **@automerge/automerge** | Browser needs `initializeWasm()` before use | Called in `e2e-main.ts` |
 
 ## What's next
 

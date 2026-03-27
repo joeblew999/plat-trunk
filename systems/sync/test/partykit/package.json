@@ -13,7 +13,12 @@
     "cborg": "^4.0.0",
     "hono": "^4.12.9",
     "hono-party": "^2.0.3",
-    "partyserver": "^0.4.0"
+    "partyfn": "^0.1.0",
+    "partyserver": "^0.4.0",
+    "partysession": "^0.0.4",
+    "partysocket": "^1.1.16",
+    "partysub": "^2.0.2",
+    "partywhen": "^0.1.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260317.1",
