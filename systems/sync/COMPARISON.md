@@ -260,6 +260,93 @@ The **export boundaries** (`@plat/sync/client`, `@plat/sync/worker`) don't chang
 - **Timeline** — current system works. DOs are the right architecture but not urgent.
 - **Scope** — do we build the DO version in sync now, or ship current and iterate?
 
+## Build vs Use
+
+Before building anything, we need to ask: should we build our own DO sync layer, or use an existing one?
+
+### Option A: Use automerge-repo directly
+
+**What**: Import `@automerge/automerge-repo` + write a CF Workers `NetworkAdapter` and `StorageAdapter` for DOs.
+
+**Pros**:
+- Battle-tested sync protocol — they've solved edge cases we haven't hit yet
+- Active maintenance by the Automerge team
+- Ecosystem: React hooks, Svelte stores, Solid primitives — free
+- Incremental sync, sync state persistence, document lifecycle — all done
+
+**Cons**:
+- Their `Repo` assumes long-lived process (Node/browser) — may not fit DO hibernation cleanly
+- We'd need to write a `DOStorageAdapter` and `DOWebSocketNetworkAdapter` — nobody has done this yet
+- Bundle size: automerge-repo + automerge JS adds weight vs our Rust WASM
+- We lose control over the sync protocol details (WASM-level access)
+
+**Risk**: Medium. The adapters are the unknown — DO hibernation and `Repo` lifecycle may clash.
+
+### Option B: Use y-partykit patterns, build for Automerge
+
+**What**: Port y-partykit's DO storage pattern (update log + clock + compaction) and add Automerge's sync protocol on top.
+
+**Pros**:
+- Proven DO storage pattern (y-partykit is production-tested)
+- We keep our Rust WASM (smaller, faster, we control it)
+- We keep our API boundaries (`@plat/sync/client`, `@plat/sync/worker`)
+- Full control over the sync protocol and storage format
+
+**Cons**:
+- We're reimplementing what automerge-repo already does (sync state, incremental sync)
+- More code to maintain
+- More edge cases to discover ourselves
+
+**Risk**: Medium-high. Sync protocols have subtle bugs. automerge-repo has years of fixes we'd be missing.
+
+### Option C: Wrap automerge-repo with our API
+
+**What**: Use automerge-repo internally but export our `@plat/sync/*` API. Consumers don't know automerge-repo exists.
+
+**Pros**:
+- Best of both: battle-tested sync internals + our clean API
+- We write the DO adapters, automerge-repo handles the hard sync protocol
+- If automerge-repo doesn't work on DOs, we can swap internals without changing the API
+
+**Cons**:
+- Two layers of abstraction
+- Bundle size (automerge-repo + our wrapper)
+- Debugging: issues could be in our wrapper, automerge-repo, or Automerge core
+
+**Risk**: Low-medium. The API boundary protects consumers. The risk is in the DO adapter.
+
+### Option D: Keep current system, optimize incrementally
+
+**What**: Stay on Worker + R2 + SSE + merge_docs. Add incremental sync later when it's a real problem.
+
+**Pros**:
+- Working now. Tested. Deployed.
+- No new dependencies, no migration
+- merge_docs is correct — just not optimal
+
+**Cons**:
+- Full doc transfer on every sync
+- No sync state persistence
+- SSE is one-directional (server→client only)
+- Etag retry is a hack around the single-writer problem DOs solve
+
+**Risk**: Low short-term. Scales poorly with doc size and user count.
+
+### Recommendation
+
+| Timeframe | Action |
+|-----------|--------|
+| **Now** | Ship Option D (current system). It works. |
+| **Next** | Spike Option A — write a DO `StorageAdapter` + `NetworkAdapter` for automerge-repo. See if it fits. |
+| **If A works** | Option C — wrap automerge-repo with our API, migrate SyncClient internals. |
+| **If A doesn't fit DOs** | Option B — port y-partykit patterns, use Automerge sync protocol from our Rust WASM. |
+
+The spike is the decision point. Try automerge-repo on DOs before committing to building or buying.
+
 ## Summary
 
-Our current architecture (Worker + R2 + SSE + merge_docs) is **correct but suboptimal**. The right Cloudflare architecture is **Durable Objects + WebSocket Hibernation + SQLite + incremental sync protocol**. The migration preserves our API boundaries — it's a transport change, not an API change.
+Our current architecture (Worker + R2 + SSE + merge_docs) is **correct but suboptimal**. The right Cloudflare architecture is **Durable Objects + WebSocket Hibernation + SQLite + incremental sync protocol**.
+
+Before building the DO layer ourselves, spike automerge-repo on DOs to see if it fits. If it does, wrap it with our API. If not, port y-partykit's storage patterns with Automerge sync protocol.
+
+Either way, the `@plat/sync/*` export boundaries don't change. Consumers are protected from the transport decision.
