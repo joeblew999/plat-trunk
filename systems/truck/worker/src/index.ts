@@ -9,8 +9,15 @@ import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
 import { R2DocStore } from './doc-store';
-import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName } from './sync-wasm.generated';
+import { mergeWithRetry } from '../../../sync/ts/worker/handler';
+import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName, syncDocHash } from './sync-wasm.generated';
 import { replayModel } from './replay';
+
+// Minimal SyncWasmAdapter wrapping truck's WASM functions — for mergeWithRetry.
+const syncWasm = {
+  merge_docs: (a: Uint8Array, b: Uint8Array) => syncMergeDocs(a, b),
+  doc_hash: (d: Uint8Array) => syncDocHash(d),
+} as import('../../../sync/ts/shared/wasm-adapter').SyncWasmAdapter;
 
 type Bindings = {
   ASSETS: Fetcher;
@@ -658,45 +665,8 @@ const opLogRoutes = new OpenAPIHono<{ Bindings: Bindings }>()
     const storage = new R2DocStore(c.env.MODELS);
     const browserDoc = new Uint8Array(await c.req.arrayBuffer());
 
-    const existing = await storage.loadWithEtag(modelId);
-    let merged: Uint8Array;
-    let hadNewOps = false;
-
-    if (existing?.doc) {
-      // Server has a doc — CRDT merge.
-      // syncMergeDocsWithInfo returns merged bytes + diff info in one WASM call,
-      // replacing the previous 3-call pattern (syncGetOpCount × 2 + syncMergeDocs).
-      const mergeResult = await syncMergeDocsWithInfo(existing.doc, browserDoc);
-      merged = mergeResult.doc;
-      hadNewOps = mergeResult.hadNewOps;
-      const saved = await storage.saveConditional(modelId, merged, existing.etag);
-      if (!saved) {
-        // Retry: reload with fresh etag to avoid unconditional overwrite of concurrent write.
-        const freshWithEtag = await storage.loadWithEtag(modelId);
-        if (freshWithEtag) {
-          const retryResult = await syncMergeDocsWithInfo(freshWithEtag.doc, browserDoc);
-          merged = retryResult.doc;
-          hadNewOps = retryResult.hadNewOps;
-          // Second conditional save — best-effort; CRDT merge is idempotent so
-          // if this also loses the race the next browser sync will converge correctly.
-          const saved2 = await storage.saveConditional(modelId, merged, freshWithEtag.etag);
-          if (!saved2) {
-            // Both conditional saves lost — unconditional fallback.
-            await storage.save(modelId, merged);
-          }
-        } else {
-          // Doc disappeared between reads — adopt browser doc
-          merged = browserDoc;
-          hadNewOps = true;
-          await storage.save(modelId, merged);
-        }
-      }
-    } else {
-      // No server doc — adopt browser doc directly.
-      merged = browserDoc;
-      hadNewOps = true;
-      await storage.save(modelId, merged);
-    }
+    // CRDT merge with etag-based optimistic concurrency (from @plat/sync/worker)
+    const { merged, hadNewOps } = await mergeWithRetry(storage, syncWasm, modelId, browserDoc);
 
     // Notify OTHER SSE clients that the doc changed (ADR-0001 cross-browser sync)
     // hadNewOps = mergedOpCount > serverOpCount — prevents ping-pong loops
