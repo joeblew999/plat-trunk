@@ -135,6 +135,70 @@ export class R2DocStore implements SyncStorageAdapter {
   }
 }
 
+// ── Merge with retry ─────────────────────────────────────────────────────────
+
+export interface MergeResult {
+  merged: Uint8Array;
+  hadNewOps: boolean;
+}
+
+/**
+ * Merge incoming doc with R2 doc using etag-based optimistic concurrency.
+ *
+ * Pattern: load with etag → merge → conditional save → retry on conflict.
+ * CRDT merge is idempotent so even if all conditional saves fail, the next
+ * sync round-trip will converge correctly.
+ *
+ * Usage:
+ *   const result = await mergeWithRetry(store, wasm, modelId, browserDoc);
+ *   if (result.hadNewOps) broadcast(modelId);
+ */
+export async function mergeWithRetry(
+  store: R2DocStore,
+  wasm: SyncWasmAdapter,
+  modelId: string,
+  incomingDoc: Uint8Array,
+): Promise<MergeResult> {
+  const existing = await store.loadWithEtag(modelId);
+
+  if (!existing) {
+    // No server doc — adopt incoming doc directly
+    await store.save(modelId, incomingDoc);
+    return { merged: incomingDoc, hadNewOps: true };
+  }
+
+  // Merge using Blake3 hash for hadNewOps detection
+  const hashBefore = await wasm.doc_hash(existing.doc);
+  let merged = await wasm.merge_docs(existing.doc, incomingDoc);
+  const hashAfter = await wasm.doc_hash(merged);
+  let hadNewOps = hashBefore !== hashAfter;
+
+  // Conditional save — succeeds if no concurrent write changed the etag
+  const saved = await store.saveConditional(modelId, merged, existing.etag);
+  if (!saved) {
+    // Retry with fresh etag
+    const fresh = await store.loadWithEtag(modelId);
+    if (fresh) {
+      const h1 = await wasm.doc_hash(fresh.doc);
+      merged = await wasm.merge_docs(fresh.doc, incomingDoc);
+      const h2 = await wasm.doc_hash(merged);
+      hadNewOps = h1 !== h2;
+      const saved2 = await store.saveConditional(modelId, merged, fresh.etag);
+      if (!saved2) {
+        // Both lost — unconditional fallback (CRDT idempotent, safe)
+        await store.save(modelId, merged);
+      }
+    } else {
+      // Doc disappeared — adopt incoming
+      merged = incomingDoc;
+      hadNewOps = true;
+      await store.save(modelId, merged);
+    }
+  }
+
+  return { merged, hadNewOps };
+}
+
 // ── SSE state ────────────────────────────────────────────────────────────────
 
 interface SseClient {
@@ -164,16 +228,12 @@ const CORS: Record<string, string> = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// ── R2 key ───────────────────────────────────────────────────────────────────
-
-function r2Key(modelId: string): string {
-  return `models/${modelId}/automerge.bin`;
-}
-
 // ── Handler factory ──────────────────────────────────────────────────────────
 
 /**
  * Create a sync HTTP handler.
+ *
+ * Uses R2DocStore + mergeWithRetry for etag-based optimistic concurrency.
  *
  * @param wasm — SyncWasmAdapter (must be initialized before first request)
  * @returns async function(request, r2, prefix?) → Response
@@ -185,7 +245,8 @@ export function createSyncHandler(wasm: SyncWasmAdapter) {
     prefix = '',
   ): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname.slice(prefix.length); // strip prefix
+    const path = url.pathname.slice(prefix.length);
+    const store = new R2DocStore(r2);
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS });
@@ -195,7 +256,6 @@ export function createSyncHandler(wasm: SyncWasmAdapter) {
       return new Response('ok', { headers: CORS });
     }
 
-    // Parse /models/:id/...
     const m = path.match(/^\/models\/([^/]+)(\/.*)?$/);
     if (!m) return new Response('not found', { status: 404, headers: CORS });
 
@@ -207,19 +267,9 @@ export function createSyncHandler(wasm: SyncWasmAdapter) {
 
     if (request.method === 'POST' && sub === '/sync') {
       const incoming = new Uint8Array(await request.arrayBuffer());
+      const { merged, hadNewOps } = await mergeWithRetry(store, wasm, modelId, incoming);
 
-      const obj = await r2.get(r2Key(modelId));
-      let merged: Uint8Array;
-
-      if (obj) {
-        const existing = new Uint8Array(await obj.arrayBuffer());
-        merged = await wasm.merge_docs(existing, incoming);
-      } else {
-        merged = incoming;
-      }
-
-      await r2.put(r2Key(modelId), merged);
-      broadcast(modelId, actorId);
+      if (hadNewOps) broadcast(modelId, actorId);
 
       return new Response(merged, {
         headers: { ...CORS, 'Content-Type': 'application/octet-stream' },
@@ -253,7 +303,7 @@ export function createSyncHandler(wasm: SyncWasmAdapter) {
     // ── DELETE /models/:id ───────────────────────────────────────────
 
     if (request.method === 'DELETE' && !sub) {
-      await r2.delete(r2Key(modelId));
+      await store.delete(modelId);
       return new Response('deleted', { headers: CORS });
     }
 
