@@ -2,30 +2,22 @@
 
 ## Done
 
-- **R2DocStore** → moved to `@plat/sync/worker`. Truck re-exports.
-- **mergeWithRetry** → etag-based optimistic concurrency in `@plat/sync/worker`.
-- **createSyncHandler** uses R2DocStore + mergeWithRetry internally.
+- **R2DocStore** — moved to `@plat/sync/worker`. Truck re-exports.
+- **mergeWithRetry** — etag-based optimistic concurrency in `@plat/sync/worker`.
+- **createSyncHandler** — uses R2DocStore + mergeWithRetry internally.
+- **Truck POST /sync** — replaced ~35 lines of inline merge with `mergeWithRetry`. 20/20 tests pass.
 
-## Remaining
+## Stays in truck (not moving)
 
-### Truck POST /sync → use mergeWithRetry from sync
+### worker-relay.ts
 
-Truck's `index.ts` has ~40 lines of inline merge logic with etag retry. This is now `mergeWithRetry` in `@plat/sync/worker`. Truck should import and call it instead of inlining.
+Truck's SSE relay has truck-specific behavior on every event: `cad-command` dispatch, `cadDocManager.applyServerOp`, `window.__presenceActors` + `reconcile`, state broadcast on connect. Can't switch to `SyncRelay` without two EventSources or losing truck wiring.
 
-**Truck keeps**: manifest actor name updates, SSE presence enrichment (truck-specific).
-**Truck replaces**: the merge + etag retry block → `mergeWithRetry(store, wasm, modelId, browserDoc)`.
+`SyncRelay` is for new consumers. Truck's relay is a power-user implementation.
 
-### Truck worker-relay.ts → SyncRelay for sync events
+### sync-wasm.generated.ts
 
-Truck's `worker-relay.ts` handles 4 SSE event types: `cad-command` (truck-specific), `sync-op`, `doc-changed`, `presence`. The last 3 are sync events that `SyncRelay` handles.
-
-**Approach**: Truck creates a `SyncRelay` for sync events + keeps its own `cad-command` listener on the same EventSource.
-
-### Truck sync-wasm.generated.ts — keep it
-
-Truck uses 19 direct WASM function calls across MCP execution, replay, op recording, doc bootstrap. These are truck-specific uses beyond what `SyncWasmAdapter` covers (e.g. `syncMergeDocsWithInfo`, headless replay). The generated WASM loader stays in truck.
-
-`createWasmAdapter` from sync is for new consumers that only need the sync protocol — truck is a power user with direct WASM access.
+Truck uses 19 direct WASM calls for MCP execution, replay, op recording, doc bootstrap. `createWasmAdapter` is for new consumers — truck needs the full WASM function set.
 
 ## Not sync — tracked for visibility
 
