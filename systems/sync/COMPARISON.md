@@ -182,10 +182,11 @@ No R2 read/write per sync — only SQLite (local, fast, transactional).
 
 ### PartyKit
 
-[PartyKit](https://www.partykit.io/) is essentially a nice developer experience over DOs + WebSockets. automerge-repo already has a PartyKit adapter. We could:
+[PartyKit](https://www.partykit.io/) is a developer experience layer over DOs + WebSockets. PartyKit has Yjs integration (`y-partykit`). An Automerge + PartyKit integration may exist as community work but there is no official adapter in automerge-repo.
 
-1. **Use PartyKit directly** — simplest, managed infra, automerge-repo adapter exists
-2. **Use raw DOs** — more control, same underlying tech, stays within CF ecosystem
+Options:
+1. **Use raw DOs** — full control, stays within CF ecosystem, no extra dependency
+2. **Use PartyKit** — nicer DX, managed infra, but adds a dependency and may not have Automerge support built-in
 3. **Build our own DO sync class** — uses our SyncWorker patterns but with DO + WS instead of Worker + R2 + SSE
 
 ### What changes in @plat/sync
@@ -212,7 +213,7 @@ The **export boundaries** (`@plat/sync/client`, `@plat/sync/worker`) don't chang
 
 ### Decision needed
 
-- **PartyKit vs raw DOs** — PartyKit is easier but adds a dependency. Raw DOs are more work but stay within CF.
+- **PartyKit vs raw DOs** — PartyKit may not have Automerge support built-in. Raw DOs stay within CF, no extra dependency.
 - **Timeline** — current system works. DOs are the right architecture but not urgent.
 - **Scope** — do we build the DO version in sync now, or ship current and iterate?
 

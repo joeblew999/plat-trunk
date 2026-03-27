@@ -19,3 +19,10 @@ These are truck refactors, not sync work:
 ## https://github.com/automerge/automerge-repo
 
 Have they gotten things more right then we have ?  
+
+
+## DEPLOY
+
+Mkae sure we can test locally and against the deplyoed one via playwright !!!
+
+maybe on CF we get different behavious ??? 
