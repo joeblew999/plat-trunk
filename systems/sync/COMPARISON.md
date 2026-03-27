@@ -332,16 +332,54 @@ Before building anything, we need to ask: should we build our own DO sync layer,
 
 **Risk**: Low short-term. Scales poorly with doc size and user count.
 
+### Option E: PartyKit + automerge-repo
+
+**What**: Use PartyKit as the runtime (DOs + WebSocket + Hibernation as managed service) and automerge-repo as the sync protocol. Write two adapters to glue them together.
+
+```
+Browser
+  automerge-repo Repo (sync protocol, document handles)
+    ↕ PartyKitNetworkAdapter (WebSocket, managed by PartyKit)
+PartyKit Server (Durable Object)
+  automerge-repo Repo (server-side sync, peer tracking)
+    ↕ DOStorageAdapter (DO Storage, y-partykit incremental pattern)
+    ↕ R2 (cold snapshot backup, optional)
+```
+
+**We write**:
+- `PartyKitNetworkAdapter` — bridges automerge-repo messages ↔ PartyKit WebSocket
+- `DOStorageAdapter` — bridges automerge-repo storage ↔ DO Storage (following y-partykit's chunking/compaction pattern)
+- Our `@plat/sync/*` API wrapping automerge-repo (consumers don't see it)
+
+**We get for free**:
+- PartyKit: DO lifecycle, WebSocket management, hibernation, deploy, scaling
+- automerge-repo: incremental sync protocol, sync state persistence, document lifecycle, peer tracking, React/Svelte/Solid hooks
+
+**Pros**:
+- Least code to write — two adapters + our API wrapper
+- Battle-tested sync (automerge-repo) on battle-tested infra (PartyKit/CF DOs)
+- PartyKit is built on Cloudflare — same underlying platform, not a different cloud
+- y-partykit proves DO storage works for CRDTs (Yjs) — same pattern for Automerge
+
+**Cons**:
+- Two dependencies (PartyKit + automerge-repo) vs zero today
+- PartyKit is a managed service — vendor dependency (though it's CF underneath)
+- automerge-repo uses JS Automerge — we'd need to reconcile with our Rust WASM Automerge
+- Bundle size: automerge-repo + PartyKit client + our wrapper
+
+**Risk**: Low-medium. Both projects are mature. The main risk is JS Automerge vs Rust WASM Automerge — we may need to pick one.
+
 ### Recommendation
 
 | Timeframe | Action |
 |-----------|--------|
 | **Now** | Ship Option D (current system). It works. |
-| **Next** | Spike Option A — write a DO `StorageAdapter` + `NetworkAdapter` for automerge-repo. See if it fits. |
-| **If A works** | Option C — wrap automerge-repo with our API, migrate SyncClient internals. |
-| **If A doesn't fit DOs** | Option B — port y-partykit patterns, use Automerge sync protocol from our Rust WASM. |
+| **Next** | Spike Option E — PartyKit + automerge-repo. Write the two adapters, see if it fits. |
+| **If E works** | Wrap with our `@plat/sync/*` API, migrate consumers. |
+| **If E has issues** | Fall back to Option B (build on raw DOs with y-partykit storage patterns). |
+| **Don't do** | Option B first — too much code to write when E could give us the same result with less work. |
 
-The spike is the decision point. Try automerge-repo on DOs before committing to building or buying.
+The spike is the decision point. PartyKit + automerge-repo is the highest-leverage option — most functionality for least code. Try it before building from scratch.
 
 ## Summary
 
