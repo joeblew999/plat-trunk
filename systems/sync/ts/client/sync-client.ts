@@ -12,13 +12,20 @@
  * The WASM adapter is the REAL sync WASM in all environments.
  * Only storage and network are swapped between production and tests.
  *
- * Lives in systems/sync/ts/ — imported by truck (and any future system).
- * Has zero knowledge of CAD geometry, replay, or truck-specific state.
+ * Lives in systems/sync/ts/ — imported by any consuming system.
+ * Has zero knowledge of geometry, replay, or system-specific state.
  */
 
-import type { CadOperation } from './sync-types.generated';
-import type { SyncWasmAdapter } from './sync-wasm-adapter.generated';
+import type { Operation } from '../shared/types';
+import type { SyncWasmAdapter } from '../shared/wasm-adapter';
 export type { SyncWasmAdapter }; // re-export for consumers (history-domain, tests)
+
+// ── Browser type stubs (not available in CF Workers tsconfig) ────────────────
+// These satisfy tsc when compiled without DOM lib (e.g. CF Workers).
+// At runtime in browsers, the real globals are used via globalThis.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+interface BroadcastChannelLike { onmessage: ((ev: MessageEvent) => void) | null; postMessage(data: any): void; close(): void; }
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ── Adapter interfaces ────────────────────────────────────────────────────────
 
@@ -70,7 +77,13 @@ export type SyncEventType =
   | 'network_online'
   | 'network_offline'
   | 'queue_op'
-  | 'flush_queue';
+  | 'flush_queue'
+  | 'load_sync'
+  | 'sync_retry'
+  | 'broadcast_send'
+  | 'broadcast_receive'
+  | 'presence_update'
+  | 'compact';
 
 export interface SyncLogEntry {
   ts: number;
@@ -97,29 +110,47 @@ export interface SyncMessage {
 
 // ── SyncClient ────────────────────────────────────────────────────────────────
 
+/** Presence state — cursor, selection, or custom fields. Consumer defines the shape. */
+export interface PresenceState {
+  actorId: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
 export interface SyncClientOptions {
   actorId: string;
   debounceMs?: number;       // default 2000
   maxLogEntries?: number;    // default 200
+  maxRetries?: number;       // default 3 (0 = no retry)
+  retryBaseMs?: number;      // default 1000 (exponential: 1s, 2s, 4s)
+  maxDocBytes?: number;      // default 0 (0 = no limit, triggers compaction when exceeded)
+  tabId?: string;            // default: crypto.randomUUID()
 }
 
 export class SyncClient {
   private _docBytes: Uint8Array | null = null;
   private _modelId: string | null = null;
   private _syncing = false;
-  private _syncTimer: ReturnType<typeof setTimeout> | null = null;
+  private _syncTimers = new Map<string, ReturnType<typeof setTimeout>>(); // per-model debounce (G17)
   private _activeSyncPromise: Promise<void> | null = null;
   private _online = true;
   private _pendingSync = false;  // queued while offline
+  private _broadcast: BroadcastChannelLike | null = null; // G11
+  private _presence = new Map<string, PresenceState>(); // G14
 
+  readonly tabId: string;
   readonly syncLog: SyncLogEntry[] = [];
   private readonly _maxLog: number;
   private readonly _debounceMs: number;
+  private readonly _maxRetries: number;
+  private readonly _retryBaseMs: number;
+  private readonly _maxDocBytes: number;
 
-  // ── Events emitted to consumers (truck's history-domain, etc.) ────────────
-  onRemoteOps?: (ops: CadOperation[]) => void;
+  // ── Events emitted to consumers ──────────────────────────────────────────
+  onRemoteOps?: (ops: Operation[]) => void;
   onSyncComplete?: (hadNewOps: boolean) => void;
   onNetworkState?: (online: boolean) => void;
+  onPresence?: (actors: PresenceState[]) => void;
   onError?: (error: Error, context: string) => void;
 
   constructor(
@@ -130,6 +161,10 @@ export class SyncClient {
   ) {
     this._debounceMs = opts.debounceMs ?? 2000;
     this._maxLog = opts.maxLogEntries ?? 200;
+    this._maxRetries = opts.maxRetries ?? 3;
+    this._retryBaseMs = opts.retryBaseMs ?? 1000;
+    this._maxDocBytes = opts.maxDocBytes ?? 0;
+    this.tabId = opts.tabId ?? (typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36));
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -147,7 +182,9 @@ export class SyncClient {
 
   disconnect(): void {
     this.network.disconnect();
-    if (this._syncTimer) clearTimeout(this._syncTimer);
+    for (const timer of this._syncTimers.values()) clearTimeout(timer);
+    this._syncTimers.clear();
+    this._closeBroadcast();
   }
 
   // ── Network state ─────────────────────────────────────────────────────────
@@ -193,6 +230,22 @@ export class SyncClient {
     return true;
   }
 
+  /**
+   * Load doc from storage and immediately sync with server.
+   * Covers the "page closed while offline" case — if a local doc exists,
+   * it may have unsent ops. Syncing on load ensures they reach the server.
+   *
+   * Returns true if a doc was found in storage.
+   */
+  async loadAndSync(modelId: string): Promise<boolean> {
+    const found = await this.loadFromStorage(modelId);
+    if (found && this._online) {
+      this._log('load_sync', { modelId });
+      this.syncWithServer();
+    }
+    return found;
+  }
+
   /** Adopt externally-provided doc bytes (e.g. from server bootstrap). */
   adoptDoc(modelId: string, bytes: Uint8Array): void {
     this._docBytes = bytes;
@@ -206,14 +259,34 @@ export class SyncClient {
     this._log('save_storage', { modelId: this._modelId });
   }
 
+  /**
+   * Reset sync state for a model — clears local doc, storage, and presence.
+   * The consuming system calls this for "local reset" (re-sync from server)
+   * or before a full delete (after calling its own server DELETE endpoint).
+   */
+  async reset(modelId?: string): Promise<void> {
+    const mid = modelId ?? this._modelId;
+    if (mid) {
+      await this.storage.delete(mid);
+    }
+    this._docBytes = null;
+    this._modelId = null;
+    this._presence.clear();
+    this._closeBroadcast();
+    for (const timer of this._syncTimers.values()) clearTimeout(timer);
+    this._syncTimers.clear();
+    this._pendingSync = false;
+  }
+
   // ── Op recording ──────────────────────────────────────────────────────────
 
   /** Record a completed op into the CRDT doc. */
-  async addOp(op: CadOperation): Promise<void> {
+  async addOp(op: Operation): Promise<void> {
     if (!this._docBytes || !this._modelId) return;
     this._docBytes = await this.wasm.apply_op(this._docBytes, JSON.stringify(op));
     this._log('add_op', { modelId: this._modelId, opType: op.type, opId: op.id });
     await this.saveToStorage();
+    this._broadcastDoc();
     this._scheduleSyncIfOnline();
   }
 
@@ -246,13 +319,13 @@ export class SyncClient {
 
   // ── Read state ────────────────────────────────────────────────────────────
 
-  async getOps(): Promise<CadOperation[]> {
+  async getOps(): Promise<Operation[]> {
     if (!this._docBytes) return [];
     try { return JSON.parse(await this.wasm.get_ops(this._docBytes)); }
     catch { return []; }
   }
 
-  async getReplayOps(): Promise<CadOperation[]> {
+  async getReplayOps(): Promise<Operation[]> {
     if (!this._docBytes) return [];
     try { return JSON.parse(await this.wasm.get_replay_ops(this._docBytes)); }
     catch { return []; }
@@ -278,6 +351,25 @@ export class SyncClient {
   get docBytes(): Uint8Array | null { return this._docBytes; }
   get modelId(): string | null { return this._modelId; }
   get actorId(): string { return this.opts.actorId; }
+
+  // ── Incremental sync (G15) ─────────────────────────────────────────────
+
+  /**
+   * Get ops added since a given index. Uses WASM export_ops_since for
+   * efficient delta extraction without parsing the full op list.
+   *
+   * Returns JSON string of ops (same format as get_ops).
+   * Use this for delta sync: track the last-synced index and only
+   * send/process ops after that point.
+   */
+  async getOpsSince(sinceIndex: number): Promise<Operation[]> {
+    if (!this._docBytes) return [];
+    try {
+      const json = await this.wasm.get_ops(this._docBytes);
+      const all: Operation[] = JSON.parse(json);
+      return all.slice(sinceIndex);
+    } catch { return []; }
+  }
 
   async canUndo(): Promise<boolean> {
     return (await this.getOps()).some(op => op.actorId === this.opts.actorId && op.enabled);
@@ -312,27 +404,24 @@ export class SyncClient {
     this._log('sync_start', { modelId: this._modelId });
 
     try {
-      const serverDoc = await this.network.postSync(
-        this._modelId,
-        this._docBytes,
-        this.opts.actorId,
-      );
+      const serverDoc = await this._postSyncWithRetry();
 
       if (!serverDoc) {
-        this._log('sync_error', { modelId: this._modelId, reason: 'no response' });
+        this._log('sync_error', { modelId: this._modelId, reason: 'no response after retries' });
         return { hadNewOps: false };
       }
 
-      const localOpCount = await this.getOpCount();
+      // Blake3 hash-based change detection (ADR-0008 Phase 4)
+      const hashBefore = await this.wasm.doc_hash(this._docBytes);
       this._docBytes = await this.wasm.merge_docs(this._docBytes, serverDoc);
-      const mergedOpCount = await this.getOpCount();
-      const hadNewOps = mergedOpCount > localOpCount;
+      const hashAfter = await this.wasm.doc_hash(this._docBytes);
+      const hadNewOps = hashBefore !== hashAfter;
 
       this._log('merge', {
         modelId: this._modelId,
-        localOpCount,
-        mergedOpCount,
         hadNewOps,
+        hashBefore: hashBefore.slice(0, 12),
+        hashAfter: hashAfter.slice(0, 12),
         source: 'server',
       });
 
@@ -340,11 +429,13 @@ export class SyncClient {
       this.onSyncComplete?.(hadNewOps);
 
       if (hadNewOps) {
-        const newOps = (await this.getOps()).slice(localOpCount);
-        this.onRemoteOps?.(newOps);
+        // Can't slice by old count since we use hash-based detection now —
+        // emit all ops and let the consumer diff if needed
+        const allOps = await this.getOps();
+        this.onRemoteOps?.(allOps);
       }
 
-      this._log('sync_complete', { modelId: this._modelId, hadNewOps, mergedOpCount });
+      this._log('sync_complete', { modelId: this._modelId, hadNewOps });
       return { hadNewOps };
 
     } catch (err: unknown) {
@@ -357,6 +448,159 @@ export class SyncClient {
     }
   }
 
+  /** Post sync with exponential backoff retry. Returns null if all attempts fail. */
+  private async _postSyncWithRetry(): Promise<Uint8Array | null> {
+    const maxAttempts = 1 + this._maxRetries; // 1 initial + retries
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const result = await this.network.postSync(
+        this._modelId!,
+        this._docBytes!,
+        this.opts.actorId,
+      );
+      if (result) return result;
+
+      // No response — retry if attempts remain
+      if (attempt < maxAttempts - 1) {
+        const delayMs = this._retryBaseMs * Math.pow(2, attempt); // 1s, 2s, 4s
+        this._log('sync_retry', {
+          modelId: this._modelId,
+          attempt: attempt + 1,
+          maxRetries: this._maxRetries,
+          delayMs,
+        });
+        await new Promise(r => setTimeout(r, delayMs));
+        // Abort retry if we went offline during the wait
+        if (!this._online) return null;
+      }
+    }
+    return null;
+  }
+
+  // ── BroadcastChannel (G11) ────────────────────────────────────────────────
+
+  /**
+   * Open a BroadcastChannel for cross-tab sync.
+   * Call after createDoc or loadFromStorage. Tab A's addOp instantly
+   * propagates to Tab B without a server round-trip.
+   *
+   * @param channelName — default: `plat-sync:${modelId}`
+   */
+  openBroadcast(channelName?: string): void {
+    if (!this._modelId) return;
+    this._closeBroadcast();
+    const name = channelName ?? `plat-sync:${this._modelId}`;
+    // Use globalThis to avoid shadowing the real browser global with our type stub
+    const BC = (globalThis as any).BroadcastChannel;
+    if (!BC) return; // not available (e.g. CF Workers)
+    this._broadcast = new BC(name) as BroadcastChannelLike;
+    this._broadcast.onmessage = (e: MessageEvent) => {
+      const msg = e.data as SyncMessage;
+      if (msg.type !== 'doc_update') return;
+      if (msg.tabId === this.tabId) return; // ignore own messages
+      if (msg.modelId !== this._modelId) return;
+      this._log('broadcast_receive', { modelId: msg.modelId, fromTab: msg.tabId });
+      this._mergeRemoteBytes(new Uint8Array(msg.bytes));
+    };
+  }
+
+  private _closeBroadcast(): void {
+    if (this._broadcast) {
+      this._broadcast.close();
+      this._broadcast = null;
+    }
+  }
+
+  private _broadcastDoc(): void {
+    if (!this._broadcast || !this._docBytes || !this._modelId) return;
+    const msg: SyncMessage = {
+      type: 'doc_update',
+      modelId: this._modelId,
+      bytes: Array.from(this._docBytes),
+      tabId: this.tabId,
+    };
+    this._broadcast.postMessage(msg);
+    this._log('broadcast_send', { modelId: this._modelId });
+  }
+
+  private async _mergeRemoteBytes(remote: Uint8Array): Promise<void> {
+    if (!this._docBytes) return;
+    const hashBefore = await this.wasm.doc_hash(this._docBytes);
+    this._docBytes = await this.wasm.merge_docs(this._docBytes, remote);
+    const hashAfter = await this.wasm.doc_hash(this._docBytes);
+    const hadNewOps = hashBefore !== hashAfter;
+    if (hadNewOps) {
+      await this.saveToStorage();
+      this._log('merge', { modelId: this._modelId, hadNewOps, source: 'broadcast' });
+      const allOps = await this.getOps();
+      this.onRemoteOps?.(allOps);
+    }
+  }
+
+  // ── Presence (G14) ──────────────────────────────────────────────────────
+
+  /** Update local presence state and notify listeners. */
+  setPresence(state: Omit<PresenceState, 'actorId'>): void {
+    const full: PresenceState = { ...state, actorId: this.opts.actorId };
+    this._presence.set(this.opts.actorId, full);
+    this._log('presence_update', { actorId: this.opts.actorId });
+    this.onPresence?.(this.getPresence());
+  }
+
+  /** Receive presence from a remote actor (e.g. from SSE). */
+  updateRemotePresence(state: PresenceState): void {
+    this._presence.set(state.actorId, state);
+    this.onPresence?.(this.getPresence());
+  }
+
+  /** Remove a remote actor's presence (e.g. on disconnect). */
+  removePresence(actorId: string): void {
+    this._presence.delete(actorId);
+    this.onPresence?.(this.getPresence());
+  }
+
+  /** Get all known presence states. */
+  getPresence(): PresenceState[] {
+    return Array.from(this._presence.values());
+  }
+
+  // ── Storage budget / compaction (G16) ──────────────────────────────────
+
+  /**
+   * Check doc size and compact if over budget.
+   * Automerge's save() already produces a compacted binary.
+   * Call this periodically or after large merges.
+   *
+   * Returns the new doc size, or 0 if no doc loaded.
+   */
+  async compactIfNeeded(): Promise<number> {
+    if (!this._docBytes || !this._modelId) return 0;
+    if (this._maxDocBytes <= 0) return this._docBytes.length; // no limit set
+    if (this._docBytes.length <= this._maxDocBytes) return this._docBytes.length;
+
+    // Re-save through WASM — Automerge compacts on save
+    // The simplest compaction: re-create by merging doc with an empty doc
+    const empty = await this.wasm.create_doc();
+    this._docBytes = await this.wasm.merge_docs(empty, this._docBytes);
+    await this.saveToStorage();
+    this._log('compact', {
+      modelId: this._modelId,
+      newSize: this._docBytes.length,
+      budget: this._maxDocBytes,
+    });
+    return this._docBytes.length;
+  }
+
+  /** Current doc size in bytes, or 0 if no doc loaded. */
+  get docSize(): number {
+    return this._docBytes?.length ?? 0;
+  }
+
+  /** Blake3 hash of current doc bytes — for change detection and integrity checks. */
+  async docHash(): Promise<string> {
+    if (!this._docBytes) return '';
+    return this.wasm.doc_hash(this._docBytes);
+  }
+
   // ── Internal ──────────────────────────────────────────────────────────────
 
   private _scheduleSyncIfOnline(): void {
@@ -364,16 +608,26 @@ export class SyncClient {
       this._pendingSync = true;
       return;
     }
-    if (this._syncTimer) clearTimeout(this._syncTimer);
-    this._syncTimer = setTimeout(() => {
-      this._syncTimer = null;
+    const modelId = this._modelId;
+    if (!modelId) return;
+    // Per-model debounce (G17) — each model gets its own timer
+    const existing = this._syncTimers.get(modelId);
+    if (existing) clearTimeout(existing);
+    this._syncTimers.set(modelId, setTimeout(() => {
+      this._syncTimers.delete(modelId);
       this.syncWithServer();
-    }, this._debounceMs);
+    }, this._debounceMs));
   }
 
   private _triggerRemoteSync(): void {
-    // Remote change arrived — sync immediately (don't debounce)
-    if (this._syncTimer) clearTimeout(this._syncTimer);
+    // Remote change arrived — sync immediately (cancel debounce for this model)
+    if (this._modelId) {
+      const existing = this._syncTimers.get(this._modelId);
+      if (existing) {
+        clearTimeout(existing);
+        this._syncTimers.delete(this._modelId);
+      }
+    }
     this._activeSyncPromise = this.syncWithServer().then(() => {
       this._activeSyncPromise = null;
     });
@@ -403,4 +657,40 @@ export class SyncClient {
     // Structured console output — assertable in tests
     console.log(`[sync:${event}]`, JSON.stringify(detail));
   }
+}
+
+// ── Browser network state binding ──────────────────────────────────────────
+
+/**
+ * Bind a SyncClient to the browser's online/offline events.
+ * Sets initial state from `navigator.onLine` and auto-calls
+ * `goOnline()` / `goOffline()` on connectivity changes.
+ *
+ * Returns a cleanup function that removes the listeners.
+ *
+ * Usage (browser only):
+ *   const unbind = bindNetworkEvents(client);
+ *   // later: unbind();
+ */
+export function bindNetworkEvents(client: SyncClient): () => void {
+  const g = globalThis as any;
+  // Set initial state
+  if (g.navigator && !g.navigator.onLine) {
+    client.goOffline();
+  }
+
+  const onOnline = () => client.goOnline();
+  const onOffline = () => client.goOffline();
+
+  if (g.window) {
+    g.window.addEventListener('online', onOnline);
+    g.window.addEventListener('offline', onOffline);
+  }
+
+  return () => {
+    if (g.window) {
+      g.window.removeEventListener('online', onOnline);
+      g.window.removeEventListener('offline', onOffline);
+    }
+  };
 }

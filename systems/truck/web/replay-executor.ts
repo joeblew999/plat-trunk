@@ -6,7 +6,7 @@ import { cadCommand } from './dispatch';
 import { getBlob } from './blob-store';
 import { resetTierState, registerWarmObjects } from './tier-manager';
 import type { CadOptions, SceneEntry } from './types';
-import type { CadOperation } from '../../sync/ts/sync-types.generated';
+import type { CadOperation } from '../../sync/ts/shared/types';
 import { MODEL_ID } from './app-config';
 import { getSceneController } from './scene-controller';
 

@@ -1,14 +1,14 @@
 [package]
-name = "truck-sync"
+name = "plat-sync"
 version = "0.1.0"
 edition = "2021"
-description = "Plugin-agnostic CRDT op log for plat-trunk systems (truck-geometry, truck-mvt, ifc-lite, …)"
+description = "Plugin-agnostic CRDT op log for plat-trunk systems"
 
 # ── Standalone workspace ───────────────────────────────────────────────────────
-# truck-sync has zero dependencies on truck geometry, howick, or any other
-# plat-trunk crate. Declaring its own workspace here means:
+# plat-sync has zero dependencies on truck geometry or any other plat-trunk
+# crate. Declaring its own workspace here means:
 #   cd systems/sync/crate && cargo test   ← works with NO .src repos cloned
-#   cargo test -p truck-sync             ← still works from monorepo root
+#   cargo test -p plat-sync              ← still works from monorepo root
 # Without this, Cargo resolves ALL workspace members first (including howick
 # which has a .src/truck path dep), breaking sync tests in a fresh checkout.
 [workspace]
@@ -30,6 +30,9 @@ schemars = { version = "0.8", features = ["derive"] }
 # Unique op IDs
 uuid = { version = "1", features = ["v4", "js", "serde"] }
 
+# Content hashing for change detection and storage integrity
+blake3 = { version = "1.8", default-features = false }
+
 # WASM bridge (only used when compiled to wasm32)
 wasm-bindgen              = "0.2.106"
 console_error_panic_hook  = "0.1.7"
@@ -47,6 +50,17 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [[bin]]
 name = "generate-sync-schema"
 path = "src/bin/generate_sync_schema.rs"
+
+[profile.release]
+opt-level = "z"       # optimize for size (WASM binary)
+lto = true            # link-time optimization
+codegen-units = 1     # slower compile, smaller output
+strip = true          # strip symbols
+
+# wasm-opt bundled by wasm-pack fails on macOS ARM — disable it.
+# Rust-level opts (opt-level=z, lto) handle size optimization.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [features]
 default = []

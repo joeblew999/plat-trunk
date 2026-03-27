@@ -110,11 +110,11 @@ const syncWrappers: Array<{
   { wasmFn: 'set_name',            wrapperName: 'syncSetName',           params: 'doc: Uint8Array, name: string',                     call: 'bg.set_name(doc, name)',                returnType: 'Uint8Array<ArrayBuffer>', clientAdapter: true  },
 ];
 
-// ─── CF Worker: truck-sync loader ────────────────────────────────
+// ─── CF Worker: plat-sync loader ────────────────────────────────
 
 function genCfSyncWasm(): string {
-  const exports = boundaries.modules['truck-sync']?.exports as string[];
-  if (!exports) throw new Error('No truck-sync module in boundaries');
+  const exports = boundaries.modules['plat-sync']?.exports as string[];
+  if (!exports) throw new Error('No plat-sync module in boundaries');
 
   // syncWrappers defined at module scope — used here + in adapter generators
   // Only generate wrappers for exports that are in the schema
@@ -131,9 +131,9 @@ export async function ${w.wrapperName}(${w.params}): Promise<${w.returnType}> {
 }`;
   }).join('\n');
 
-  return `${HEADER('cf-worker / truck-sync')}
+  return `${HEADER('cf-worker / plat-sync')}
 /**
- * truck-sync WASM loader for Cloudflare Workers.
+ * plat-sync WASM loader for Cloudflare Workers.
  *
  * Lazy-init pattern matching truck-wasm loader.
  * Generated from cad-schema.json boundaries — ${exports.length} exports.
@@ -141,10 +141,10 @@ export async function ${w.wrapperName}(${w.params}): Promise<${w.returnType}> {
 
 // Wrangler: default import is WebAssembly.Module.
 // vitest (vite-plugin-wasm): default is undefined, namespace has instantiated exports.
-import wasmDefault from '../pkg-sync/truck_sync_bg.wasm';
-import * as wasmStar from '../pkg-sync/truck_sync_bg.wasm';
+import wasmDefault from '../pkg-sync/plat_sync_bg.wasm';
+import * as wasmStar from '../pkg-sync/plat_sync_bg.wasm';
 // @ts-expect-error — generated glue, no .d.ts for bg.js
-import * as bg from '../pkg-sync/truck_sync_bg.js';
+import * as bg from '../pkg-sync/plat_sync_bg.js';
 
 let initialized = false;
 
@@ -160,7 +160,7 @@ async function initSyncWasm(): Promise<void> {
       }
     }
     const instance = await WebAssembly.instantiate(wasmDefault, {
-      './truck_sync_bg.js': glueImports,
+      './plat_sync_bg.js': glueImports,
     });
     bg.__wbg_set_wasm(instance.exports);
   } else {
@@ -233,7 +233,7 @@ function genNativeCommands(): string {
 
   const allNames = sorted.map(([name]) => `    "${name}",`).join('\n');
 
-  const syncExports = (boundaries.modules['truck-sync']?.exports as string[]) || [];
+  const syncExports = (boundaries.modules['plat-sync']?.exports as string[]) || [];
   const syncNames = syncExports.map(name => `    "${name}",`).join('\n');
 
   return `${HEADER('native').replace(/^\/\//gm, '//')}
@@ -261,7 +261,7 @@ ${domainArms}
     }
 }
 
-/// All ${syncExports.length} exports from the truck-sync WASM module.
+/// All ${syncExports.length} exports from the plat-sync WASM module.
 pub const SYNC_EXPORTS: &[&str] = &[
 ${syncNames}
 ];
@@ -277,8 +277,8 @@ function capitalize(s: string): string {
 // Imported by sync-client.ts — single source of truth for the adapter shape.
 
 function genSyncWasmAdapter(): string {
-  const exports = boundaries.modules['truck-sync']?.exports as string[];
-  if (!exports) throw new Error('No truck-sync module in boundaries');
+  const exports = boundaries.modules['plat-sync']?.exports as string[];
+  if (!exports) throw new Error('No plat-sync module in boundaries');
 
   // Only clientAdapter:true entries, filtered to what the schema exports
   const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
@@ -299,14 +299,14 @@ function genSyncWasmAdapter(): string {
 
   return `${HEADER('sync-client (SyncWasmAdapter interface)')}
 /**
- * SyncWasmAdapter — interface for the truck-sync WASM module.
+ * SyncWasmAdapter — interface for the sync WASM module.
  *
  * Implemented by:
  *   - Real WASM: wrap the generated async functions from sync-wasm.generated.ts
  *   - Tests: wrap the same generated functions directly (no mock)
  *
  * All methods are async — matches wasm-bindgen generated signatures.
- * Generated from cad-schema.json boundaries.modules['truck-sync'] (clientAdapter:true entries).
+ * Generated from cad-schema.json boundaries (clientAdapter:true entries).
  * ${adapterWrappers.length} methods.
  */
 export interface SyncWasmAdapter {
@@ -316,13 +316,13 @@ ${methods}
 }
 
 // ─── Browser: SyncWasmAdapter implementation ─────────────────────
-// Wraps the browser WASM functions (from pkg-sync/truck_sync.js) as the
+// Wraps the browser WASM functions (from pkg-sync/plat_sync.js) as the
 // SyncWasmAdapter used by SyncClient in history-domain.ts.
 // browser sync WASM functions are sync after init — wrap in Promise.resolve().
 
 function genBrowserSyncAdapter(): string {
-  const exports = boundaries.modules['truck-sync']?.exports as string[];
-  if (!exports) throw new Error('No truck-sync module in boundaries');
+  const exports = boundaries.modules['plat-sync']?.exports as string[];
+  if (!exports) throw new Error('No plat-sync module in boundaries');
 
   // All clientAdapter:true entries — SyncClient calls merge_docs after network.postSync() returns server bytes
   const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
@@ -338,7 +338,7 @@ function genBrowserSyncAdapter(): string {
     // get_replay_ops needs special handling — not re-exported, derive from get_ops
     if (w.wasmFn === 'get_replay_ops') {
       return `    ${w.wasmFn}: (doc) => {
-        const all: CadOperation[] = JSON.parse(get_ops(doc));
+        const all: Operation[] = JSON.parse(get_ops(doc));
         return Promise.resolve(JSON.stringify(all.filter(o => o.enabled)));
     },`;
     }
@@ -358,11 +358,11 @@ function genBrowserSyncAdapter(): string {
 // get_replay_ops is derived from get_ops + filter(enabled) because
 // get_replay_ops is not re-exported from the browser WASM generated bindings.
 
-import { ${importedFns} } from './pkg-sync/truck_sync.js';
-import type { SyncWasmAdapter } from '../../sync/ts/sync-wasm-adapter.generated';
-import type { CadOperation } from '../../sync/ts/sync-types.generated';
+import { ${importedFns} } from './pkg-sync/plat_sync.js';
+import type { SyncWasmAdapter } from '../../sync/ts/shared/wasm-adapter';
+import type { Operation } from '../../sync/ts/shared/types';
 
-/** Real browser SyncWasmAdapter — use in CadDocumentManagerBase constructor. */
+/** Real browser SyncWasmAdapter — wraps sync WASM for browser usage. */
 export const browserSyncWasmAdapter: SyncWasmAdapter = {
 ${methods}
 };
@@ -373,8 +373,8 @@ ${methods}
 // Wraps the generated async test WASM functions for use in sync-client.test.ts.
 
 function genTestSyncAdapter(): string {
-  const exports = boundaries.modules['truck-sync']?.exports as string[];
-  if (!exports) throw new Error('No truck-sync module in boundaries');
+  const exports = boundaries.modules['plat-sync']?.exports as string[];
+  if (!exports) throw new Error('No plat-sync module in boundaries');
 
   const adapterWrappers = syncWrappers.filter(w => w.clientAdapter && exports.includes(w.wasmFn));
 
@@ -399,7 +399,7 @@ function genTestSyncAdapter(): string {
   return `${HEADER('sync-test / SyncWasmAdapter implementation')}
 // Test SyncWasmAdapter — wraps the generated async WASM functions.
 // Identical shape to browser adapter but uses the test context WASM loader.
-// Generated from cad-schema.json boundaries.modules['truck-sync'] (clientAdapter:true, no merge_docs).
+// Generated from cad-schema.json boundaries (clientAdapter:true, no merge_docs).
 
 import { ${importedFns}, syncGetReplayOps } from './sync-wasm.generated';
 import type { SyncWasmAdapter } from '../../ts/sync-wasm-adapter.generated';
@@ -419,12 +419,12 @@ interface GeneratedFile {
 }
 
 const outputs: GeneratedFile[] = [
-  { path: 'systems/sync/ts/sync-wasm-adapter.generated.ts', content: genSyncWasmAdapter() },
+  { path: 'systems/sync/ts/shared/wasm-adapter.ts', content: genSyncWasmAdapter() },
   { path: 'systems/truck/web/sync-wasm-adapter.generated.ts', content: genBrowserSyncAdapter() },
-  { path: 'systems/sync/test/src/sync-wasm-adapter.generated.ts', content: genTestSyncAdapter() },
+  { path: 'systems/sync/test/client/sync-wasm-adapter.generated.ts', content: genTestSyncAdapter() },
   { path: 'systems/truck/worker/src/truck-wasm.generated.ts', content: genCfTruckWasm() },
   { path: 'systems/truck/worker/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
-  { path: 'systems/sync/test/src/sync-wasm.generated.ts', content: genCfSyncWasm() },
+  { path: 'systems/sync/test/client/sync-wasm.generated.ts', content: genCfSyncWasm() },
   { path: 'systems/truck/web/cad-dispatch.generated.ts', content: genBrowserDispatch() },
   { path: 'systems/truck/crate/src/commands_generated.rs', content: genNativeCommands() },
 ];

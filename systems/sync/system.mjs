@@ -1,13 +1,26 @@
 // systems/sync/system.mjs — sync system config.
-// Owns the WASM build for systems/sync/crate (three targets: web + 2x bundler).
+// Owns the WASM build for systems/sync/crate.
+// Primary outputs go to systems/sync/pkg/ (sync-local).
+// Consumers (truck) copy from there in their own build steps.
 
-export const DEV_BUILD =
-  '(cd systems/sync/crate && wasm-pack build --target web --dev --out-dir ../../truck/web/pkg-sync && wasm-pack build --target bundler --dev --out-dir ../../truck/worker/pkg-sync && wasm-pack build --target bundler --dev --out-dir ../test/pkg-sync && cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null)';
+// Build to sync-local pkg dirs, then copy to consumer locations.
+// Three WASM targets: web (browser ESM), bundler (CF worker), bundler (tests).
+const SYNC_BUILD_CORE = (mode) =>
+  `(cd systems/sync/crate && ` +
+  `wasm-pack build --target web ${mode} --out-dir ../pkg/web && ` +
+  `wasm-pack build --target bundler ${mode} --out-dir ../pkg/bundler && ` +
+  `wasm-pack build --target bundler ${mode} --out-dir ../test/pkg-sync && ` +
+  `cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null)`;
 
-export const RELEASE_BUILD =
-  '(cd systems/sync/crate && wasm-pack build --target web --release --out-dir ../../truck/web/pkg-sync && wasm-pack build --target bundler --release --out-dir ../../truck/worker/pkg-sync && wasm-pack build --target bundler --release --out-dir ../test/pkg-sync && cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null)';
+// After building, copy to truck's expected locations.
+const COPY_TO_CONSUMERS =
+  'cp -r systems/sync/pkg/web/* systems/truck/web/pkg-sync/ 2>/dev/null || true && ' +
+  'cp -r systems/sync/pkg/bundler/* systems/truck/worker/pkg-sync/ 2>/dev/null || true';
 
-// Sync has no deployed worker — it's a WASM library consumed by truck.
+export const DEV_BUILD = `${SYNC_BUILD_CORE('--dev')} && ${COPY_TO_CONSUMERS}`;
+export const RELEASE_BUILD = `${SYNC_BUILD_CORE('--release')} && ${COPY_TO_CONSUMERS}`;
+
+// Sync has no deployed worker — it's a WASM library consumed by other systems.
 // The test/ directory provides vitest-pool-workers context for TS tests.
 export const workers = [];
 export const devServers = [];
@@ -36,11 +49,22 @@ export const testing = {
 // When adding tests, update this list. If a file is missing, the build breaks.
 export const testFiles = {
   rust: [
-    { file: 'systems/sync/crate/src/lib.rs', covers: 'CRDT math: merge, dedup, replay, rollback, enable/disable, names (unit + integration)' },
+    { file: 'systems/sync/crate/src/lib.rs', covers: 'CRDT math: merge, dedup, replay, rollback, Blake3 hash' },
   ],
-  vitest: [
-    { file: 'systems/sync/test/src/wasm.test.ts', covers: 'WASM boundary: JS↔Rust serialization, create/apply/merge/dedup/names' },
-    { file: 'systems/sync/test/src/message-contract.test.ts', covers: 'SSE message format: SyncMessage wire contract, model isolation' },
-    { file: 'systems/sync/test/src/sync-client.test.ts', covers: 'SyncClient protocol: real WASM + MemoryStorage + DirectNetwork adapters' },
+  // client/ — tests @plat/sync/client + adapters in CF Workers runtime (vitest-pool-workers)
+  client: [
+    { file: 'systems/sync/test/client/wasm.test.ts', covers: '@plat/sync/wasm-adapter boundary: create, apply, merge, dedup, names, hash' },
+    { file: 'systems/sync/test/client/sync-client.test.ts', covers: '@plat/sync/client + adapters: protocol, retry, presence, compaction, debounce, loadAndSync' },
+  ],
+  // integration/ — tests all boundaries (Playwright: real browser + real CF Worker + R2)
+  integration: [
+    { file: 'systems/sync/test/integration/gui-basics.spec.ts', covers: 'GUI boot, add op, sync via real server + R2, log events' },
+    { file: 'systems/sync/test/integration/cross-tab.spec.ts', covers: 'BroadcastChannel: cross-tab op delivery, undo propagation' },
+    { file: 'systems/sync/test/integration/presence.spec.ts', covers: 'Presence: setPresence renders in GUI' },
+    { file: 'systems/sync/test/integration/offline.spec.ts', covers: 'Offline/online: toggle, disabled sync button, local ops while offline' },
+  ],
+  // Cross-references: truck's server-side sync tests (sync library has no deployed worker)
+  crossRefs: [
+    { file: 'systems/truck/worker/src/sync.test.ts', covers: 'Server-side HTTP: POST /sync merge, dedup, name propagation, replay' },
   ],
 };

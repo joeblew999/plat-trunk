@@ -1,0 +1,18 @@
+# Standalone sync test worker — real CF Worker + R2.
+# Tests @plat/sync/worker (createSyncHandler).
+#
+# Start: cd systems/sync/test/worker && wrangler dev
+# Port: 5198
+
+name = "sync-test-worker"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+
+[dev]
+port = 5198
+inspector_port = 9250
+
+[[r2_buckets]]
+binding = "SYNC_R2"
+bucket_name = "sync-test-docs"

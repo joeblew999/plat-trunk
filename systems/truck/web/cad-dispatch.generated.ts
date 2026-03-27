@@ -64,5 +64,5 @@ export const commandDomain: Record<string, CadDomain> = {
 export type CadCommandName = keyof typeof commandDomain;
 
 /** All WASM modules declared in boundaries. */
-export const wasmModules = ["truck-geometry","truck-sync"] as const;
+export const wasmModules = ["truck-geometry","plat-sync"] as const;
 export type WasmModuleName = typeof wasmModules[number];

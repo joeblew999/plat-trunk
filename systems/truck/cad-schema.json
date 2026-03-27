@@ -55,8 +55,8 @@
           "cf-worker"
         ]
       },
-      "truck-sync": {
-        "crate": "truck-sync",
+      "plat-sync": {
+        "crate": "plat-sync",
         "exports": [
           "create_doc",
           "apply_op",

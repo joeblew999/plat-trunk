@@ -63,7 +63,7 @@ name = "generate-schema"
 path = "src/bin/generate_schema.rs"
 
 [dev-dependencies]
-truck-sync = { path = "../../sync/crate" }
+plat-sync = { path = "../../sync/crate" }
 
 [features]
 default = ["rendering", "mvt"]

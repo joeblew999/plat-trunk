@@ -3,15 +3,15 @@
 // Target: sync-client (SyncWasmAdapter interface)
 
 /**
- * SyncWasmAdapter — interface for the truck-sync WASM module.
+ * SyncWasmAdapter — interface for the sync WASM module.
  *
  * Implemented by:
  *   - Real WASM: wrap the generated async functions from sync-wasm.generated.ts
  *   - Tests: wrap the same generated functions directly (no mock)
  *
  * All methods are async — matches wasm-bindgen generated signatures.
- * Generated from cad-schema.json boundaries.modules['truck-sync'] (clientAdapter:true entries).
- * 11 methods.
+ * Generated from cad-schema.json boundaries (clientAdapter:true entries).
+ * 12 methods.
  */
 export interface SyncWasmAdapter {
   create_doc(): Promise<Uint8Array>;
@@ -25,4 +25,5 @@ export interface SyncWasmAdapter {
   get_replay_ops(doc: Uint8Array): Promise<string>;
   get_name(doc: Uint8Array): Promise<string>;
   set_name(doc: Uint8Array, name: string): Promise<Uint8Array>;
+  doc_hash(doc: Uint8Array): Promise<string>;
 }

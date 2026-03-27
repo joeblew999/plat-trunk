@@ -5,8 +5,8 @@
  *   IdbStorageAdapter      — IndexedDB
  *   HttpSseNetworkAdapter  — fetch + EventSource
  *
- * Production (CF worker):
- *   R2DocStore in systems/truck/worker/src/doc-store.ts — SyncClient not used server-side
+ * Production (server):
+ *   Implement SyncStorageAdapter against your storage backend (R2, S3, etc.)
  *
  * Tests (all environments):
  *   MemoryStorageAdapter   — Map<string, Uint8Array>
@@ -15,7 +15,7 @@
  * Import only the adapters you need — tree-shaking handles the rest.
  */
 
-import type { SyncStorageAdapter, SyncNetworkAdapter } from './sync-client';
+import type { SyncStorageAdapter, SyncNetworkAdapter, SyncClient, PresenceState } from './sync-client';
 
 // ── Memory (tests) ────────────────────────────────────────────────────────────
 
@@ -84,9 +84,8 @@ export class DirectNetworkAdapter implements SyncNetworkAdapter {
 // Use when the SSE connection is owned externally (e.g. worker-relay.ts) and
 // SyncClient.syncWithServer() is called directly rather than via the adapter.
 //
-// postSync accepts an injected fetchFn to keep adapters.ts platform-agnostic
-// (cannot import truck's api-client.ts — that would make sync depend on truck).
-// In the browser, history-domain.ts injects a typed wrapper over api-client.ts.
+// postSync accepts an injected fetchFn to keep adapters.ts platform-agnostic.
+// The consuming system provides the fetch implementation with its own URL pattern.
 //
 // onRemoteChange: no-op — the external SSE owner triggers syncs directly.
 
@@ -96,27 +95,33 @@ export type SyncFetchFn = (
   actorId: string,
 ) => Promise<Uint8Array | null>;
 
-/** Default fetch implementation — raw fetch with the standard sync endpoint URL. */
-export async function defaultSyncFetch(
-  modelId: string,
-  bytes: Uint8Array,
-  actorId: string,
-): Promise<Uint8Array | null> {
-  try {
-    const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
-      method: 'POST',
-      body: bytes.buffer as ArrayBuffer,
-      headers: { 'content-type': 'application/octet-stream' },
-    });
-    if (!resp.ok) return null;
-    return new Uint8Array(await resp.arrayBuffer());
-  } catch {
-    return null;
-  }
+/**
+ * Create a fetch-based SyncFetchFn for a given base URL.
+ * URL pattern: `${baseUrl}/models/${modelId}/sync?actorId=${actorId}`
+ *
+ * Usage:
+ *   const fetchFn = makeSyncFetch('/api');           // → /api/models/:id/sync
+ *   const fetchFn = makeSyncFetch('https://my.app'); // → https://my.app/models/:id/sync
+ */
+export function makeSyncFetch(baseUrl: string): SyncFetchFn {
+  return async (modelId, bytes, actorId) => {
+    try {
+      const url = `${baseUrl}/models/${encodeURIComponent(modelId)}/sync?actorId=${encodeURIComponent(actorId)}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        body: bytes.buffer as ArrayBuffer,
+        headers: { 'content-type': 'application/octet-stream' },
+      });
+      if (!resp.ok) return null;
+      return new Uint8Array(await resp.arrayBuffer());
+    } catch {
+      return null;
+    }
+  };
 }
 
 export class NullNetworkAdapter implements SyncNetworkAdapter {
-  constructor(private readonly _fetch: SyncFetchFn = defaultSyncFetch) {}
+  constructor(private readonly _fetch: SyncFetchFn) {}
 
   async postSync(modelId: string, bytes: Uint8Array, actorId: string): Promise<Uint8Array | null> {
     return this._fetch(modelId, bytes, actorId);
@@ -139,18 +144,18 @@ declare const indexedDB: { open(name: string, version: number): IDBOpenDBRequest
 // ── IDB (browser production) ──────────────────────────────────────────────────
 //
 // IdbStorageAdapter accepts an injected openDb function so the caller controls
-// which database and version is opened. In the browser this must be the shared
-// openCadSyncDb() from systems/truck/web/idb.ts — which creates BOTH the 'docs'
-// and 'meta' stores in a single onupgradeneeded handler.
+// which database and version is opened. The consuming app can provide a shared
+// opener that creates additional stores (e.g. metadata) in a single
+// onupgradeneeded handler.
 //
 // Default: a standalone opener that creates only 'docs' — suitable for tests
-// and environments where doc-store.ts metadata is not needed.
+// and simple integrations.
 
 const _DEFAULT_STORE = 'docs';
 
 function _defaultOpenIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('cad-sync', 2);
+    const req = indexedDB.open('plat-sync', 2);
     req.onupgradeneeded = (e: Event) => {
       const db = (e.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(_DEFAULT_STORE)) db.createObjectStore(_DEFAULT_STORE);
@@ -164,8 +169,7 @@ function _defaultOpenIdb(): Promise<IDBDatabase> {
  * IndexedDB storage — browser production.
  *
  * Usage in browser (inject shared opener to avoid split-version bug):
- *   import { openCadSyncDb } from '../truck/web/idb';
- *   new IdbStorageAdapter('docs', openCadSyncDb)
+ *   new IdbStorageAdapter('docs', mySharedOpenDb)
  *
  * Usage in tests (standalone, no shared opener needed):
  *   new IdbStorageAdapter()
@@ -218,15 +222,19 @@ export class IdbStorageAdapter implements SyncStorageAdapter {
 /**
  * HTTP fetch + EventSource network adapter — browser production.
  *
- * postSync → POST /api/models/:id/sync
+ * postSync → delegates to the injected SyncFetchFn (use makeSyncFetch to create one).
  * onRemoteChange → listens for `doc-changed` on the existing SSE stream.
  *
- * The SSE stream is provided externally (worker-relay owns EventSource lifecycle).
+ * The SSE stream is provided externally (the consuming app owns EventSource lifecycle).
  * Register the doc-changed handler via registerDocChangedSource().
+ *
+ * Usage:
+ *   new HttpSseNetworkAdapter(makeSyncFetch('/api'))
  */
 export class HttpSseNetworkAdapter implements SyncNetworkAdapter {
   private _handlers = new Map<string, (() => void)[]>();
-  private _connected = false;
+
+  constructor(private readonly _fetch: SyncFetchFn) {}
 
   /** Register the SSE EventSource's doc-changed event here. */
   registerDocChangedSource(eventSource: EventTarget): void {
@@ -235,21 +243,10 @@ export class HttpSseNetworkAdapter implements SyncNetworkAdapter {
         for (const cb of cbs) cb();
       }
     });
-    this._connected = true;
   }
 
   async postSync(modelId: string, bytes: Uint8Array, actorId: string): Promise<Uint8Array | null> {
-    try {
-      const resp = await fetch(`/api/models/${modelId}/sync?actorId=${actorId}`, {
-        method: 'POST',
-        body: bytes.buffer as ArrayBuffer,
-        headers: { 'content-type': 'application/octet-stream' },
-      });
-      if (!resp.ok) return null;
-      return new Uint8Array(await resp.arrayBuffer());
-    } catch {
-      return null;
-    }
+    return this._fetch(modelId, bytes, actorId);
   }
 
   onRemoteChange(modelId: string, callback: () => void): void {
@@ -260,6 +257,101 @@ export class HttpSseNetworkAdapter implements SyncNetworkAdapter {
 
   disconnect(): void {
     this._handlers.clear();
-    this._connected = false;
+  }
+}
+
+// ── SSE Relay (G13) ─────────────────────────────────────────────────────────
+
+export interface SyncRelayOptions {
+  /** SSE endpoint URL. Consumer provides the full URL including modelId/actorId. */
+  eventsUrl: string;
+  /** Reconnect delay in ms after SSE error. Default: 5000 */
+  reconnectMs?: number;
+}
+
+/**
+ * SyncRelay — reusable SSE connection manager for sync.
+ *
+ * Owns the EventSource lifecycle: connect, reconnect, parse events,
+ * and drive SyncClient accordingly. Extracted from truck's worker-relay.ts
+ * so any consuming system can use it.
+ *
+ * Handles these SSE event types:
+ *   - `doc-changed` → triggers syncWithServer() on the SyncClient
+ *   - `sync-op` → applies a single op via SyncClient.addOp()
+ *   - `presence` → updates remote presence via SyncClient.updateRemotePresence()
+ *
+ * Usage:
+ *   const relay = new SyncRelay(client, {
+ *     eventsUrl: `/api/models/${modelId}/events?actorId=${actorId}`,
+ *   });
+ *   relay.connect();
+ *   // later: relay.disconnect();
+ */
+export class SyncRelay {
+  private _es: EventSource | null = null;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly _reconnectMs: number;
+
+  constructor(
+    private readonly _client: SyncClient,
+    private readonly _opts: SyncRelayOptions,
+  ) {
+    this._reconnectMs = _opts.reconnectMs ?? 5000;
+  }
+
+  connect(): void {
+    if (this._es) return;
+    this._es = new EventSource(this._opts.eventsUrl);
+
+    this._es.addEventListener('doc-changed', () => {
+      this._client.syncWithServer();
+    });
+
+    this._es.addEventListener('sync-op', (e: MessageEvent) => {
+      try {
+        const op = JSON.parse(e.data);
+        this._client.addOp(op);
+      } catch { /* ignore malformed */ }
+    });
+
+    this._es.addEventListener('presence', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (Array.isArray(data.actors)) {
+          for (const actor of data.actors as PresenceState[]) {
+            this._client.updateRemotePresence(actor);
+          }
+        }
+      } catch { /* ignore malformed */ }
+    });
+
+    this._es.onopen = () => {
+      // Sync on connect to catch up with any missed changes
+      this._client.syncWithServer();
+    };
+
+    this._es.onerror = () => {
+      this.disconnect();
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null;
+        this.connect();
+      }, this._reconnectMs);
+    };
+  }
+
+  disconnect(): void {
+    if (this._es) {
+      this._es.close();
+      this._es = null;
+    }
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+  }
+
+  get connected(): boolean {
+    return this._es !== null;
   }
 }

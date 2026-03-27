@@ -1,14 +1,14 @@
-//! truck-sync — Automerge-backed op log for the truck CAD system.
+//! plat-sync — Automerge-backed CRDT op log for plat-trunk systems.
 //!
-//! Doc structure (flat operations list, matches JS CadOperation schema):
+//! Doc structure (flat operations list, matches JS Operation schema):
 //!
 //!   ROOT
 //!     operations: List[Map{ id, type, params_json, enabled, timestamp, actorId, groupId }]
 //!     name: String
 //!
-//! No plugin segmentation — this crate is the CAD op log only.
+//! Plugin-agnostic — this crate knows nothing about geometry or any specific system.
 //! WASM exports give TypeScript raw bytes in / raw bytes out.
-//! Storage (IDB) and networking (BroadcastChannel) are the JS shell's responsibility.
+//! Storage (IDB) and networking (BroadcastChannel) are the consumer's responsibility.
 //!
 //! # Multi-system doc structure
 //!
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Public types — field names match the JS CadOperation schema exactly
+// Public types — field names match the JS Operation schema exactly
 // ────────────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -518,10 +518,17 @@ mod wasm {
     pub fn set_name(doc: &[u8], name: &str) -> Result<Vec<u8>, JsValue> {
         core::set_name(doc, name).map_err(|e| JsValue::from_str(&e))
     }
+
+    /// Blake3 hash of doc bytes — for change detection and storage integrity.
+    /// Returns hex-encoded hash string (64 chars).
+    #[wasm_bindgen]
+    pub fn doc_hash(doc: &[u8]) -> String {
+        blake3::hash(doc).to_hex().to_string()
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Tests — pure Rust, `cargo test -p truck-sync`
+// Tests — pure Rust, `cargo test -p plat-sync`
 // ────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

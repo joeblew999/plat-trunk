@@ -1,20 +1,9 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
-const SYNC_ROOT = resolve(__dirname, '..');
+const SYNC_ROOT = resolve(__dirname, '../..');
 
-export default defineWorkersConfig({
-  test: {
-    globals: true,
-    include: ['client/**/*.test.ts'],
-    exclude: ['integration/**', 'worker/**', 'node_modules/**'],
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: './wrangler.toml' },
-        main: 'client/index.ts',
-      },
-    },
-  },
+export default defineConfig({
   resolve: {
     alias: {
       '@plat/sync/client': resolve(SYNC_ROOT, 'ts/client/sync-client.ts'),
@@ -22,6 +11,13 @@ export default defineWorkersConfig({
       '@plat/sync/types': resolve(SYNC_ROOT, 'ts/shared/types.ts'),
       '@plat/sync/wasm-adapter': resolve(SYNC_ROOT, 'ts/shared/wasm-adapter.ts'),
       '@plat/sync/worker': resolve(SYNC_ROOT, 'ts/worker/handler.ts'),
+    },
+  },
+  server: {
+    port: 5199,
+    fs: { allow: [SYNC_ROOT] },
+    proxy: {
+      '/api': { target: 'http://localhost:5198', changeOrigin: true },
     },
   },
 });

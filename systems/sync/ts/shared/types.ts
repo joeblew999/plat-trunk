@@ -4,10 +4,10 @@
 // Re-generate: bun scripts/gen-sync-types.ts
 
 /**
- * CadOperation — matches the Rust `Op` struct exactly.
+ * Operation — matches the Rust `Op` struct exactly.
  * Field names reflect serde renames (actorId, type, groupId).
  */
-export interface CadOperation {
+export interface Operation {
   actorId: string;
   enabled: boolean;
   groupId?: string | null;
@@ -18,3 +18,6 @@ export interface CadOperation {
   /** Command name, e.g. "add_cube" (serialised as "type" to match JS) */
   type: string;
 }
+
+/** @deprecated Use Operation instead */
+export type CadOperation = Operation;

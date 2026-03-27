@@ -10,7 +10,7 @@
 # ───────────────────────────────────────────────────────
 
 name = "sync-test"
-main = "src/index.ts"
+main = "client/index.ts"
 compatibility_date = "2025-10-08"
 compatibility_flags = ["nodejs_compat"]
 

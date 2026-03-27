@@ -35,27 +35,49 @@ sources = [
   "crate/Cargo.toml",
 ]
 outputs = [
-  "../truck/web/pkg-sync/truck_sync_bg.wasm",
-  "../truck/worker/pkg-sync/truck_sync_bg.wasm",
-  "test/pkg-sync/truck_sync_bg.wasm",
+  "pkg/web/plat_sync_bg.wasm",
+  "pkg/bundler/plat_sync_bg.wasm",
+  "test/pkg-sync/plat_sync_bg.wasm",
 ]
 run = "cd ../.. && bun run build:sync"
 
 [tasks."build:wasm:self"]
-description = "Build sync WASM standalone — runs wasm-pack directly, no root pipeline needed"
+description = "Build sync WASM standalone — no root pipeline, no consumer dirs needed"
 sources = [
   "crate/src/**/*.rs",
   "crate/Cargo.toml",
 ]
 outputs = [
-  "test/pkg-sync/truck_sync_bg.wasm",
+  "pkg/web/plat_sync_bg.wasm",
+  "pkg/bundler/plat_sync_bg.wasm",
+  "test/pkg-sync/plat_sync_bg.wasm",
 ]
 run = """
 cd crate
-wasm-pack build --target web     --release --out-dir ../../truck/web/pkg-sync    2>/dev/null || true
-wasm-pack build --target bundler --release --out-dir ../../truck/worker/pkg-sync 2>/dev/null || true
+wasm-pack build --target web     --release --out-dir ../pkg/web
+wasm-pack build --target bundler --release --out-dir ../pkg/bundler
 wasm-pack build --target bundler --release --out-dir ../test/pkg-sync
 cargo run --bin generate-sync-schema > ../sync-schema.json 2>/dev/null || true
+"""
+
+[tasks."build:size"]
+description = "Report WASM sizes and write to wasm-size.txt"
+depends = ["build:wasm:self"]
+run = """
+echo "plat-sync WASM size report ($(date -u +%Y-%m-%dT%H:%M:%SZ))" > wasm-size.txt
+echo "" >> wasm-size.txt
+for target in web bundler; do
+  f="pkg/$target/plat_sync_bg.wasm"
+  if [ -f "$f" ]; then
+    raw=$(wc -c < "$f" | tr -d ' ')
+    gz=$(gzip -c "$f" | wc -c | tr -d ' ')
+    echo "$target: ${raw} bytes raw, ${gz} bytes gzipped" >> wasm-size.txt
+    echo "$target: ${raw} bytes raw, ${gz} bytes gzipped"
+  fi
+done
+echo "" >> wasm-size.txt
+echo "Build profile: opt-level=z, lto=true, codegen-units=1, strip=true" >> wasm-size.txt
+cat wasm-size.txt
 """
 
 [tasks."build:schema"]
@@ -78,13 +100,13 @@ run = "cd test && bun install"
 description = "Run Rust CRDT unit + integration tests — standalone, no .src repos needed"
 run = "cd crate && cargo test"
 
-[tasks."test:ts"]
-description = "Run TS WASM boundary + message contract tests (WASM must be built first)"
+[tasks."test:client"]
+description = "Run client boundary tests — @plat/sync/client + adapters in CF Workers runtime"
 depends = ["install"]
 run = "cd test && bunx vitest run"
 
 [tasks.test]
-description = "Build WASM standalone + run all sync tests (Rust CRDT + TS boundary)"
+description = "Build WASM + run all unit tests (Rust + client boundary)"
 depends = ["build:wasm:self", "install"]
 run = [
   "cd crate && cargo test",
@@ -98,12 +120,33 @@ description = "Typecheck sync test runner TS (WASM must be built first for gener
 depends = ["install"]
 run = "cd test && bunx tsc --noEmit"
 
-# ── E2E ──────────────────────────────────────────────────────────────────────
-# Requires: mise run dev (from repo root) to be running first.
+# ── Web (Test GUI) ────────────────────────────────────────────────────────────
 
+[tasks."dev:gui"]
+description = "Start sync test GUI (:5199) + sync worker (:5198 wrangler+R2)"
+depends = ["build:wasm:self"]
+run = [
+  "cp -r pkg/bundler/* test/worker/pkg-sync/",
+  "cd test/worker && npx wrangler dev &",
+  "cd test/integration && bun install --silent && bunx vite",
+]
+
+# ── Integration ──────────────────────────────────────────────────────────────
+# Real stack: IDB + Vite GUI + wrangler CF Worker + R2.
+# Playwright auto-starts both servers.
+
+[tasks."test:integration"]
+description = "Run integration tests — real browser + real CF Worker + R2"
+depends = ["build:wasm:self"]
+run = [
+  "cp -r pkg/bundler/* test/worker/pkg-sync/",
+  "cd test/integration && bun install --silent && bunx playwright test",
+]
+
+# Legacy alias
 [tasks."test:e2e"]
-description = "Run cross-tab sync Playwright tests (requires dev server running)"
-run = "cd e2e && bun install --silent && bunx playwright test"
+description = "Alias for test:integration"
+run = "mise run test:integration"
 
 # ── CI ────────────────────────────────────────────────────────────────────────
 # Fully standalone — does not require the root pipeline.
@@ -111,10 +154,11 @@ run = "cd e2e && bun install --silent && bunx playwright test"
 # Also runnable directly from systems/sync/: mise run ci
 
 [tasks.ci]
-description = "Full standalone CI gate — build WASM + typecheck + Rust tests + TS tests"
+description = "Full standalone CI gate — build WASM + typecheck + Rust tests + workerd tests"
 depends = ["build:wasm:self", "install"]
 run = [
   "cd crate && cargo test",
   "cd test && bunx tsc --noEmit",
   "cd test && bunx vitest run",
 ]
+# Browser tests (Playwright) require dev server — run separately via: mise run test:browser

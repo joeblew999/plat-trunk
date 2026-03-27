@@ -10,5 +10,5 @@
     "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"],
     "lib": ["ESNext"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["client/**/*.ts"]
 }

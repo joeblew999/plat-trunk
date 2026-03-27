@@ -1,0 +1,18 @@
+{
+  "name": "plat-sync",
+  "type": "module",
+  "description": "Plugin-agnostic CRDT op log for plat-trunk systems",
+  "version": "0.1.0",
+  "files": [
+    "plat_sync_bg.wasm",
+    "plat_sync.js",
+    "plat_sync_bg.js",
+    "plat_sync.d.ts"
+  ],
+  "main": "plat_sync.js",
+  "types": "plat_sync.d.ts",
+  "sideEffects": [
+    "./plat_sync.js",
+    "./snippets/*"
+  ]
+}

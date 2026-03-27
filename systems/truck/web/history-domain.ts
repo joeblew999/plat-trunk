@@ -16,7 +16,7 @@
  *   - Structured sync tracing  → SyncClient.syncLog
  */
 
-import initSyncWasm from './pkg-sync/truck_sync.js';
+import initSyncWasm from './pkg-sync/plat_sync.js';
 import { browserSyncWasmAdapter } from './sync-wasm-adapter.generated';
 import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './doc-store';
 import { openCadSyncDb, DOCS_STORE } from './idb';
@@ -24,9 +24,9 @@ import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
 import { moduleRouter } from './core/module-router';
 import { executeReplayPlan, type ReplayPlan } from './replay-executor';
-import type { CadOperation } from '../../sync/ts/sync-types.generated';
-import { SyncClient, type SyncMessage } from '../../sync/ts/sync-client';
-import { IdbStorageAdapter, NullNetworkAdapter, type SyncFetchFn } from '../../sync/ts/adapters';
+import type { CadOperation } from '../../sync/ts/shared/types';
+import { SyncClient, bindNetworkEvents, type SyncMessage } from '../../sync/ts/client/sync-client';
+import { IdbStorageAdapter, NullNetworkAdapter, type SyncFetchFn } from '../../sync/ts/client/adapters';
 import { getSceneController } from './scene-controller';
 
 export type { CadOperation, SyncMessage }; // SyncMessage owned by sync-client.ts
@@ -82,6 +82,12 @@ export class CadDocumentManagerBase {
             { actorId, debounceMs: 2000 },
         );
 
+        // Cross-tab sync via BroadcastChannel
+        this._sync.openBroadcast();
+
+        // Auto-detect browser online/offline events
+        bindNetworkEvents(this._sync);
+
         // When remote ops arrive — trigger scene replay
         this._sync.onRemoteOps = (_ops) => {
             this._scheduleRemoteReplay();
@@ -122,7 +128,7 @@ export class CadDocumentManagerBase {
     async tryRestoreFromIdb(modelId: string): Promise<boolean> {
         console.log(`[Sync] IDB restore: modelId=${modelId}`);
         try {
-            const found = await this._sync.loadFromStorage(modelId);
+            const found = await this._sync.loadAndSync(modelId);
             if (!found) {
                 this._emitEvent('cad:idb-restore-failed', { modelId, reason: 'no-bytes' });
                 return false;

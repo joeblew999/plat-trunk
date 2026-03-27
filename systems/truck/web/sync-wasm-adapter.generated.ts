@@ -9,9 +9,9 @@
 // get_replay_ops is derived from get_ops + filter(enabled) because
 // get_replay_ops is not re-exported from the browser WASM generated bindings.
 
-import { create_doc, apply_op, merge_docs, get_ops, get_op_count, set_op_enabled, set_group_enabled, rollback_to, get_name, set_name } from './pkg-sync/truck_sync.js';
-import type { SyncWasmAdapter } from '../../sync/ts/sync-wasm-adapter.generated';
-import type { CadOperation } from '../../sync/ts/sync-types.generated';
+import { create_doc, apply_op, merge_docs, get_ops, get_op_count, set_op_enabled, set_group_enabled, rollback_to, get_name, set_name, doc_hash } from './pkg-sync/plat_sync.js';
+import type { SyncWasmAdapter } from '../../sync/ts/shared/wasm-adapter';
+import type { CadOperation } from '../../sync/ts/shared/types';
 
 /** Real browser SyncWasmAdapter — use in CadDocumentManagerBase constructor. */
 export const browserSyncWasmAdapter: SyncWasmAdapter = {
@@ -29,4 +29,5 @@ export const browserSyncWasmAdapter: SyncWasmAdapter = {
     },
     get_name: (doc: Uint8Array) => Promise.resolve(get_name(doc)),
     set_name: (doc: Uint8Array, name: string) => Promise.resolve(set_name(doc, name)),
+    doc_hash: (doc: Uint8Array) => Promise.resolve(doc_hash(doc)),
 };

@@ -12,7 +12,7 @@
  * Used directly by the truck worker — SyncClient is browser-only.
  */
 
-import type { DocStore } from '../../../sync/ts/sync-client';
+import type { DocStore } from '../../../sync/ts/client/sync-client';
 
 const PREFIX = 'models/';
 
