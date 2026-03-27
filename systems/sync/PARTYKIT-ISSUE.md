@@ -1,5 +1,6 @@
 # GitHub Issue: `automerge-partyserver` — Automerge CRDT sync for PartyKit
 
+> **Filed:** https://github.com/cloudflare/partykit/issues/361
 > **Target repo:** `cloudflare/partykit`
 > **References:** #97 (automerge backend — opened by @threepointone, 2023)
 > **Fork + branch:** `joeblew999/partykit` → `feat/automerge-partyserver`

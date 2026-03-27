@@ -160,7 +160,9 @@ mise run partyserver:install   # → installed in test/partykit/
 
 ## automerge-partyserver fork
 
-The `automerge-partyserver` package is built from the fork at [`joeblew999/partykit`](https://github.com/joeblew999/partykit) (branch `feat/automerge-partyserver`). Not yet on npm — installed as a `.tgz` from `.packages/`.
+The `automerge-partyserver` package is built from the fork at [`joeblew999/partykit`](https://github.com/joeblew999/partykit/tree/feat/automerge-partyserver). Not yet on npm — installed as a `.tgz` from `.packages/`.
+
+Upstream issue: [cloudflare/partykit#361](https://github.com/cloudflare/partykit/issues/361)
 
 ```bash
 mise run partyserver:build    # Build fork → .tgz
