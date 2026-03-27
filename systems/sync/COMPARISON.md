@@ -432,7 +432,30 @@ const repo = new Repo({
 | **If it fits** | Wrap with our `@plat/sync/*` API. Our consumers don't see mergeparty/automerge-repo. |
 | **If it doesn't** | Fork and fix, or fall back to Option B (build on raw DOs). |
 
-We may not need to write ANY adapter code. The work is already done.
+### mergeparty analysis (after code review)
+
+**Version**: 0.0.8 — early, one developer, no tests.
+
+**Architecture** (sound):
+- Server creates automerge-repo `Repo` instance with itself as both `NetworkAdapter` + `StorageAdapter`
+- Server is a full sync peer with DO persistence — not just relaying bytes
+- Client uses `PartykitNetworkAdapter` (15-line wrapper over automerge-repo WebSocket adapter)
+- CBOR encoding, join/handshake protocol, peer announcement — all handled
+
+**Concerns**:
+- Uses a fork (`@substrate-system/automerge-repo-slim`) — not official automerge-repo
+- JS Automerge (v3.1.1) — not Rust WASM. We'd need to decide: use their JS Automerge, or bridge to our Rust WASM
+- No chunking for large docs (unlike y-partykit's 128KB chunk pattern)
+- No tests
+- v0.0.8 — immature
+
+**Options**:
+1. **Use mergeparty as-is** — risk: immature, forked deps, JS Automerge
+2. **Fork and fix** — use the architecture, swap to official automerge-repo, add chunking + tests
+3. **Rewrite from scratch using the pattern** — ~400 lines, we understand the architecture now
+4. **Wait for it to mature** — ship our current system, check back in 6 months
+
+Given the small codebase (~400 lines) and the concerns, **option 3 is safest** — rewrite the pattern ourselves using official automerge-repo (not the fork), with y-partykit's chunking, and our test infrastructure. We know exactly what to build.
 
 ## Summary
 
