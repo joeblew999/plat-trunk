@@ -132,8 +132,90 @@ Split storage into snapshots and incremental chunks. Only write the new change, 
 | base58check doc IDs | Plain string IDs are fine for our use case |
 | Full `Repo` orchestrator | We don't need document discovery or multi-peer gossip — we have a single server |
 
+## The real fix: Durable Objects + WebSocket Hibernation
+
+The phases above assume we keep the current Worker + R2 + SSE architecture. But automerge-repo's incremental sync protocol doesn't fit that model — it needs persistent in-memory state and bidirectional communication.
+
+The correct Cloudflare architecture for this is **Durable Objects**:
+
+### Why Durable Objects
+
+| Problem | Current (Worker + R2 + SSE) | Durable Object |
+|---------|---------------------------|----------------|
+| Sync state | None — fresh merge every request | In-memory `SyncState` per connected peer |
+| Communication | POST (client→server) + SSE (server→client) | WebSocket (bidirectional) |
+| Concurrent writes | Etag retry race (mergeWithRetry) | Single writer — one DO per model |
+| State between requests | None — stateless isolate | Persistent in-memory (hibernates when idle) |
+| Storage | R2 (full blob replace every write) | DO SQLite storage (D1-compatible) + R2 for snapshots |
+
+### Architecture
+
+```
+Browser (SyncClient)
+    ↕ WebSocket
+CF Worker (thin router — forwards to DO by modelId)
+    ↕
+Durable Object (one per model)
+    ├── In-memory: Automerge doc + SyncState per peer
+    ├── DO SQLite: incremental changes + sync state
+    ├── R2: periodic full snapshot (backup/cold storage)
+    └── WebSocket Hibernation: sleeps when no connections, wakes on message
+```
+
+### WebSocket Hibernation
+
+DOs support [WebSocket Hibernation](https://developers.cloudflare.com/durable-objects/api/websockets/#websocket-hibernation) — the DO sleeps when all WebSocket connections are idle, paying zero compute cost. When a message arrives, it wakes up with state intact. This means:
+
+- **No idle cost** — a model with no active editors costs nothing
+- **Instant wake** — sub-millisecond resume when a user reconnects
+- **Memory efficient** — thousands of models, only active ones in memory
+
+### DO SQLite (D1-compatible)
+
+Durable Objects have [built-in SQLite storage](https://developers.cloudflare.com/durable-objects/api/storage-api/) — transactional, durable, local to the DO. This replaces R2 for the hot path:
+
+- **Sync state**: `sync_states` table — per-peer, loaded on wake
+- **Incremental changes**: `changes` table — append-only, compacted periodically
+- **Snapshots**: Periodic full doc save (to SQLite or R2 for cold backup)
+
+No R2 read/write per sync — only SQLite (local, fast, transactional).
+
+### PartyKit
+
+[PartyKit](https://www.partykit.io/) is essentially a nice developer experience over DOs + WebSockets. automerge-repo already has a PartyKit adapter. We could:
+
+1. **Use PartyKit directly** — simplest, managed infra, automerge-repo adapter exists
+2. **Use raw DOs** — more control, same underlying tech, stays within CF ecosystem
+3. **Build our own DO sync class** — uses our SyncWorker patterns but with DO + WS instead of Worker + R2 + SSE
+
+### What changes in @plat/sync
+
+The library structure stays the same. What changes:
+
+| Component | Current | With DOs |
+|-----------|---------|----------|
+| `ts/client/sync-client.ts` | HTTP POST + SSE | WebSocket (Automerge sync protocol) |
+| `ts/worker/sync-worker.ts` | Worker fetch handler + R2 | DO class + SQLite + WebSocket |
+| `ts/worker/handler.ts` | HTTP routes | Thin Worker that routes to DO |
+| `ts/client/adapters.ts` | `NullNetworkAdapter` + `makeSyncFetch` | `WebSocketNetworkAdapter` |
+| Tests | HTTP integration | WebSocket integration |
+
+The **export boundaries** (`@plat/sync/client`, `@plat/sync/worker`) don't change. The consumer API doesn't change. The transport underneath becomes WebSocket + incremental sync.
+
+### Migration path
+
+1. **Keep current system working** — it's correct, just not optimal
+2. **Add DO class** alongside current Worker handler — new consumers can choose
+3. **Migrate browser SyncClient** to WebSocket transport (add `WebSocketNetworkAdapter`)
+4. **Switch truck** when DO version is proven
+5. **Deprecate** Worker + R2 + SSE path
+
+### Decision needed
+
+- **PartyKit vs raw DOs** — PartyKit is easier but adds a dependency. Raw DOs are more work but stay within CF.
+- **Timeline** — current system works. DOs are the right architecture but not urgent.
+- **Scope** — do we build the DO version in sync now, or ship current and iterate?
+
 ## Summary
 
-The single most important change is **Phase 1 — incremental sync**. It's the difference between sending the full document on every sync vs sending only what changed. Everything else is optimization.
-
-Our architecture (SyncClient + SyncWorker + adapters) is sound. The adapter pattern, the boundary between client/worker/shared, the test structure — all good. What needs to change is the sync **transport** inside `syncWithServer`, not the public API.
+Our current architecture (Worker + R2 + SSE + merge_docs) is **correct but suboptimal**. The right Cloudflare architecture is **Durable Objects + WebSocket Hibernation + SQLite + incremental sync protocol**. The migration preserves our API boundaries — it's a transport change, not an API change.
