@@ -14,14 +14,19 @@ Knows nothing about CAD geometry, replay, or any specific system — it stores, 
 ### CF Worker (server)
 
 ```typescript
-import { createSyncHandler, createWasmAdapter } from '@plat/sync/worker';
+import { SyncWorker, createWasmAdapter } from '@plat/sync/worker';
 import wasmModule from './pkg-sync/plat_sync_bg.wasm';
 import * as glue from './pkg-sync/plat_sync_bg.js';
 
-const handler = createSyncHandler(await createWasmAdapter(wasmModule, glue));
+const sync = new SyncWorker(await createWasmAdapter(wasmModule, glue), {
+  onExecute: async (op, modelId) => {
+    // Your app logic — what does this op DO?
+    return myEngine.execute(op.type, op.params);
+  },
+});
 
 export default {
-  fetch: (req, env) => handler(req, env.SYNC_R2, '/api'),
+  fetch: (req, env) => sync.fetch(req, env.SYNC_R2, '/api'),
 };
 ```
 
@@ -32,7 +37,13 @@ binding = "SYNC_R2"
 bucket_name = "my-sync-docs"
 ```
 
-This gives you: POST /api/models/:id/sync (merge + R2), GET /api/models/:id/events (SSE), DELETE /api/models/:id.
+This gives you:
+- `POST /api/models/:id/sync` — merge browser doc with R2 (etag retry)
+- `POST /api/models/:id/ops` — apply op server-side (execute + save + broadcast)
+- `GET /api/models/:id/ops` — get all ops
+- `GET /api/models/:id/replay` — get enabled ops only
+- `GET /api/models/:id/events` — SSE stream (doc-changed, sync-op, presence)
+- `DELETE /api/models/:id` — remove model
 
 ### Browser (client)
 
@@ -59,7 +70,7 @@ await client.addOp({ id: '...', type: 'add_item', params: {}, enabled: true, tim
 |--------|------|
 | `@plat/sync/client` | `SyncClient`, `bindNetworkEvents`, `PresenceState`, `SyncMessage` |
 | `@plat/sync/adapters` | `IdbStorageAdapter`, `NullNetworkAdapter`, `HttpSseNetworkAdapter`, `DirectNetworkAdapter`, `MemoryStorageAdapter`, `makeSyncFetch`, `SyncRelay` |
-| `@plat/sync/worker` | `createSyncHandler`, `createWasmAdapter` |
+| `@plat/sync/worker` | `SyncWorker`, `createSyncHandler`, `createWasmAdapter`, `mergeWithRetry`, `R2DocStore` |
 | `@plat/sync/types` | `Operation` type (+ deprecated `CadOperation` alias) |
 | `@plat/sync/wasm-adapter` | `SyncWasmAdapter` interface |
 
@@ -78,7 +89,8 @@ await client.addOp({ id: '...', type: 'add_item', params: {}, enabled: true, tim
 - **Storage budget** — `compactIfNeeded()` triggers Automerge compaction when `maxDocBytes` exceeded
 - **Incremental reads** — `getOpsSince(index)` for delta processing
 - **Model reset** — `reset()` clears local doc, storage, presence, timers (clean wipe)
-- **Reusable CF Worker** — `createSyncHandler()` + `createWasmAdapter()` gives you a full sync server in 5 lines
+- **Server application loop** — `SyncWorker` handles the full server-side protocol: apply op → save to R2 → broadcast → execute consumer callback
+- **Reusable CF Worker** — `SyncWorker` or `createSyncHandler()` + `createWasmAdapter()` gives you a full sync server
 - **Structured tracing** — every event logged as `SyncLogEntry`
 - **Schema codegen** — Rust types → JSON Schema → TypeScript types (automated)
 - **Size optimized** — release build: 1.1 MB raw, 361 KB gzipped (`opt-level=z`, LTO, strip)

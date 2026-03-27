@@ -10,7 +10,7 @@ export default defineConfig({
       '@plat/sync/adapters': resolve(SYNC_ROOT, 'ts/client/adapters.ts'),
       '@plat/sync/types': resolve(SYNC_ROOT, 'ts/shared/types.ts'),
       '@plat/sync/wasm-adapter': resolve(SYNC_ROOT, 'ts/shared/wasm-adapter.ts'),
-      '@plat/sync/worker': resolve(SYNC_ROOT, 'ts/worker/handler.ts'),
+      '@plat/sync/worker': resolve(SYNC_ROOT, 'ts/worker/index.ts'),
     },
   },
   server: {

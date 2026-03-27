@@ -62,6 +62,7 @@ export const testFiles = {
     { file: 'systems/sync/test/integration/cross-tab.spec.ts', covers: 'BroadcastChannel: cross-tab op delivery, undo propagation' },
     { file: 'systems/sync/test/integration/presence.spec.ts', covers: 'Presence: setPresence renders in GUI' },
     { file: 'systems/sync/test/integration/offline.spec.ts', covers: 'Offline/online: toggle, disabled sync button, local ops while offline' },
+    { file: 'systems/sync/test/integration/server-api.spec.ts', covers: 'SyncWorker API: POST /ops, GET /ops, GET /replay, DELETE, health' },
   ],
   // Cross-references: truck's server-side sync tests (sync library has no deployed worker)
   crossRefs: [

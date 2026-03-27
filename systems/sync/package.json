@@ -7,7 +7,7 @@
   "exports": {
     "./client": "./ts/client/sync-client.ts",
     "./adapters": "./ts/client/adapters.ts",
-    "./worker": "./ts/worker/handler.ts",
+    "./worker": "./ts/worker/index.ts",
     "./types": "./ts/shared/types.ts",
     "./wasm-adapter": "./ts/shared/wasm-adapter.ts"
   },

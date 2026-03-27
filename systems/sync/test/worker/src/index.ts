@@ -1,19 +1,26 @@
 /**
- * Standalone sync test worker — what a real consumer writes.
+ * Standalone sync test worker — uses SyncWorker for the full application loop.
  */
-import { createSyncHandler, createWasmAdapter } from '../../../ts/worker/handler';
+import { SyncWorker } from '../../../ts/worker/sync-worker';
+import { createWasmAdapter } from '../../../ts/worker/handler';
 import wasmModule from '../pkg-sync/plat_sync_bg.wasm';
 import * as glue from '../pkg-sync/plat_sync_bg.js';
 
 interface Env { SYNC_R2: R2Bucket; }
 
-let handler: ReturnType<typeof createSyncHandler> | null = null;
+let sync: SyncWorker | null = null;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!handler) {
-      handler = createSyncHandler(await createWasmAdapter(wasmModule, glue));
+    if (!sync) {
+      sync = new SyncWorker(await createWasmAdapter(wasmModule, glue), {
+        onExecute: async (op) => {
+          // Test server — just log the op, no real execution
+          console.log(`[test-worker] execute: ${op.type}`);
+          return { executed: op.type };
+        },
+      });
     }
-    return handler(request, env.SYNC_R2, '/api');
+    return sync.fetch(request, env.SYNC_R2, '/api');
   },
 };

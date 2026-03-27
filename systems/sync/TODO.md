@@ -15,3 +15,7 @@ These are truck refactors, not sync work:
 
 - ADR-0001 Part C — Replay with snapshots (truck geometry)
 - ADR-0001 Part H — Tiering boundary (truck geometry)
+
+## https://github.com/automerge/automerge-repo
+
+Have they gotten things more right then we have ?  
