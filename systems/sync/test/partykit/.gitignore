@@ -1,2 +1,7 @@
 .partykit/
+.wrangler/
 node_modules/
+bun.lock
+test-results/
+# Screenshots are committed — they prove tests run for real
+# screenshots/

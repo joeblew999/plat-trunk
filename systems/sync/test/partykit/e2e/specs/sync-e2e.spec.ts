@@ -67,6 +67,7 @@ test.describe('SyncDoc browser E2E', () => {
     expect(opText).toContain('add_cube');
     expect(opText).toContain('user-A');
 
+    await page.screenshot({ path: '../screenshots/01-single-peer-add-op.png' });
     await page.context().close();
   });
 
@@ -96,6 +97,9 @@ test.describe('SyncDoc browser E2E', () => {
     // Both see 2 ops
     await waitForOpCount(pageA, 2);
     await waitForOpCount(pageB, 2);
+
+    await pageA.screenshot({ path: '../screenshots/02-two-peers-converge-A.png' });
+    await pageB.screenshot({ path: '../screenshots/02-two-peers-converge-B.png' });
 
     await pageA.context().close();
     await pageB.context().close();
@@ -131,6 +135,9 @@ test.describe('SyncDoc browser E2E', () => {
     // B sees redo
     await waitForReplayCount(pageB, 1);
 
+    await pageA.screenshot({ path: '../screenshots/03-undo-redo-A.png' });
+    await pageB.screenshot({ path: '../screenshots/03-undo-redo-B.png' });
+
     await pageA.context().close();
     await pageB.context().close();
   });
@@ -159,6 +166,9 @@ test.describe('SyncDoc browser E2E', () => {
     // Replay count = 3 (all enabled)
     await waitForReplayCount(pageA, 3);
     await waitForReplayCount(pageB, 3);
+
+    await pageA.screenshot({ path: '../screenshots/04-multi-ops-A.png' });
+    await pageB.screenshot({ path: '../screenshots/04-multi-ops-B.png' });
 
     await pageA.context().close();
     await pageB.context().close();
