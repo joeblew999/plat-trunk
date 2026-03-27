@@ -64,11 +64,75 @@ export async function createWasmAdapter(wasmModule: any, glue: any): Promise<Syn
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-// R2-compatible interface (matches Cloudflare R2Bucket)
-interface R2Like {
-  get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>;
-  put(key: string, value: ArrayBuffer | Uint8Array): Promise<unknown>;
+// R2-compatible interface (matches Cloudflare R2Bucket subset)
+export interface R2Like {
+  get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer>; etag: string } | null>;
+  put(key: string, value: ArrayBuffer | Uint8Array, options?: Record<string, unknown>): Promise<unknown>;
   delete(key: string): Promise<unknown>;
+}
+
+// ── R2DocStore — SyncStorageAdapter for R2 ───────────────────────────────────
+
+import type { SyncStorageAdapter } from '../client/sync-client';
+
+export interface DocWithEtag {
+  doc: Uint8Array;
+  etag: string;
+}
+
+/**
+ * R2-backed storage adapter with optimistic concurrency (etag).
+ *
+ * Usage:
+ *   const store = new R2DocStore(env.SYNC_R2);
+ *   const client = new SyncClient(wasm, store, network, opts);
+ *
+ * Or server-side with etag:
+ *   const { doc, etag } = await store.loadWithEtag(modelId);
+ *   const ok = await store.saveConditional(modelId, merged, etag);
+ */
+export class R2DocStore implements SyncStorageAdapter {
+  constructor(private bucket: R2Like, private prefix = 'models/') {}
+
+  private key(modelId: string): string {
+    return `${this.prefix}${modelId}/automerge.bin`;
+  }
+
+  async load(modelId: string): Promise<Uint8Array | null> {
+    const obj = await this.bucket.get(this.key(modelId));
+    if (!obj) return null;
+    return new Uint8Array(await obj.arrayBuffer());
+  }
+
+  async save(modelId: string, bytes: Uint8Array): Promise<void> {
+    await this.bucket.put(this.key(modelId), bytes, {
+      httpMetadata: { contentType: 'application/octet-stream' },
+    });
+  }
+
+  async delete(modelId: string): Promise<void> {
+    await this.bucket.delete(this.key(modelId));
+  }
+
+  /** Load doc with etag for optimistic concurrency. */
+  async loadWithEtag(modelId: string): Promise<DocWithEtag | null> {
+    const obj = await this.bucket.get(this.key(modelId));
+    if (!obj) return null;
+    return { doc: new Uint8Array(await obj.arrayBuffer()), etag: obj.etag };
+  }
+
+  /** Save only if etag matches. Returns false on conflict (412). */
+  async saveConditional(modelId: string, bytes: Uint8Array, etag: string): Promise<boolean> {
+    try {
+      await this.bucket.put(this.key(modelId), bytes, {
+        httpMetadata: { contentType: 'application/octet-stream' },
+        onlyIf: { etagMatches: etag },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 // ── SSE state ────────────────────────────────────────────────────────────────

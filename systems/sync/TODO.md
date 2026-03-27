@@ -6,13 +6,12 @@ Work remaining to fully decouple truck from sync internals.
 
 Truck still has sync code that belongs in the library. Once moved, truck becomes a pure consumer — no sync internals.
 
-### R2DocStore → @plat/sync/worker
+### R2DocStore → @plat/sync/worker ✓ DONE
 
-`systems/truck/worker/src/doc-store.ts` implements `SyncStorageAdapter` for R2 with etag-based optimistic concurrency. Nothing truck-specific — any CF Worker using sync with R2 needs this.
+Moved to `ts/worker/handler.ts`. Exported from `@plat/sync/worker`.
+Truck's `doc-store.ts` now re-exports from sync.
 
-**Move to**: `ts/worker/r2-store.ts`
-**Export from**: `@plat/sync/worker`
-**Truck becomes**: `import { R2DocStore } from '@plat/sync/worker'`
+**Needs tests**: R2DocStore with etag concurrency (loadWithEtag, saveConditional, conflict handling). Add to `test/client/` or `test/integration/`.
 
 ### POST /sync route → already done
 
