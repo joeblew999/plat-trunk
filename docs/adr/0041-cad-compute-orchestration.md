@@ -25,113 +25,104 @@
 
 -----
 
+## Principle: Don't reinvent the wheel
+
+We used PartyKit instead of building our own WebSocket sync. We used automerge-repo instead of building our own CRDT protocol. We used Hono instead of building our own router. We used hono-party instead of building our own DO routing.
+
+This ADR follows the same principle:
+
+- **Cloudflare Shell** for filesystem and storage — not our own D1/R2 abstraction
+- **Cloudflare Containers** for native compute — not our own server infrastructure
+- **PartyKit presence** for routing decisions — not our own complexity heuristics
+- **stateTools** for AI agent file access — not our own MCP file tools
+
+-----
+
 ## Context
 
-The plat-trunk sync system is now working end-to-end with PartyKit and Durable Objects, with full integration tests passing. The Automerge CRDT layer correctly syncs document state across clients. What has not yet been connected is the CAD compute layer — the Truck Rust kernel — to this sync system.
+The plat-trunk sync system is now working end-to-end with PartyKit and Durable Objects, with 28 integration tests passing. The Automerge CRDT layer correctly syncs ops across clients. What has not yet been connected is the CAD compute layer — the Truck Rust kernel — to this sync system.
 
 The current approach runs Truck compiled to WASM inside the browser or a Cloudflare Worker. This creates two problems:
 
-**Problem 1 — Compute limits.** The Cloudflare Worker runtime imposes CPU time limits (up to 5 minutes on paid plans) and a 128MB memory ceiling. Complex B-Rep operations — large boolean unions, dense mesh tessellations, high face-count fillets — can exceed these limits. The browser has similar constraints: WASM runs in a single tab with limited CPU and memory, and heavy ops block the UI thread.
+**Problem 1 — Compute limits.** The Cloudflare Worker runtime imposes CPU time limits and a 128MB memory ceiling. Complex B-Rep operations can exceed these limits. The browser has similar constraints.
 
-**Problem 2 — AI agents cannot compute independently.** The MCP layer exposes CAD operations to AI agents. However, if compute requires a browser WASM environment, an AI agent has no path to execute CAD ops server-side without a browser being present. This blocks the goal of human/AI collaborative authoring on the same document.
-
-### Why Cloudflare Containers solve this
-
-Cloudflare Containers run arbitrary Docker images as Durable Object sidecars, globally distributed, with no Worker CPU time limits. The Truck Rust kernel compiled to a native `linux/amd64` binary runs faster than WASM (no interpreter overhead) with access to full CPU and memory. Containers are deployed via `wrangler deploy` alongside existing Workers — no new infrastructure.
-
-### The isomorphic compute insight
-
-The Hono framework runs identically in three environments: the browser (via service worker), a Cloudflare Worker (via workerd), and a Cloudflare Container (via Bun). The same Hono route definitions serve CAD operations in all three contexts. Only the Truck binding differs — WASM in the browser and Worker, native binary in the Container. This means the API contract, the request/response shapes, and the route structure are identical across all compute targets.
-
-### The Workspace insight
-
-`@cloudflare/shell` provides a `Workspace` abstraction backed by DO SQLite and optional R2. It exposes a filesystem-like API that both human users (indirectly via the CAD UI) and AI agents (directly via MCP `stateTools`) can read and write. The Workspace becomes the shared durable context between human and AI participants in a document session.
+**Problem 2 — AI agents cannot compute independently.** The MCP layer exposes CAD operations to AI agents. However, if compute requires a browser WASM environment, an AI agent has no path to execute CAD ops without a browser being present.
 
 -----
 
 ## Decision
 
-### 1. Introduce Cloudflare Containers as a third compute target
+### 1. Peers compute. The DO syncs. That's it.
 
-The existing complexity router in the PartyKit DO is extended to three tiers:
+The PartyKit DO is **not** an orchestrator that picks compute targets. It syncs the Automerge doc and broadcasts events. Every participant — browser or container, human or AI — is just a peer in the room.
 
-|Score |Target      |Runtime     |Trigger                         |
-|------|------------|------------|--------------------------------|
-|≤ 100 |Browser     |Truck WASM  |DO broadcasts `compute_local`   |
-|≤ 1000|CF Worker   |Truck WASM  |DO fetches Worker endpoint      |
-|> 1000|CF Container|Truck native|DO fetches Container via binding|
+A browser peer computes geometry locally using WASM. A container peer computes geometry natively using the Rust binary. Both produce the same thing: ops + geometry. Both write results to the same place.
 
-Complexity scoring is a simple heuristic based on operation type and face count, tuned over time from real usage data stored in the DO's op cache.
+The DO doesn't need to know or care where compute happened.
 
-The Container exposes the same Hono HTTP routes as the Worker. The DO does not distinguish between the two at the route level — only the binding and complexity threshold differ.
+### 2. Presence-based routing
 
-### 2. The PartyKit DO is the single orchestration point
+When an op needs compute (e.g. an AI agent creates an op via MCP but has no geometry engine), PartyKit presence determines who computes:
 
-All compute — whether initiated by a human clicking in the browser or an AI agent calling an MCP tool — routes through the PartyKit DO. The DO:
+| Presence state | Who computes | Why |
+|---------------|-------------|-----|
+| This user's browser is connected | Their browser (WASM) | Lowest latency, their own edit |
+| No browser for this user, but other users are online | Another user's browser (WASM) | Free compute, WASM already loaded |
+| No browsers connected at all | Container (native Rust) | The fallback — always available |
 
-- Receives the CAD op (from browser WS or AI MCP call)
-- Scores complexity
-- Checks the op cache (SQLite, keyed by SHA-256 of op inputs)
-- Routes to the appropriate compute target on cache miss
-- Writes the result to the Workspace
-- Updates Automerge `opStatus` to `done`
-- Broadcasts the result to all connected browser clients
+This is not complexity scoring. The question is **"who's available"**, not **"how hard is the op"**.
 
-This means the browser always receives geometry via the DO's broadcast, regardless of where compute ran. The browser does not need to know whether a result came from local WASM, a Worker, or a Container.
+The MCP bridge works this way today — it sends `cad-command` SSE events to the browser, the browser executes. But if no browser is connected, there's no compute. The container fills that gap.
 
-### 3. Geometry storage uses Workspace (SQLite + R2)
+### 3. Shell filesystem is the single shared storage
 
-The `@cloudflare/shell` `Workspace` is initialised in the DO with DO SQLite for metadata and op status, and an R2 bucket for geometry blobs. Small payloads stay in SQLite; large mesh blobs are routed to R2 automatically by the Workspace abstraction.
-
-The Workspace filesystem layout per document:
+Every peer — browser, container, AI agent — writes compute results to the same place: the Cloudflare Shell filesystem. The Shell handles the D1/R2 split automatically (small files in SQLite, large blobs in R2).
 
 ```
-/scene/nodes.json          — scene graph (assembly hierarchy per ADR-0005)
-/scene/branches.json       — branch metadata (per ADR-0038)
-/ops/log.json              — append-only op log (mirrors Automerge ops[])
-/ops/{opId}.json           — individual op detail and inputs
-/geometry/{opId}.mesh      — computed mesh blob (→ R2 via Workspace)
-/status/{opId}.json        — compute status: pending/computing/done/error
-/presence/{userId}.json    — ephemeral cursor and selection state
+Automerge doc  =  ops only (what happened, in order)
+
+Shell filesystem  =  everything else:
+  /geometry/{opId}.mesh    ← computing peer writes here
+  /status/{opId}.json      ← pending → computing → done
+  /scene/nodes.json        ← current scene graph
 ```
 
-### 4. Human and AI use the same interface
+**No geometry in Automerge.** Geometry is a deterministic function of op inputs — it can always be recomputed. The Shell filesystem is a cache, not a primary store. Automerge ops are the source of truth.
 
-An AI agent connects to the PartyKit room as a participant. It calls the same MCP tools a human triggers via the UI. Those tools write ops to the Automerge doc and route through the same DO orchestration path. The AI has no special pathway — it is just another participant.
+**No local-only storage for shared compute.** When User B's browser computes geometry for User A's op, the result goes to the Shell — not to User B's IndexedDB. All peers read from the Shell.
 
-The Workspace is exposed to AI agents via `stateTools(workspace)` from `@cloudflare/shell/workers`, composited with the CAD MCP tools:
+### 4. Human and AI are equal participants
+
+An AI agent connects to the PartyKit room as a peer. It calls the same MCP tools a human triggers via the UI. Those tools write ops to the Automerge doc. The AI has no special pathway — it is just another participant.
+
+The Shell filesystem is exposed to AI agents via `stateTools` from `@cloudflare/shell`:
 
 ```ts
 const providers = [
-  resolveProvider(stateTools(this.workspace)),   // state.readJson, state.glob, etc.
-  resolveProvider(cadMcpTools),                   // cad.boolean_union, cad.extrude, etc.
+  resolveProvider(stateTools(workspace)),   // state.readJson, state.glob, etc.
+  resolveProvider(cadMcpTools),              // cad.boolean_union, cad.extrude, etc.
 ]
 ```
 
-The AI can inspect the full scene, read op history, check geometry existence, propose operations, and verify results — all through the same Workspace that human-initiated ops write to.
+The AI can inspect the scene, read op history, check if geometry exists, propose operations, and verify results — all through the same Shell that human-initiated compute writes to.
 
-### 5. Offline reconciliation
+### 5. Containers are just peers with native compute
 
-When a browser client works offline:
+A Cloudflare Container runs the Truck Rust kernel as a native `linux/amd64` binary. It exposes the same Hono HTTP routes as the browser WASM (isomorphic API). It connects to the PartyKit room as a peer.
+
+The container is not special infrastructure. It's a participant that happens to have a native Rust binary instead of WASM. It creates ops, computes geometry, writes to the Shell — same as a browser.
+
+### 6. Offline reconciliation
+
+When a browser works offline:
 
 - Automerge ops accumulate in OPFS (per ADR-0036)
-- Geometry computed locally via WASM is stored in browser IndexedDB
+- Geometry computed locally stays in browser IndexedDB (only storage available offline)
 - On reconnect, Automerge sync happens automatically via PartyKit
-- The browser then pushes any locally computed geometry to the DO via a dedicated reconnect handler
-- The DO writes geometry to the Workspace (R2 path) and updates `opStatus`
-- Other clients receive the geometry via DO broadcast
+- Browser pushes locally computed geometry to the Shell
+- Other peers see the geometry via the Shell
 
-If the Workspace cache is cold (DO evicted, R2 key missing), the op log in Automerge is the authoritative source — any op can be recomputed from its inputs at any time.
-
-### 6. The Automerge doc is the source of truth; geometry is derived
-
-The Automerge document stores ops and status only. Geometry is never stored in Automerge — it is always a deterministic function of the op inputs and can be recomputed. The Workspace cache is a performance optimisation, not a primary store.
-
-This means:
-
-- Undo/redo is free: replay ops without the undone op; all results are cached or recomputable
-- Two users doing the same op independently produce the same geometry (same cache key)
-- The AI reasoning over the document sees the same logical state as the human
+If the Shell cache is cold, the op log in Automerge is authoritative — any op can be recomputed from its inputs.
 
 -----
 
@@ -139,37 +130,35 @@ This means:
 
 **Positive:**
 
-- AI agents can perform CAD compute server-side without a browser
-- Heavy B-Rep ops no longer hit Worker CPU limits
+- AI agents can compute server-side without a browser
+- Heavy B-Rep ops run natively in Containers — no Worker CPU limits
 - Human and AI collaborate on the same document with the same tools
-- Offline work reconciles correctly via op log + geometry push on reconnect
-- The Hono codebase is isomorphic across browser, Worker, and Container
-- Op cache in SQLite means repeated identical ops (e.g. undo/redo cycles) are free
+- Shell handles storage complexity (D1/R2 split) — we don't build it
+- Presence handles routing — we don't build a complexity scorer
+- Offline reconciles via op log
 
 **Negative / risks:**
 
-- `@cloudflare/shell` is experimental with unstable API — pin version strictly
-- Container cold starts are 2-3 seconds — acceptable for heavy ops, not for interactive ones
-- Complexity scoring heuristic requires tuning; wrong routing wastes cost or hits limits
-- The CRDT sync layer must be correct before this is connected — sync bugs corrupt the op log that all compute depends on
+- `@cloudflare/shell` is experimental — API may change
+- Container cold starts may affect UX for the "no browsers connected" fallback
+- Shell inside a PartyKit DO alongside automerge-repo is unproven — needs a spike
+- Using another user's browser for compute needs consent/UX consideration
 
-**Not in scope for this ADR:**
+**Not in scope:**
 
-- The Rust `cad-server` HTTP API inside the Container (separate ADR or implementation doc)
-- MCP tool schema definitions for CAD ops (covered by existing SchemaEntry ADR)
+- The Rust `cad-server` HTTP API inside the Container
+- MCP tool schema definitions (existing ADR)
 - Tauri native integration (ADR-0039)
-- FEA solver pipeline (RICOS partnership work)
 
 -----
 
 ## Implementation order
 
-1. Confirm CRDT sync end-to-end tests cover concurrent op merge (prerequisite — **done**, 28 tests passing)
-2. Initialise Workspace in the PartyKit DO alongside existing SQLite usage
-3. Implement complexity router with browser/Worker/Container tiers
-4. Build native Rust `cad-server` binary and Dockerfile
-5. Wire Container into wrangler.jsonc and DO binding
-6. Add op cache (SHA-256 keyed, SQLite-backed)
-7. Connect AI agent as a room participant via MCP + stateTools
-8. Implement offline reconnect geometry push handler
-9. End-to-end test: human and AI concurrently authoring same document
+1. ~~Confirm CRDT sync E2E tests~~ — **done** (28 tests, PartyKit + Durable Objects)
+2. Spike: `@cloudflare/shell` inside a PartyKit DO — does it work alongside automerge-repo?
+3. Spike: Cloudflare Container with native Truck binary — cold start, binding model
+4. Connect truck-cad browser to SyncDoc (replace SyncClient)
+5. Implement presence-based compute routing
+6. Connect AI agent as room participant via MCP + stateTools
+7. Implement offline reconnect geometry push
+8. End-to-end test: human and AI concurrently authoring same document
