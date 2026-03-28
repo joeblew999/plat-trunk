@@ -16,6 +16,7 @@
 | **Agents API reference** | https://developers.cloudflare.com/agents/api-reference/agents-api/ |
 | **Agents starter template** | https://github.com/cloudflare/agents-starter |
 | **Cloudflare Containers** | https://developers.cloudflare.com/containers/ |
+| **Cloudflare Queues** | https://developers.cloudflare.com/queues/ |
 | **PartyKit (partyserver)** | https://github.com/cloudflare/partykit |
 | **automerge-partyserver (our fork)** | https://github.com/joeblew999/partykit/tree/feat/automerge-partyserver |
 | **Upstream issue** | https://github.com/cloudflare/partykit/issues/361 |
@@ -33,7 +34,8 @@ This ADR follows the same principle:
 
 - **Cloudflare Shell** for filesystem and storage — not our own D1/R2 abstraction
 - **Cloudflare Containers** for native compute — not our own server infrastructure
-- **PartyKit presence** for routing decisions — not our own complexity heuristics
+- **Cloudflare Queues** for compute job delivery — not our own job routing
+- **PartyKit presence** for knowing who's available — not our own tracking
 - **stateTools** for AI agent file access — not our own MCP file tools
 
 -----
@@ -60,19 +62,28 @@ A browser peer computes geometry locally using WASM. A container peer computes g
 
 The DO doesn't need to know or care where compute happened.
 
-### 2. Presence-based routing
+### 2. Presence + Queues for compute routing
 
-When an op needs compute (e.g. an AI agent creates an op via MCP but has no geometry engine), PartyKit presence determines who computes:
+When an op needs compute, two Cloudflare primitives handle it:
 
-| Presence state | Who computes | Why |
-|---------------|-------------|-----|
+- **Presence** (PartyKit) tells you who's connected right now
+- **Queues** (Cloudflare Queues) deliver compute jobs to the right consumer
+
+The DO doesn't route compute directly. It puts a job on a Queue. Consumers — browsers, containers — listen to the Queue and pick up work based on what's available.
+
+Presence informs the routing:
+
+| Presence state | Queue consumer | Why |
+|---------------|---------------|-----|
 | This user's browser is connected | Their browser (WASM) | Lowest latency, their own edit |
 | No browser for this user, but other users are online | Another user's browser (WASM) | Free compute, WASM already loaded |
 | No browsers connected at all | Container (native Rust) | The fallback — always available |
 
-This is not complexity scoring. The question is **"who's available"**, not **"how hard is the op"**.
+This is decoupled. The DO doesn't need to know who computes. The Queue handles delivery. The question is **"who's available"**, not **"how hard is the op"**.
 
-The MCP bridge works this way today — it sends `cad-command` SSE events to the browser, the browser executes. But if no browser is connected, there's no compute. The container fills that gap.
+The MCP bridge works this way today — it sends `cad-command` SSE events to the browser, the browser executes. But if no browser is connected, there's no compute. Queues + Containers fill that gap.
+
+> **To explore:** How do browser peers consume from a Cloudflare Queue? Queues are server-side (Worker/Container consumers). Browsers might receive jobs via the DO WebSocket instead, with the Queue only handling the server-side fallback path. This needs a spike.
 
 ### 3. Shell filesystem is the single shared storage
 
@@ -154,11 +165,23 @@ If the Shell cache is cold, the op log in Automerge is authoritative — any op 
 
 ## Implementation order
 
-1. ~~Confirm CRDT sync E2E tests~~ — **done** (28 tests, PartyKit + Durable Objects)
-2. Spike: `@cloudflare/shell` inside a PartyKit DO — does it work alongside automerge-repo?
-3. Spike: Cloudflare Container with native Truck binary — cold start, binding model
-4. Connect truck-cad browser to SyncDoc (replace SyncClient)
-5. Implement presence-based compute routing
-6. Connect AI agent as room participant via MCP + stateTools
-7. Implement offline reconnect geometry push
-8. End-to-end test: human and AI concurrently authoring same document
+### Done
+
+1. ~~CRDT sync E2E~~ — **28 tests passing** (PartyKit + Durable Objects + Playwright)
+
+### Next (known how)
+
+2. Connect truck-cad browser to SyncDoc (replace SyncClient — we know this works)
+
+### Spikes (need to learn)
+
+3. `@cloudflare/shell` — does it work inside a PartyKit DO alongside automerge-repo?
+4. Cloudflare Containers — cold start, binding model, native Truck binary
+5. Cloudflare Queues — can they route compute jobs to browsers via DO, or only to server consumers?
+
+### Depends on spike results
+
+6. Presence-based compute routing (shape depends on how Queues work with browsers)
+7. AI agent as room participant via MCP + stateTools (shape depends on Shell spike)
+8. Offline reconnect geometry push (shape depends on Shell as shared storage)
+9. End-to-end test: human and AI concurrently authoring same document
