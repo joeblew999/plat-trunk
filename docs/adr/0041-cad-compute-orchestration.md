@@ -1,8 +1,27 @@
 # ADR-0041: CAD Compute Orchestration and Human/AI Parity
 
-**Status:** Proposed
+**Status:** Intent — not yet implemented
 **Date:** 2026-03-28
 **Depends on:** ~~ADR-0001~~ (superseded — now PartyKit sync), ADR-0005 (Scene Graph), ~~ADR-0008~~ (superseded), ADR-0036 (OPFS), ADR-0038 (Versioning/R2), ADR-0039 (Tauri)
+
+### References
+
+| What | URL |
+|------|-----|
+| **Cloudflare Agents SDK** | https://github.com/cloudflare/agents |
+| **@cloudflare/shell** (Workspace + stateTools) | https://github.com/cloudflare/agents/tree/main/packages/shell |
+| **@cloudflare/shell on npm** | https://www.npmjs.com/package/@cloudflare/shell |
+| **@cloudflare/codemode** (LLM code execution) | https://github.com/cloudflare/agents/tree/main/packages/codemode |
+| **Agents SDK docs** | https://developers.cloudflare.com/agents/ |
+| **Agents API reference** | https://developers.cloudflare.com/agents/api-reference/agents-api/ |
+| **Agents starter template** | https://github.com/cloudflare/agents-starter |
+| **Cloudflare Containers** | https://developers.cloudflare.com/containers/ |
+| **PartyKit (partyserver)** | https://github.com/cloudflare/partykit |
+| **automerge-partyserver (our fork)** | https://github.com/joeblew999/partykit/tree/feat/automerge-partyserver |
+| **Upstream issue** | https://github.com/cloudflare/partykit/issues/361 |
+| **plat-trunk sync system** | https://github.com/joeblew999/plat-trunk/tree/main/systems/sync |
+
+> **Note:** `@cloudflare/shell` and the Workspace API are very new (early 2025). The API may change. Pin versions strictly. Many AI coding assistants don't yet know about these packages — the references above are the authoritative sources.
 
 -----
 
