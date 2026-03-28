@@ -3,7 +3,7 @@
 **Status:** Proposed
 **Date:** 2026-03-19
 **Author:** Gerard Webb
-**Depends on:** ADR-0004 (WASM boundary contracts), ADR-0008 (sync architecture), ADR-0009 (observability)
+**Depends on:** ADR-0004 (WASM boundary contracts), ~~ADR-0008~~ (superseded — now PartyKit sync), ADR-0009 (observability)
 
 ---
 

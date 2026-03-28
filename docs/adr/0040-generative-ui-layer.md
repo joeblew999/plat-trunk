@@ -5,7 +5,7 @@
 **Author:** Gerard Webb  
 **Deciders:** Gerard Webb  
 **Supersedes:** —  
-**Related:** ADR-0001 (Automerge CRDT), ADR-0008 (Sync Architecture), ADR-0009 (Observability), ADR-0038 (Versioning/R2), ADR-0039 (Tauri v2)
+**Related:** ~~ADR-0001~~ (superseded — now PartyKit sync), ~~ADR-0008~~ (superseded), ADR-0009 (Observability), ADR-0038 (Versioning/R2), ADR-0039 (Tauri v2)
 
 ---
 

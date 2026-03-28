@@ -1,7 +1,10 @@
 # ADR-0008: Sync Architecture Redesign
 
-**Status**: Accepted
+**Status**: SUPERSEDED (2026-03-27)
 **Date**: 2026-03-11
+**Superseded by**: PartyKit sync — SyncDoc + automerge-partyserver + Durable Objects.
+SyncClient, adapters (IDB/R2/HTTP/SSE), SyncWorker all deleted.
+See `systems/sync/README.md` for the current architecture.
 **Context**: 3 days lost to a sync bug that was diagnosable in 30 seconds from server logs. Root cause was architectural — not a typo.
 
 ## Problems

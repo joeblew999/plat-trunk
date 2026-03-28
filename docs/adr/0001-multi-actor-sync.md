@@ -1,5 +1,11 @@
 # Snapshot + Multi-Actor Sync (v6)
 
+> **Status: SUPERSEDED (2026-03-27)**
+> Replaced by PartyKit sync — SyncDoc + automerge-partyserver + Durable Objects.
+> R2 storage → DO SQLite. HTTP POST + SSE → WebSocket. SyncClient → SyncDoc.
+> See `systems/sync/README.md` for the current architecture.
+> Upstream issue: [cloudflare/partykit#361](https://github.com/cloudflare/partykit/issues/361)
+
 ## Context
 
 Two problems, one solution:
