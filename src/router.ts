@@ -12,6 +12,7 @@ type Bindings = {
   AUTH: Fetcher;
   TRUCK: Fetcher;
   TEST: Fetcher;
+  AI: Fetcher;
   // Future systems — add binding here + [[services]] in wrangler.toml when worker is deployed:
   // MVT: Fetcher;
   // IFC: Fetcher;
@@ -98,6 +99,19 @@ app.all('/auth/*', async (c) => {
 //
 // app.all('/api/mvt/*', async (c) => c.env.MVT.fetch(c.req.raw));
 // app.all('/api/ifc/*', async (c) => c.env.IFC.fetch(c.req.raw));
+
+// ── AI chat agent ────────────────────────────────────────
+// agents-starter worker — served at /ai/*
+// Iframe src: /ai/?model=<modelId>
+
+app.get('/ai', (c) => c.redirect('/ai/', 301));
+
+app.all('/ai/*', async (c) => {
+  if (!c.env.AI) return c.text('AI worker not configured', 503);
+  const stripped = new URL(c.req.url);
+  stripped.pathname = stripped.pathname.replace(/^\/ai/, '') || '/';
+  return c.env.AI.fetch(new Request(stripped.toString(), c.req.raw));
+});
 
 // ── truck-cad (catch-all) ────────────────────────────────
 // Handles: /api/* REST, /mcp MCP endpoint, /* web app static assets.

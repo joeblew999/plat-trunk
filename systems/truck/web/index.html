@@ -95,6 +95,16 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
             <a href="/docs/" class="btn btn-ghost btn-xs opacity-40" title="Documentation">Docs</a>
             <a href="/api-docs" target="_blank" class="btn btn-ghost btn-xs opacity-40" title="API Docs">API</a>
             <span class="tb-sep"></span>
+            <button id="aiToggleBtn" class="btn btn-ghost btn-xs" title="Toggle AI assistant"
+                    onclick="document.body.classList.toggle('ai-open'); this.classList.toggle('btn-active')">
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a4 4 0 014 4 4 4 0 01-4 4 4 4 0 01-4-4 4 4 0 014-4"/>
+                <path d="M20 21a8 8 0 00-16 0"/>
+                <circle cx="19" cy="8" r="3" fill="currentColor" stroke="none" class="text-primary"/>
+                <path d="M17.5 8h3M19 6.5v3" stroke="white" stroke-width="1.5"/>
+              </svg>
+              AI
+            </button>
             <!-- Auth: sign-in link when unauthenticated, avatar + sign-out when authenticated -->
             <a href="/auth/sign-in" class="btn btn-ghost btn-xs opacity-60"
                data-show="!$authUser" title="Sign in">Sign in</a>
@@ -517,6 +527,25 @@ data-attr:data-sse="'/api/cad/' + $modelId + '/events'">
     <pre data-json-signals style="display:none"></pre>
     <!-- Debug panel — collapsible sidebar showing all Datastar signals in real-time -->
     <live-signals collapsed></live-signals>
+
+    <!-- ═══════════════════ AI PANEL ═══════════════════ -->
+    <!-- Lazy-loaded iframe — src set on first open to avoid loading agents-starter on every page load -->
+    <aside class="app-ai-panel" data-testid="ai-panel">
+      <iframe id="aiFrame"
+              title="AI Assistant"
+              allow="same-origin"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+              loading="lazy"></iframe>
+    </aside>
+    <script>
+      // Set iframe src on first open (lazy — avoid cold-starting the agents worker on page load)
+      document.getElementById('aiToggleBtn').addEventListener('click', function() {
+        var frame = document.getElementById('aiFrame');
+        if (!frame.src || frame.src === 'about:blank') {
+          frame.src = '/ai/?model=' + (window.__modelId || '');
+        }
+      });
+    </script>
 
     <!-- ═══════════════════ SCRIPTS ═══════════════════ -->
 

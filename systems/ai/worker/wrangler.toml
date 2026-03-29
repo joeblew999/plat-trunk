@@ -1,0 +1,35 @@
+# ───────────────────────────────────────────────────────
+# plat-ai — AI chat agent (agents-starter)
+# ───────────────────────────────────────────────────────
+#
+# Cloudflare Agents SDK — AIChatAgent with truck-cad MCP tools.
+# UI: React + Kumo (copied from cloudflare/agents-starter).
+# Served at /ai/* via plat-router service binding.
+#
+# Setup:
+#   npx create-cloudflare@latest -- . --template cloudflare/agents-starter
+#   Then replace server.ts tools with truck-cad MCP tools (see README.md)
+#
+# Dev:  wrangler dev (port 8791)
+# ───────────────────────────────────────────────────────
+
+name = "plat-ai"
+main = "src/server.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Static UI assets (built from ../web by Vite)
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# truck-cad service binding — call MCP tools without public HTTP
+[[services]]
+binding = "TRUCK"
+service = "truck-cad"
+optional = true
+
+[dev]
+port = 8791
