@@ -9,7 +9,7 @@
 
 import { moduleRouter } from './core/module-router';
 import type { WasmResult, DocManagerMeta } from './types';
-import { cadDocManager } from './history-ui';
+import { cadDocManager } from './cad-doc-manager-ui';
 import { warmCount } from './tier-manager';
 import { LOCAL_MODE } from './app-config';
 
@@ -130,7 +130,7 @@ export function reconcile(result: WasmResult): WasmResult {
   if (!moduleRouter.ready || !ds?.root) return {};
 
   const ids = moduleRouter.query('objectIds') as string[];
-  const mgr = cadDocManager?._sync?.modelId ? cadDocManager : null;
+  const mgr = cadDocManager?._modelId ? cadDocManager : null;
   const r = ds.root;
 
   ds.beginBatch();

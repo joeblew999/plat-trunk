@@ -93,7 +93,7 @@ export interface WasmResult {
 
 /**
  * Options for cadCommand() / cadQuery() — controls Automerge recording and broadcast.
- * Exported here so history-domain.ts can type REPLAY without a circular import.
+ * Exported here so cad-doc-manager.ts can type REPLAY without a circular import.
  */
 export interface CadOptions {
   record?: boolean;
@@ -108,7 +108,7 @@ export interface CadOptions {
 
 /**
  * Fields of CadDocumentManagerBase used by reconcileMetadata in state.ts.
- * Avoids a circular import: history-domain.ts imports state.ts at runtime,
+ * Avoids a circular import: cad-doc-manager.ts imports state.ts at runtime,
  * so state.ts cannot import CadDocumentManagerBase back.
  */
 export interface DocManagerMeta {

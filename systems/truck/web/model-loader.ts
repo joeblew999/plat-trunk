@@ -11,7 +11,7 @@
 // If sync cache replay produces empty scene (e.g. blob-store wiped),
 // it's treated as cache-invalid and falls through to cloud.
 
-import type { CadDocumentManagerBase } from './history-domain';
+import type { CadDocumentManagerBase } from './cad-doc-manager';
 import { parseUrlParams } from './url-params';
 
 export async function loadModel(modelId: string, mgr: CadDocumentManagerBase) {

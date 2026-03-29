@@ -4,7 +4,7 @@
 // Both use the shared openCadSyncDb() from idb.ts — single DB, both stores created
 // together to prevent the split-version bug.
 
-import { openCadSyncDb, META_STORE } from './idb';
+import { openCadSyncDb, META_STORE } from './cad-idb';
 
 export interface SnapshotRef {
     blobRef: string;

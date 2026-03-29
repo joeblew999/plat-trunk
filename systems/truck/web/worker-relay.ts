@@ -4,7 +4,7 @@
 import { cadCommand } from './dispatch';
 import { reconcile } from './reconcile';
 import { client } from './api-client';
-import { cadDocManager } from './history-ui';
+import { cadDocManager } from './cad-doc-manager-ui';
 import { MODEL_ID } from './app-config';
 import { getSceneController } from './scene-controller';
 
@@ -57,7 +57,7 @@ const relay = {
       try {
         const op = JSON.parse(e.data);
         const mgr = cadDocManager;
-        if (mgr?._sync?.modelId) {
+        if (mgr?._modelId) {
           mgr.applyServerOp(op).catch(err => console.warn('[worker-relay] sync-op apply failed:', err));
         }
       } catch (err) {

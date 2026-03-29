@@ -1,7 +1,7 @@
 // globals.d.ts — Declares custom window properties set by inline scripts and modules.
 
 import type { WasmResult, CadOptions } from './types';
-import type { CadDocumentManagerBase } from './history-domain';
+import type { CadDocumentManagerBase } from './cad-doc-manager';
 import type { sketch } from './sketch';
 
 declare global {
@@ -24,7 +24,7 @@ declare global {
     // window.sceneController kept for E2E tests and HTML onclick handlers
     sceneController: any;  // WASM instance, no TS bindings
 
-    // Set by history-ui.ts (module singleton — prefer importing from history-ui.ts
+    // Set by cad-doc-manager-ui.ts (module singleton — prefer importing from cad-doc-manager-ui.ts
     // in TS modules; window.cadDocManager kept for E2E tests and inline scripts)
     cadDocManager: CadDocumentManagerBase;
     resetTierState: (() => void) | undefined;

@@ -8,7 +8,7 @@
 import { LitElement, html } from 'lit';
 import { client } from './api-client';
 import type { components } from './api-types.generated';
-import { cadDocManager } from './history-ui';
+import { cadDocManager } from './cad-doc-manager-ui';
 import { MODEL_ID } from './app-config';
 
 type ModelManifest = components['schemas']['ModelManifest'];

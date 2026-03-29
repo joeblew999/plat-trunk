@@ -1,5 +1,5 @@
 /**
- * history-domain.ts — Thin CAD wrapper over SyncClient (ADR-0008).
+ * cad-doc-manager.ts — Thin CAD wrapper over SyncClient (ADR-0008).
  *
  * This file owns:
  *   - Op recording (knowing WHEN and WHAT to record after window.cadCommand executes)
@@ -16,7 +16,7 @@
  *   - Structured sync tracing  → SyncClient.syncLog
  */
 
-import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './doc-store';
+import { loadMeta, saveMeta, type DocMeta, type SnapshotRef } from './cad-meta-store';
 import { storeBlob, getBlob } from './blob-store';
 import { refreshBudget } from './storage-budget';
 import { moduleRouter } from './core/module-router';
@@ -44,7 +44,8 @@ export const SNAPSHOT_INTERVAL = 10;
 export class CadDocumentManagerBase {
     protected _syncDoc: SyncDoc | null = null;
     protected _actorId: string;
-    protected _modelId: string | null = null;
+    _modelId: string | null = null;  // public — read by dispatch, keyboard, reconcile, viewport
+    enabled = true;                  // public — toggled by dispatch for local-mode
 
     // CAD-specific state (not sync's concern)
     protected _meta: DocMeta = { name: '', snapshots: [] };

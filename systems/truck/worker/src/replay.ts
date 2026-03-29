@@ -2,7 +2,7 @@
 // Loads doc → gets replay ops → executes in HeadlessController → returns scene JSON.
 // Caches scene.json + scene-meta.json in R2 for fast subsequent loads.
 
-import { R2DocStore } from './doc-store';
+import { R2DocStore } from './r2-store';
 import { syncGetReplayOps } from './sync-wasm.generated';
 import { initHeadlessWasm } from './truck-wasm.generated';
 

@@ -11,8 +11,7 @@ import syncSchema from '../../../sync/sync-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
 import { initHeadlessWasm } from './truck-wasm.generated';
 import { ModelStore, analyzeScene, buildManifest } from './model-store';
-import { R2DocStore } from './doc-store';
-import { mergeWithRetry } from '../../../sync/ts/worker/handler';
+import { R2DocStore, mergeWithRetry } from './r2-store';
 import { syncCreate, syncApplyOp, syncMergeDocs, syncMergeDocsWithInfo, syncGetOps, syncGetOpCount, syncGetReplayOps, syncExportOpsSince, syncGetName, syncDocHash } from './sync-wasm.generated';
 import { replayModel } from './replay';
 
