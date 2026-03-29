@@ -74,7 +74,7 @@ async function progressiveLoad(entries: SceneEntry[], ops: CadOperation[], start
     if (p.selB) neededIds.add(p.selB as string);
   }
 
-  let frustum: number[] | null = null;
+  let frustum: import('three').Frustum | null = null;
   const viewport = document.querySelector('cad-viewport') as CadViewportElement | null;
   if (viewport?.camera) {
     const THREE = await import('three');

@@ -15,7 +15,8 @@ import { commandDomain } from '../cad-dispatch.generated';
  */
 
 export class BrowserModuleRouter {
-  declare modules: Map<string, { instance: Record<string, (...args: unknown[]) => unknown>; commands: Set<string> | null }>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  declare modules: Map<string, { instance: any; commands: Set<string> | null }>;
 
   constructor() {
     this.modules = new Map(); // name → { instance, commands }

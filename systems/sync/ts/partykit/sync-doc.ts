@@ -100,7 +100,7 @@ export class SyncDoc {
     // Use repo directly — provider.create() is a thin wrapper but
     // using repo gives us the typed DocHandle without any cast issues.
     this.handle = this.provider.repo.create<SyncDocData>();
-    this.handle.change((doc) => {
+    this.handle.change((doc: SyncDocData) => {
       doc.operations = [];
     });
     this._docId = this.handle.documentId;
@@ -117,7 +117,7 @@ export class SyncDoc {
   async join(docId: AnyDocumentId): Promise<void> {
     // Use repo.find() directly — avoids the type-cast wrapper in
     // provider.find() which loses the whenReady() method at runtime.
-    this.handle = this.provider.repo.find<SyncDocData>(docId);
+    this.handle = this.provider.repo.find<SyncDocData>(docId) as unknown as DocHandle<SyncDocData>;
     await this.handle.whenReady();
     this._docId = docId;
     this.subscribeToChanges();
@@ -137,7 +137,7 @@ export class SyncDoc {
 
   /** Add an op. Syncs to all peers automatically. */
   addOp(op: Operation): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       if (!doc.operations) doc.operations = [];
       doc.operations.push(op);
     });
@@ -145,7 +145,7 @@ export class SyncDoc {
 
   /** Undo: disable an op by ID. */
   undo(opId: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       const op = doc.operations?.find((o: Operation) => o.id === opId);
       if (op) op.enabled = false;
     });
@@ -153,7 +153,7 @@ export class SyncDoc {
 
   /** Redo: re-enable an op by ID. */
   redo(opId: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       const op = doc.operations?.find((o: Operation) => o.id === opId);
       if (op) op.enabled = true;
     });
@@ -161,7 +161,7 @@ export class SyncDoc {
 
   /** Undo/redo all ops in a group atomically. */
   setGroupEnabled(groupId: string, enabled: boolean): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       for (const op of doc.operations ?? []) {
         if (op.groupId === groupId) op.enabled = enabled;
       }
@@ -192,7 +192,7 @@ export class SyncDoc {
 
   /** Set model name — syncs to all peers. */
   setName(name: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       doc.name = name;
     });
   }

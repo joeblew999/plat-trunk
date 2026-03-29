@@ -7,17 +7,22 @@
     "gen:api-types": "bun x openapi-typescript http://localhost:8789/api/openapi.json -o api-types.generated.ts"
   },
   "dependencies": {
+    "@automerge/automerge-repo": "^2.5.4",
+    "@automerge/automerge-repo-network-broadcastchannel": "^2.5.4",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.5.4",
+    "automerge-partyserver": "file:../../../.packages/automerge-partyserver-0.1.0.tgz",
+    "daisyui": "^5",
     "lit": "^3",
-    "three": "^0.172",
     "openapi-fetch": "^0.13",
-    "daisyui": "^5"
+    "three": "^0.172"
   },
   "devDependencies": {
-    "vite": "^6",
-    "vite-plugin-wasm": "^3",
     "@tailwindcss/vite": "^4",
-    "typescript": "^5",
+    "@types/node": "^25.5.0",
     "@types/three": "^0.172",
-    "openapi-typescript": "^7"
+    "openapi-typescript": "^7",
+    "typescript": "^5",
+    "vite": "^6",
+    "vite-plugin-wasm": "^3"
   }
 }

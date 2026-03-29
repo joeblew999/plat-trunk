@@ -47,8 +47,8 @@ export class CadOutliner extends LitElement {
       try {
         const router = moduleRouter;
         if (router?.ready) {
-          const state = router.query('getState');
-          this._names = state.objectNames || {};
+          const state = router.query('getState') as { objectNames?: Record<string, string> } | null;
+          this._names = state?.objectNames || {};
         }
       } catch { /* no-op */ }
     }
