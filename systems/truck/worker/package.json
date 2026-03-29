@@ -7,7 +7,11 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "hono": "^4.11.9",
     "kkrpc": "^0.6.7",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "automerge-partyserver": "file:../../../.packages/automerge-partyserver-0.1.0.tgz",
+    "hono-party": "^2.0.3",
+    "partyserver": "^0.4.0",
+    "@automerge/automerge-repo": "^2.2.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.20",

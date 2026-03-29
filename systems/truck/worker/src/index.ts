@@ -3,6 +3,9 @@ import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPTransport } from '@hono/mcp';
+import { partyserverMiddleware } from 'hono-party';
+import { AutomergeServer } from 'automerge-partyserver';
+import { Server } from 'partyserver';
 import cadSchema from '../../cad-schema.json';
 import syncSchema from '../../../sync/sync-schema.json';
 import cfDeploy from '../../../../cf-deploy.json';
@@ -19,11 +22,39 @@ const syncWasm = {
   doc_hash: (d: Uint8Array) => syncDocHash(d),
 } as import('../../../sync/ts/shared/wasm-adapter').SyncWasmAdapter;
 
+// ── Durable Object classes — PartyKit real-time sync ─────────────────────────
+//
+// OPS:      Automerge CRDT op log per model — automerge-partyserver handles
+//           per-peer sync state, 128KB chunked DO storage, and WebSocket transport.
+//           Route: /parties/ops/{modelId}
+//
+// PRESENCE: Ephemeral cursor/selection broadcast — not persisted, fires and forgets.
+//           Route: /parties/presence/{modelId}
+//
+// Both DOs are accessed by browsers via WebSocket (SyncDoc in history-domain.ts)
+// and by MCP agent ops via applyOpToDO() which HTTP-POSTs into the DO.
+
+export class Ops extends AutomergeServer {}
+
+export class Presence extends Server {
+  onConnect() {}
+  onMessage(connection: any, message: string | ArrayBuffer | ArrayBufferView) {
+    // Broadcast to all other connected peers (ephemeral — not persisted)
+    for (const conn of this.getConnections()) {
+      if (conn.id !== connection.id) {
+        try { conn.send(message); } catch { /* ignore closed */ }
+      }
+    }
+  }
+}
+
 type Bindings = {
   ASSETS: Fetcher;
   MODELS: R2Bucket;
-  AUTH: Fetcher;  // auth-worker service binding — session verification
-  MCP_AUTH_ENABLED: string; // "true" to require auth on /mcp, "false" (default) to keep open
+  AUTH: Fetcher;
+  OPS: DurableObjectNamespace<Ops>;
+  PRESENCE: DurableObjectNamespace<Presence>;
+  MCP_AUTH_ENABLED: string;
 };
 
 // app and api are created later via chained .openapi() calls for type export
@@ -252,6 +283,41 @@ async function waitForCommand(modelId: string, type: string, params: any) {
 }
 
 // =========================================================================
+// applyOpToDO — push an op into the Ops Durable Object
+// =========================================================================
+//
+// The Ops DO is the source of truth for real-time sync. When the MCP agent
+// writes an op server-side (executeServerDirect), we also push it to the DO
+// so all connected browsers receive it via WebSocket without polling R2.
+//
+// The DO exposes a standard PartyServer HTTP endpoint at:
+//   /parties/ops/{modelId}  (GET → upgrade to WebSocket, POST → HTTP request)
+//
+// We call the DO's HTTP handler with a synthetic POST carrying the op JSON.
+// If the DO isn't running yet it's cold-started by this request.
+
+async function applyOpToDO(
+  env: Bindings,
+  modelId: string,
+  op: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const id = env.OPS.idFromName(modelId);
+    const stub = env.OPS.get(id);
+    await stub.fetch(
+      new Request(`http://internal/parties/ops/${modelId}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-plat-internal': '1' },
+        body: JSON.stringify({ type: 'apply-op', op }),
+      }),
+    );
+  } catch (err) {
+    // Best-effort — browsers will resync via HTTP /sync endpoint
+    console.warn('[applyOpToDO] failed:', err);
+  }
+}
+
+// =========================================================================
 // Server-direct execution (ADR-0001 Part A — data-plane commands)
 // =========================================================================
 
@@ -300,6 +366,10 @@ async function executeServerDirect(
 
     // Broadcast op to connected browsers via SSE
     broadcast(modelId, { type: 'sync-op', data: op });
+
+    // Also push to the Ops DO so WebSocket-connected browsers get it
+    // without waiting for a full HTTP sync round-trip
+    await applyOpToDO(env, modelId, op as unknown as Record<string, unknown>);
 
     return { id: opId, status: 'done', result: lastResult };
   } catch (err: any) {
@@ -945,6 +1015,16 @@ const app = new OpenAPIHono<{ Bindings: Bindings }>()
   .use('/api/*', cors())
   .use('/api/*', async (_c, next) => { gcModels(); return next(); })
   .route('/api', api);
+
+// ── PartyKit WebSocket routing — /parties/{namespace}/{room} ─────────────────
+// partyserverMiddleware routes each request to the matching DO binding.
+// Binding name → URL namespace mapping (camelCase → kebab-case):
+//   OPS      → ops      → /parties/ops/{modelId}
+//   PRESENCE → presence → /parties/presence/{modelId}
+//
+// Browsers connect via SyncDoc (automerge-repo WebSocket) for CRDT sync.
+// MCP agent ops flow in via applyOpToDO() (HTTP POST to the DO stub).
+app.all('/parties/*', partyserverMiddleware());
 
 // ── Auth session helper ───────────────────────────────────────────────────
 // Call this in any route handler to verify the current session via the

@@ -40,6 +40,20 @@ binding = "AUTH"
 service = "auth-worker"
 optional = true
 
+# ── Real-time CRDT sync via PartyKit / automerge-partyserver ────────────────
+# Each CAD model gets its own DO instance:
+#   /parties/ops/{modelId}       — Automerge CRDT op log (automerge-partyserver)
+#   /parties/presence/{modelId}  — Ephemeral cursor/selection broadcast
+[durable_objects]
+bindings = [
+  { name = "OPS",      class_name = "Ops" },
+  { name = "PRESENCE", class_name = "Presence" },
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Ops", "Presence"]
+
 # Feature flags
 [vars]
 # Set to "true" to require authentication on the /mcp endpoint.
