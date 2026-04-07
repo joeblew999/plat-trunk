@@ -1,36 +1,37 @@
 // systems/auth/system.mjs — auth system config.
-// better-auth-cloudflare on Hono, backed by D1 + KV.
-// Serves auth API at /auth/* and static web UI from systems/auth/web/dist.
+//
+// Identity (better-auth) + permissions (zanzojs) + filesystem (@cloudflare/shell).
+// SSR only — no Vite, no web build step. Worker serves all pages directly.
+// Tests run via Playwright (e2e/), not vitest.
 
 const AUTH_PORT      = parseInt(process.env.AUTH_PORT      ?? '8790');
-const AUTH_INSPECTOR  = parseInt(process.env.AUTH_INSPECTOR  ?? '9231');
-const AUTH_WEB_PORT   = parseInt(process.env.AUTH_WEB_PORT   ?? '5174');
+const AUTH_INSPECTOR = parseInt(process.env.AUTH_INSPECTOR ?? '9231');
 
 export const workers = [
   { name: 'auth-worker', dir: 'systems/auth/worker', port: AUTH_PORT, inspectorPort: AUTH_INSPECTOR },
 ];
 
-export const devServers = [
-  { name: 'auth-web', command: 'cd systems/auth/web && bun x vite', port: AUTH_WEB_PORT },
-];
+// No devServers — auth UI is server-side rendered, no Vite dev server needed.
+export const devServers = [];
 
 // Build pipeline config — consumed by scripts/build.mjs.
+// Auth worker is SSR + pure TS — only step is typecheck.
 export const building = {
   name: 'auth',
   order: 1,
   steps: [
-    { name: 'web', command: 'cd systems/auth/web && bun install && bun run build' },
+    { name: 'typecheck', command: 'cd systems/auth/worker && bun run typecheck' },
   ],
 };
 
 // Test pipeline config — consumed by scripts/test.mjs.
+// Auth uses Playwright e2e (mise run test:e2e), not vitest.
+// typecheck is covered in the build pipeline above.
 export const testing = {
   name: 'auth',
-  vitest: 'cd systems/auth/worker && bun x vitest run',
+  typecheck: 'cd systems/auth/worker && bun run typecheck',
+  vitest: null,   // no vitest — tests are Playwright e2e
 };
 
-export const testFiles = {
-  vitest: [
-    { file: 'systems/auth/worker/src/auth.test.ts', covers: 'Auth routes: sign-in, sign-up, session, sign-out' },
-  ],
-};
+// No testFiles — auth tests live in e2e/auth.spec.ts (Playwright, not vitest).
+export const testFiles = {};

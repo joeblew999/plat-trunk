@@ -31,7 +31,7 @@ bun run dev             # Start router + truck + test workers + Vite dev server 
 # Build — system-aware pipeline (scripts/build.mjs reads building config from each system.mjs)
 bun run build           # All systems: sync → truck → docs (sorted by order field)
 bun run build:sync      # Just sync (WASM + schema + types)
-bun run build:auth      # Just auth (web UI Vite build)
+bun run build:auth      # Just auth (typecheck only — SSR, no Vite build)
 bun run build:truck     # Sync + truck (WASM + schema + adapters + sizes + web)
 bun run build:docs      # Just docs (llm-docs + VitePress)
 
@@ -40,13 +40,10 @@ bun run test            # All tests: alignment → sync (Rust + vitest) → truc
 bun run test:crate      # Rust tests only (contract + domain)
 bun run test:api        # Truck worker vitest
 bun run test:sync       # Sync worker vitest
-bun run test:auth       # Auth worker vitest
+mise --cd systems/auth run test:e2e   # Auth: 51 Playwright e2e tests (worker must be running)
+mise --cd systems/auth run ci         # Auth: self-contained CI (starts worker, seeds, tests, stops)
 
-# Auth setup (one-time)
-bun run auth:generate         # Generate D1 schema from auth config
-bun run auth:migrate:local    # Apply migrations to local D1
-bun run auth:migrate:prod     # Apply migrations to Cloudflare D1
-bun run test:e2e        # Playwright E2E tests
+bun run test:e2e        # Truck Playwright E2E tests
 
 # Deploy
 bun scripts/cf-deploy.ts upload --target truck   # Upload single worker
