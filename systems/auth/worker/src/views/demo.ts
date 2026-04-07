@@ -7,6 +7,7 @@ type User = {
 export function demoPage(user: User | null): string {
   const actorLabel = user ? `User:${user.id} (${user.email})` : 'User:anonymous';
   const signedIn = !!user;
+  const homeDir   = user ? `/home/${user.id}` : '/home/anonymous';
 
   return `
   <div class="w-full max-w-5xl px-4 py-8">
@@ -23,7 +24,7 @@ export function demoPage(user: User | null): string {
       <div class="flex gap-2 items-center">
         <span id="health-badge" class="badge badge-ghost text-xs">checking worker…</span>
         ${signedIn
-          ? `<a href="/auth/api/sign-out" class="btn btn-xs btn-outline">Sign out</a>`
+          ? `<button id="sign-out-btn" class="btn btn-xs btn-outline">Sign out</button>`
           : `<a href="/auth/sign-in" class="btn btn-xs btn-outline">Sign in</a>`
         }
       </div>
@@ -115,7 +116,7 @@ export function demoPage(user: User | null): string {
         <div class="card-body space-y-3">
           <h2 class="card-title text-sm">Write file</h2>
           <label class="label label-text text-xs">Path</label>
-          <input id="write-path" class="input input-bordered input-xs font-mono" value="/projects/demo/notes.txt" />
+          <input id="write-path" class="input input-bordered input-xs font-mono" value="${homeDir}/notes.txt" />
           <label class="label label-text text-xs">Content</label>
           <textarea id="write-content" class="textarea textarea-bordered textarea-xs font-mono text-xs" rows="3">hello from auth demo</textarea>
           <button id="write-btn" class="btn btn-xs btn-primary">Write</button>
@@ -128,7 +129,7 @@ export function demoPage(user: User | null): string {
         <div class="card-body space-y-3">
           <h2 class="card-title text-sm">Read file / List dir</h2>
           <label class="label label-text text-xs">Path</label>
-          <input id="read-path" class="input input-bordered input-xs font-mono" value="/projects/demo/notes.txt" />
+          <input id="read-path" class="input input-bordered input-xs font-mono" value="${homeDir}/notes.txt" />
           <div class="flex gap-2">
             <button id="read-btn" class="btn btn-xs btn-primary flex-1">Read</button>
             <button id="ls-btn" class="btn btn-xs btn-outline flex-1">List dir</button>
@@ -170,6 +171,21 @@ export function demoPage(user: User | null): string {
     }
 
     function val(id) { return document.getElementById(id).value.trim() }
+
+    // Sign out
+    const signOutBtn = document.getElementById('sign-out-btn')
+    if (signOutBtn) {
+      signOutBtn.addEventListener('click', async () => {
+        signOutBtn.textContent = 'Signing out…'
+        signOutBtn.setAttribute('disabled', 'true')
+        await fetch('/auth/api/sign-out', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        })
+        window.location.href = '/auth/sign-in'
+      })
+    }
 
     // Actor override
     document.getElementById('actor-btns').addEventListener('click', (e) => {

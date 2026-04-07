@@ -8,6 +8,7 @@
 
 import { betterAuth } from 'better-auth';
 import { SOCIAL_PROVIDERS, getPlugins } from './plugins';
+import { getZanzo } from './zano-state';
 
 export type CloudflareBindings = {
   AUTH_DB: D1Database;
@@ -63,5 +64,23 @@ export function createAuth(env: CloudflareBindings) {
     socialProviders: SOCIAL_PROVIDERS,
 
     plugins: getPlugins(),
+
+    // Auto-grant new users owner access to their home directory.
+    // Without this, fresh sign-ups can't write any files.
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user) => {
+            try {
+              await getZanzo(env.AUTH_DB).grant(
+                `User:${user.id}`, 'owner', 'Directory', `/home/${user.id}`
+              );
+            } catch (e) {
+              console.error('[auth] home dir grant failed:', e);
+            }
+          },
+        },
+      },
+    },
   });
 }

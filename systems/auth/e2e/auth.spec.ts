@@ -131,6 +131,17 @@ test.describe('sign-up API', () => {
     expect(body.user?.email).toBe(email);
   });
 
+  test('new account gets home dir owner grant automatically', async ({ request }) => {
+    const email = `e2e-homedir-${RUN}@example.com`;
+    const { body } = await apiSignUp(request, email, 'Xq7#mK2r!home', 'Home User');
+    const userId = body.user?.id;
+    expect(userId).toBeTruthy();
+    const actor = `User:${userId}`;
+    // should be able to write to /home/{userId} immediately after sign-up
+    const { body: check } = await apiCheckPermission(request, actor, 'write', 'Directory', `/home/${userId}`);
+    expect(check.allowed).toBe(true);
+  });
+
   test('duplicate email returns 422', async ({ request }) => {
     const email = `e2e-dup-${RUN}@example.com`;
     await apiSignUp(request, email, 'Xq7#mK2r!dup', 'Dup User');
