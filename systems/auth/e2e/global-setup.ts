@@ -73,6 +73,19 @@ export default async function globalSetup() {
 
   console.log(`[seed] ${GRANTS.length} permission tuples applied`);
 
+  // ── Ensure every seeded user owns their /home/{userId} directory ──────────
+  // databaseHooks fires only on CREATE — existing accounts won't have it.
+  // This is idempotent: granting an existing tuple is a no-op.
+  for (const [, user] of Object.entries(state)) {
+    await put('/zano/grant', {
+      subject: user.actor,
+      relation: 'owner',
+      type: 'Directory',
+      id: `/home/${user.id}`,
+    });
+  }
+  console.log(`[seed] home dirs granted for ${Object.keys(state).length} seeded users`);
+
   // ── Persist state for tests ───────────────────────────────────────────────
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 
