@@ -77,11 +77,16 @@ app.all('/test/*', async (c) => {
 });
 
 // ── Auth worker ──────────────────────────────────────────
-// Handles: /auth/api/* (better-auth REST), /auth/* (web UI pages)
+// Handles: /auth/api/* (better-auth REST), /auth/* (web UI + demo)
+//          /zano/*    (ReBAC permissions + filesystem — zanzojs)
 
 app.get('/auth', (c) => c.redirect('/auth/sign-in', 301));
 
 app.all('/auth/*', async (c) => {
+  return c.env.AUTH.fetch(c.req.raw);
+});
+
+app.all('/zano/*', async (c) => {
   return c.env.AUTH.fetch(c.req.raw);
 });
 

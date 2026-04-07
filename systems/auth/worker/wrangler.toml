@@ -1,23 +1,32 @@
 # ───────────────────────────────────────────────────────
-# auth-worker — Authentication sub-worker
+# auth-worker — Identity + ReBAC permissions + filesystem
 # ───────────────────────────────────────────────────────
 #
-# Base better-auth v1.5 on Hono. Handles:
-#   - REST auth API (/auth/api/*)   — better-auth handler
-#   - Web UI (/auth/*)              — static pages (sign-in, sign-up, etc.)
-#   - Migration (/auth/migrate)     — POST to run DB migrations
+# Consolidated from: systems/auth (better-auth) + systems/auth-zano (zanzojs)
+#
+# Handles:
+#   /auth/api/*  — better-auth REST (sign-in, sign-up, sessions, OAuth 2.1)
+#   /auth/*      — server-side rendered web UI (sign-in, sign-up, demo, consent, etc.)
+#   /auth/migrate  — POST: run better-auth DB migrations
+#   /zano/*      — ReBAC permission API + filesystem (zanzojs)
+#   /zano/migrate  — POST: create zanzo_tuples table (idempotent)
 #
 # Bindings:
-#   AUTH_DB  — D1 SQLite (users, sessions, accounts + plugin tables)
-#   AUTH_KV  — KV namespace (secondary storage: session cache, rate limits)
+#   AUTH_DB  — D1 SQLite (better-auth tables + zanzo_tuples in one DB)
+#   AUTH_KV  — KV namespace (session cache + rate limits)
+#   FILES    — R2 bucket (permissioned file storage via @cloudflare/shell)
 #
 # Accessed via AUTH service binding from plat-router.
 # Direct: http://localhost:8790 (dev)
 #
-# First-time setup (MacBook):
+# First-time setup (MacBook — one time per environment):
 #   wrangler d1 create auth-db
 #   wrangler kv namespace create AUTH_KV
-#   → paste IDs below, then: POST /auth/migrate
+#   wrangler r2 bucket create auth-files
+#   → paste IDs into [env.production] below
+#   → then apply migrations:
+#     curl -X POST https://cad.ubuntusoftware.net/auth/migrate
+#     curl -X POST https://cad.ubuntusoftware.net/zano/migrate
 # ───────────────────────────────────────────────────────
 
 name = "auth-worker"
@@ -27,27 +36,50 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-[assets]
-directory = "../web/dist"
-binding = "ASSETS"
-not_found_handling = "none"
+# ── Local dev bindings (wrangler dev --local) ─────────────────────────────────
+# database_id = "local" is a wrangler local-mode placeholder — not a real CF ID.
 
 [[d1_databases]]
-binding = "AUTH_DB"
+binding       = "AUTH_DB"
 database_name = "auth-db"
-database_id = "REPLACE_WITH_D1_ID"
+database_id   = "local"
 
 [[kv_namespaces]]
 binding = "AUTH_KV"
-id = "REPLACE_WITH_KV_ID"
+id      = "local"
+
+[[r2_buckets]]
+binding     = "FILES"
+bucket_name = "auth-files"
 
 [vars]
-BETTER_AUTH_URL    = "http://localhost:8788"
-# BETTER_AUTH_SECRET is a Cloudflare secret — set via: wrangler secret put BETTER_AUTH_SECRET
-# Never put real secrets here. Run: openssl rand -base64 32
+BETTER_AUTH_URL = "http://localhost:8788"
+# BETTER_AUTH_SECRET — set via: wrangler secret put BETTER_AUTH_SECRET
+# Never put real secrets here. Generate with: openssl rand -base64 32
 
 [dev]
-ip = "0.0.0.0"
-port = 8790
+ip             = "0.0.0.0"
+port           = 8790
 inspector_port = 9231
 local_protocol = "http"
+
+# ── Production bindings ───────────────────────────────────────────────────────
+# Paste real IDs here after running wrangler d1 create / kv namespace create / r2 bucket create.
+
+[env.production]
+
+[env.production.vars]
+BETTER_AUTH_URL = "https://cad.ubuntusoftware.net"
+
+[[env.production.d1_databases]]
+binding       = "AUTH_DB"
+database_name = "auth-db"
+database_id   = "REPLACE_WITH_REAL_D1_ID"      # wrangler d1 create auth-db
+
+[[env.production.kv_namespaces]]
+binding = "AUTH_KV"
+id      = "REPLACE_WITH_REAL_KV_ID"            # wrangler kv namespace create AUTH_KV
+
+[[env.production.r2_buckets]]
+binding     = "FILES"
+bucket_name = "auth-files"                      # wrangler r2 bucket create auth-files

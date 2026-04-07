@@ -5,6 +5,7 @@
 # Entry point for ALL traffic. Routes requests to sub-workers:
 #
 #   /auth/*  → AUTH         (auth-worker, port 8790 in dev)
+#   /zano/*  → AUTH         (auth-worker handles both identity + ReBAC, port 8790 in dev)
 #   /docs/*  → DOCS_ASSETS  (VitePress static files via binding)
 #   /test/*  → TEST         (test-worker, port 5175 in dev)
 #   /*       → TRUCK        (truck-cad, port 8789 in dev)

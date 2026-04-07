@@ -24,7 +24,7 @@ import {
   multiSession,
   anonymous,
   oneTimeToken,
-  haveIBeenPwned,
+  // haveIBeenPwned,
   genericOAuth,
 } from 'better-auth/plugins';
 import { oauthProvider } from '@better-auth/oauth-provider';
@@ -151,7 +151,7 @@ export function getPlugins() {
     // and password change. Zero friction — just rejects breached passwords.
     // Priority: MEDIUM — easy win for security.
     //
-    haveIBeenPwned(),
+    // haveIBeenPwned(),
 
     // ── Generic OAuth ─────────────────────────────────────────────────────
     // Any OAuth2/OIDC provider: Auth0, Keycloak, Okta, Slack, etc.

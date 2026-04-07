@@ -13,7 +13,7 @@
 # mise respects rust-toolchain.toml automatically.
 
 [tools]
-bun                = "1.3.10"  # JS runtime + package manager — https://bun.sh
+bun                = "1.3.11"  # JS runtime + package manager — https://bun.sh
 node               = "22"      # Node.js 22 — required for node:sqlite (vitest environment:node workers)
 gh                 = "2.87.3"  # GitHub CLI — manage secrets, PRs, releases
 "cargo:wasm-pack"  = "0.14.0"  # Rust → WASM build tool — https://rustwasm.github.io/wasm-pack
@@ -44,13 +44,15 @@ TRUCK_INSPECTOR       = "9230"
 # auth-worker
 AUTH_PORT             = "8790"
 AUTH_INSPECTOR        = "9231"
+# auth-zano consolidated into auth-worker — port 8791 no longer used
 # test-worker
 TEST_PORT             = "5175"
 TEST_INSPECTOR        = "9232"
 # Dev servers (Vite / VitePress)
-AUTH_WEB_PORT         = "5174"
+# AUTH_WEB_PORT removed — auth UI is server-side rendered, no Vite dev server
 TRUCK_WEB_PORT        = "5173"
 DOCS_PORT             = "5176"
+# ZANO_WEB_PORT removed — demo now served via auth web at AUTH_WEB_PORT=5174
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
@@ -137,6 +139,7 @@ description = "Install Playwright browsers (Chromium with WebGPU support)"
 run = """
 cd systems/truck/e2e && bunx playwright install chromium
 cd systems/sync/e2e  && bunx playwright install chromium
+cd systems/auth/e2e  && bun install && bunx playwright install chromium
 echo "✓ Playwright browsers installed"
 """
 
@@ -179,6 +182,7 @@ run = [
   "mise --cd systems/sync run ci",
   "mise --cd systems/truck run ci",
   "mise --cd systems/auth run ci",
+  "mise --cd systems/auth-zano run ci",
   "mise --cd systems/docs run ci",
   "mise --cd systems/plugins run ci",
 ]

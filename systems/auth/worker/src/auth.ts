@@ -27,6 +27,7 @@ export function createAuth(env: CloudflareBindings) {
 
     trustedOrigins: [
       'http://localhost:8788',
+      'http://localhost:8790',
       'http://localhost:5174',
       'https://cad.ubuntusoftware.net',
     ],

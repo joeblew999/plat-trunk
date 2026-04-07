@@ -21,13 +21,15 @@ import { fileURLToPath } from 'url';
 import { building as syncBuilding } from '../systems/sync/system.mjs';
 import { building as truckBuilding } from '../systems/truck/system.mjs';
 import { building as docsBuilding } from '../systems/docs/system.mjs';
-import { building as authBuilding } from '../systems/auth/system.mjs';
+import { building as authBuilding }     from '../systems/auth/system.mjs';
+import { building as zanoBuilding }     from '../systems/auth-zano/system.mjs';
 import { building as howickPluginBuilding } from '../systems/plugins/howick/system.mjs';
 import { building as examplePluginBuilding } from '../systems/plugins/example/system.mjs';
 
 const SYSTEMS = [
   syncBuilding,
   authBuilding,
+  zanoBuilding,
   truckBuilding,
   docsBuilding,
   howickPluginBuilding,

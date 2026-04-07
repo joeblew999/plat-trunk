@@ -27,7 +27,7 @@ function findPackageDirs(dir, depth = 3) {
   return results;
 }
 
-const dirs = [ROOT, ...findPackageDirs(join(ROOT, 'systems'))];
+const dirs = [ROOT, ...findPackageDirs(join(ROOT, 'packages')), ...findPackageDirs(join(ROOT, 'systems'))];
 
 for (const dir of dirs) {
   const label = relative(ROOT, dir) || '.';
