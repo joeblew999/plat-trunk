@@ -182,6 +182,7 @@ export function demoPage(user: User | null): string {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
+          body: '{}',
         })
         window.location.href = '/auth/sign-in'
       })

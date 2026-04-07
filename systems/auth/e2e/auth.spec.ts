@@ -222,6 +222,29 @@ test.describe('sign-in form UI', () => {
   });
 });
 
+// ── Sign-out flow ─────────────────────────────────────────────────────────────
+
+test.describe('sign-out flow', () => {
+  test('sign in → sign out → redirected to sign-in page', async ({ page }) => {
+    await apiSignInAndNavigate(page, USER.email, USER.password, '/auth/demo');
+    await expect(page.locator('#health-badge')).toContainText('worker online', { timeout: 10_000 });
+
+    await page.locator('#sign-out-btn').click();
+    await page.waitForURL('**/auth/sign-in', { timeout: 10_000 });
+    await expect(page.locator('h1, h2')).toContainText(/sign in/i);
+  });
+
+  test('sign in → sign out → sign in again', async ({ page }) => {
+    await apiSignInAndNavigate(page, USER.email, USER.password, '/auth/demo');
+    await page.locator('#sign-out-btn').click();
+    await page.waitForURL('**/auth/sign-in', { timeout: 10_000 });
+
+    await uiSignIn(page, USER.email, USER.password);
+    await page.waitForURL('**/auth/demo', { timeout: 10_000 });
+    await expect(page.locator('#session-actor')).toContainText('User:');
+  });
+});
+
 // ── Demo page ─────────────────────────────────────────────────────────────────
 
 test.describe('demo page', () => {
