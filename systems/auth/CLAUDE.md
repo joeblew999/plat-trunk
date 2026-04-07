@@ -11,15 +11,21 @@ Before claiming anything works:
 **Do NOT say "this should work" or "tests pass so it works."**
 Tests cover happy paths. Real usage finds the bugs.
 
-## Known bugs to fix (in order)
+## Fixed bugs (verified working)
 
-1. **Sign-out is broken** — `<a href="/auth/api/sign-out">` does a GET. better-auth requires POST + Content-Type: application/json. User clicks sign out → nothing happens / error.
+- **Sign-out** — was a GET `<a href>`. Fixed to JS POST with `body: '{}'` (better-auth requires Content-Type + body). Tested: sign in → sign out → sign in again ✅
+- **Filesystem demo 403** — default path was `/projects/demo/notes.txt` (alice's dir). Fixed to `/home/{userId}/notes.txt` which the session user always owns ✅
+- **No home dir on sign-up** — fixed via `databaseHooks.user.create.after` + `global-setup.ts` grants `/home/{userId}` for every seeded user ✅
 
-2. **Filesystem demo fails for session users** — default write path `/projects/demo/notes.txt` requires owner/editor on Directory `/projects/demo`. Session user (`user@cad.dev`) has no such grant. Result: 403 on every write attempt.
+## Still broken / not implemented
 
-3. **New sign-ups have no home dir** — fresh accounts get no directory grants. The filesystem demo is completely broken for anyone who just signed up.
+1. **Email verification is a black hole** — `requireEmailVerification: false` and `sendVerificationEmail` just `console.log`s. Users see `emailVerified: false` with no path to verify. Needs: Resend or Cloudflare Email Routing wired in.
 
-4. **Email verification is a black hole** — `requireEmailVerification: false` and `sendVerificationEmail` just `console.log`s. Users see `emailVerified: false` with no path to verify.
+2. **GUI needs work** — demo page is functional but rough. No feedback on permission denied, no way to navigate back to sign-in from demo without sign-out button, grant form UX is clunky.
+
+3. **No rate limiting visible to users** — KV rate limiting is configured but errors just return 429 with no friendly message.
+
+4. **RPC entrypoint untested** — `AuthWorker.check()`, `.grant()`, `.readFile()` etc. are defined but no test calls them via the actual service binding RPC path (only via HTTP).
 
 ## Architecture rules
 
