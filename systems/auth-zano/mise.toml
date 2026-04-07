@@ -1,0 +1,48 @@
+# systems/auth-zano/mise.toml — auth-zano system tasks
+#
+# Ports inherited from root mise.toml [env]:
+#   ZANO_PORT       = 8791   (worker)
+#   ZANO_INSPECTOR  = 9233
+#   ZANO_WEB_PORT   = 5177   (Vite demo client)
+#
+# Usage (from systems/auth-zano/):
+#   mise run dev     Start auth-zano worker + demo web client
+#   mise run web     Start demo web client only (worker must already be running)
+#   mise run test    Run TS tests
+#   mise run kill    Kill auth-zano dev ports
+#   mise run migrate Apply D1 migration locally
+
+[tasks.kill]
+description = "Kill auth-zano dev ports"
+run = "lsof -ti:$ZANO_PORT,$ZANO_INSPECTOR,$ZANO_WEB_PORT | xargs kill -9 2>/dev/null; true"
+
+[tasks.dev]
+description = "Start auth-zano worker + demo web client (kill first)"
+depends = ["kill"]
+run = """
+cd ../..
+bunx wrangler dev --config systems/auth-zano/worker/wrangler.toml &
+cd systems/auth-zano/web && bun x vite
+"""
+
+[tasks.web]
+description = "Start demo web client only (worker must already be running)"
+run = "cd web && bun x vite"
+
+[tasks.test]
+description = "Run auth-zano TS tests"
+run = "cd worker && bunx vitest run"
+
+[tasks.migrate]
+description = "Apply D1 migration locally"
+run = "cd worker && bunx wrangler d1 migrations apply zano-db --local"
+
+[tasks."test:integration"]
+description = "Run bash integration tests against running worker (must be running on $ZANO_PORT)"
+run = "bash systems/auth-zano/test.sh"
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "TOMBSTONE — auth-zano consolidated into systems/auth. CI is a no-op."
+run = "echo 'auth-zano tombstone — skipped (see systems/auth)'"

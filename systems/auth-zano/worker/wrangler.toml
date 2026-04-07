@@ -1,0 +1,64 @@
+# ───────────────────────────────────────────────────────
+# auth-zano-worker — ReBAC permission API + filesystem worker
+# ───────────────────────────────────────────────────────
+#
+# Routes (all under /zano/* in plat-router):
+#   GET  /zano/health                   — health check
+#   GET  /zano/check                    — permission check
+#   PUT  /zano/grant                    — grant tuple
+#   DELETE /zano/revoke                 — revoke tuple
+#   GET  /zano/snapshot                 — actor permission snapshot
+#   GET/PUT/DELETE /zano/files/*        — file operations
+#   GET  /zano/ls/*                     — list directory
+#   GET  /zano/glob                     — glob pattern
+#   POST /zano/mkdir/* /zano/cp etc.    — other filesystem ops
+#
+# Bindings:
+#   DB     — D1 SQLite (zanzo_tuples + @cloudflare/shell file metadata)
+#   FILES  — R2 bucket (file content storage)
+#
+# Accessed via ZANO service binding from plat-router.
+# Direct: http://localhost:8791 (dev)
+#
+# First-time setup:
+#   wrangler d1 create zano-db
+#   wrangler r2 bucket create zano-files
+#   → paste IDs below, then apply migration:
+#   wrangler d1 migrations apply zano-db --local
+# ───────────────────────────────────────────────────────
+
+name = "auth-zano-worker"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
+
+migrations_dir = "migrations"
+
+[[d1_databases]]
+binding       = "DB"
+database_name = "zano-db"
+database_id   = "local"           # local-only placeholder
+
+[[r2_buckets]]
+binding     = "FILES"
+bucket_name = "zano-files"
+
+# ── Production ────────────────────────────────────────────────────────────────
+[env.production]
+
+[[env.production.d1_databases]]
+binding       = "DB"
+database_name = "zano-db"
+database_id   = "REPLACE_WITH_REAL_D1_ID"   # wrangler d1 create zano-db
+
+[[env.production.r2_buckets]]
+binding     = "FILES"
+bucket_name = "zano-files"
+
+[dev]
+ip             = "0.0.0.0"
+port           = 8791
+inspector_port = 9233
+local_protocol = "http"
