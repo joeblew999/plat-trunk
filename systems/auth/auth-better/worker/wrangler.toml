@@ -65,6 +65,6 @@ id      = "476719674e124d6b9f5e70965cb017d0"
 
 [dev]
 ip             = "::"
-port           = 8792
+port           = 8792   # must match AUTH_BETTER_PORT in mise.toml
 inspector_port = 9233
 local_protocol = "http"

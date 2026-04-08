@@ -61,7 +61,7 @@ run = "cd worker && wrangler dev"
 
 [tasks."8-test-wrangler"]
 description = "Phase 2 — Run Playwright tests against wrangler (:8792)"
-run = "cd e2e && WEB_URL=http://localhost:$AUTH_BETTER_PORT WORKER_URL=http://localhost:$AUTH_BETTER_PORT WORKERS=4 bunx playwright test"
+run = "cd e2e && WEB_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKER_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKERS=4 bunx playwright test"
 
 [tasks."9-stop-wrangler"]
 description = "Phase 2 — Kill wrangler on :8792"

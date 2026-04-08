@@ -1,39 +1,7 @@
-// auth-better/e2e/account.spec.ts
-//
-// ADR-001 Phase 1 — account screens.
-// Signs in via UI then navigates the browser to account pages.
-// Tests cover: settings, security, sessions.
-//
-// createUser() calls window.authClient.signUp.email() via page.evaluate —
-// same origin, real browser context, no CSRF hacks.
+// auth-better/e2e/account.spec.ts — account screens
 
 import { test, expect } from '@playwright/test';
-
-const email = (label: string) => `${label}-${Date.now()}@test.dev`;
-
-async function createUser(page: any, e: string) {
-  await page.goto('/');
-  const err = await page.evaluate(async (creds: any) => {
-    const res = await (window as any).authClient.signUp.email(creds);
-    return res.error ?? null;
-  }, { email: e, password: 'Password123!', name: 'Test User' });
-  if (err) throw new Error(`createUser failed: ${JSON.stringify(err)}`);
-  await page.evaluate(async () => (window as any).authClient.signOut());
-}
-
-async function signInViaUI(page: any, e: string) {
-  await page.goto('/auth/sign-in');
-  await page.locator('input[name="email"], input[placeholder*="email" i], input[placeholder*="username" i]').first().fill(e);
-  await page.getByRole('textbox', { name: /password/i }).fill('Password123!');
-  await page.locator('button[type="submit"]').click();
-  await expect(page).not.toHaveURL(/sign-in/);
-}
-
-test.beforeAll(async ({ request }) => {
-  const WORKER = process.env.WORKER_URL ?? 'http://127.0.0.1:8792';
-  const res = await request.post(`${WORKER}/auth/migrate`);
-  expect(res.ok()).toBeTruthy();
-});
+import { createUser, signInViaUI, email } from './helpers';
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
