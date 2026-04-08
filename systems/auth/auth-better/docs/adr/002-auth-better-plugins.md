@@ -1,6 +1,6 @@
 # ADR-002: Plugin Parity — Backend and Frontend
 
-**Status:** Implemented
+**Status:** Done
 **Date:** 2026-04-08
 **Depends on:** ADR-001
 
@@ -10,109 +10,53 @@
 
 | Side | File |
 |------|------|
-| Frontend | `.src/better-auth-ui/src/types/auth-client.ts` |
-| Backend | `.src/better-auth/packages/better-auth/src/plugins/` + `packages/api-key/` + `packages/passkey/` |
+| Frontend | `web/src/auth-client.ts` |
+| Backend | `worker/src/plugins.ts` |
 
 ---
 
 ## Plugin parity table
 
-| Plugin | Frontend client | Backend server | `auth-better/worker/` |
-|--------|----------------|---------------|----------------------|
+| Plugin | Frontend client | Backend server | Status |
+|--------|----------------|---------------|--------|
 | twoFactor | `twoFactorClient` | `twoFactor` | ✅ |
 | magicLink | `magicLinkClient` | `magicLink` | ✅ |
 | emailOTP | `emailOTPClient` | `emailOTP` | ✅ |
 | multiSession | `multiSessionClient` | `multiSession` | ✅ |
 | anonymous | `anonymousClient` | `anonymous` | ✅ |
-| organization | `organizationClient({ teams: { enabled: true } })` | `organization` | ⚠️ missing teams config |
-| username | `usernameClient` | `username` | ❌ add |
-| apiKey | `apiKeyClient` (`@better-auth/api-key/client`) | `apiKey` (`@better-auth/api-key`) | ❌ add |
-| passkey | `passkeyClient` (`@better-auth/passkey/client`) | `passkey` (`@better-auth/passkey`) | ❌ add |
-| oneTap | `oneTapClient` | `oneTap` | ⛔ skip — requires Google clientId |
-| genericOAuth | `genericOAuthClient` | `genericOAuth` | ⛔ skip — requires OAuth provider credentials |
+| organization | `organizationClient({ teams: { enabled: true } })` | `organization({ teams: { enabled: true } })` | ✅ |
+| username | `usernameClient` | `username` | ✅ |
+| apiKey | `apiKeyClient` | `apiKey` | ✅ |
+| passkey | `passkeyClient` | `passkey` | ✅ |
+| oneTap | — | — | ⛔ skip — requires Google clientId |
+| genericOAuth | — | — | ⛔ skip — requires OAuth provider credentials |
 
 ---
 
-## What needs doing in `auth-better/worker/`
-
-### Add username plugin
-```ts
-import { username } from 'better-auth/plugins'
-
-username()
-```
-
-### Add apiKey plugin
-```bash
-bun add @better-auth/api-key
-```
-```ts
-import { apiKey } from '@better-auth/api-key'
-
-apiKey()
-```
-
-### Add passkey plugin
-```bash
-bun add @better-auth/passkey
-```
-```ts
-import { passkey } from '@better-auth/passkey'
-
-passkey()
-```
-
-### Fix organization — add teams
-```ts
-organization({
-  teams: {
-    enabled: true,
-  },
-})
-```
-
----
-
-## What to skip and why
+## What is skipped and why
 
 | Plugin | Reason |
 |--------|--------|
 | `oneTap` | Requires Google `clientId` to verify JWT — no credentials in dev |
 | `genericOAuth` | Requires at least one OAuth provider with `clientId` + `clientSecret` |
 
-Both can be added in Phase 2 when real credentials exist.
+Both can be added when real credentials exist.
 
 ---
 
-## Frontend auth-client.ts for `auth-better/web/`
+## Test coverage gaps (ADR-003 scope)
 
-Copy directly from `.src/better-auth-ui/src/types/auth-client.ts`, removing `oneTapClient` and `genericOAuthClient`:
+Plugin parity is complete. Test coverage is not — these plugins are wired up but
+have no e2e tests yet:
 
-```ts
-import { apiKeyClient } from '@better-auth/api-key/client'
-import { passkeyClient } from '@better-auth/passkey/client'
-import {
-    anonymousClient,
-    emailOTPClient,
-    magicLinkClient,
-    multiSessionClient,
-    organizationClient,
-    twoFactorClient,
-    usernameClient,
-} from 'better-auth/client/plugins'
-import { createAuthClient } from 'better-auth/react'
-
-export const authClient = createAuthClient({
-    plugins: [
-        apiKeyClient(),
-        passkeyClient(),
-        multiSessionClient(),
-        anonymousClient(),
-        usernameClient(),
-        magicLinkClient(),
-        emailOTPClient(),
-        twoFactorClient(),
-        organizationClient({ teams: { enabled: true } }),
-    ],
-})
-```
+| Plugin | Testable now | Notes |
+|--------|-------------|-------|
+| username | ✅ yes | sign up / sign in via username field |
+| multiSession | ✅ yes | sign in twice, list sessions |
+| apiKey | ✅ yes | create key in account settings |
+| anonymous | ✅ yes | create guest session, upgrade on sign-up |
+| magicLink | ⚠️ needs log capture | URL logged to worker console |
+| emailOTP | ⚠️ needs log capture | code logged to worker console |
+| twoFactor | ⚠️ needs TOTP generation | requires programmatic TOTP |
+| passkey | ❌ not e2e testable | requires hardware/biometrics |
+| bearer / jwt / admin / oneTimeToken | ❌ API-only | no UI, not e2e testable |
