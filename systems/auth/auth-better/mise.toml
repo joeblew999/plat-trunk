@@ -107,3 +107,13 @@ mise run 2-start
 mise run 3-migrate
 mise run 4-test
 """
+
+[tasks."ci-prod"]
+description = "Shortcut — Full Phase 3: 10-deploy → 10b-migrate-prod → 11-test-prod"
+run = """
+set -euo pipefail
+: "${AUTH_BETTER_PROD_URL:?Set AUTH_BETTER_PROD_URL to the deployed worker URL}"
+mise run 10-deploy
+mise run 10b-migrate-prod
+mise run 11-test-prod
+"""
