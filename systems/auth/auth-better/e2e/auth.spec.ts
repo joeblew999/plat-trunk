@@ -2,31 +2,35 @@
 //
 // Phase 1 auth flows — real browser, real better-auth backend.
 // No mocking. Every test uses a unique email to avoid state collisions.
+//
+// createUser() calls window.authClient.signUp.email() via page.evaluate —
+// same origin, real browser context, no CSRF hacks.
 
 import { test, expect } from '@playwright/test';
 
-const WORKER = process.env.WORKER_URL ?? 'http://localhost:8792';
-
 const email = (label: string) => `${label}-${Date.now()}@test.dev`;
 
-// Isolated context — does not share cookie storage with the browser page.
-// Using the shared `request` fixture leaks session cookies into the browser
-// (same-origin in wrangler mode), causing sign-in to redirect before the form renders.
-async function createUser(e: string) {
-  const url = `${WORKER}/auth/api/sign-up/email`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Origin': WORKER },
-    body: JSON.stringify({ email: e, password: 'Password123!', name: 'Test User' }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '<no body>');
-    throw new Error(`createUser failed: ${res.status} ${url} — ${body}`);
-  }
+async function createUser(page: any, e: string) {
+  await page.goto('/');
+  const err = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    return res.error ?? null;
+  }, { email: e, password: 'Password123!', name: 'Test User' });
+  if (err) throw new Error(`createUser failed: ${JSON.stringify(err)}`);
+  // Sign out so the browser starts unauthenticated for the actual test
+  await page.evaluate(async () => (window as any).authClient.signOut());
+}
+
+async function signInViaUI(page: any, e: string) {
+  await page.goto('/auth/sign-in');
+  await page.locator('input[name="email"], input[placeholder*="email" i], input[placeholder*="username" i]').first().fill(e);
+  await page.getByRole('textbox', { name: /password/i }).fill('Password123!');
+  await page.locator('button[type="submit"]').click();
+  await expect(page).not.toHaveURL(/sign-in/);
 }
 
 test.beforeAll(async ({ request }) => {
-  // Ensure DB is migrated before running tests
+  const WORKER = process.env.WORKER_URL ?? 'http://127.0.0.1:8792';
   const res = await request.post(`${WORKER}/auth/migrate`);
   expect(res.ok()).toBeTruthy();
 });
@@ -40,7 +44,6 @@ test('sign-up with email + password', async ({ page }) => {
   await page.locator('input[name="email"]').fill(e);
   await page.getByRole('textbox', { name: /password/i }).first().fill('Password123!');
   await page.locator('button[type="submit"]').click();
-  // After sign-up: redirected away from sign-up page
   await expect(page).not.toHaveURL(/sign-up/);
 });
 
@@ -48,28 +51,16 @@ test('sign-up with email + password', async ({ page }) => {
 
 test('sign-in with email + password', async ({ page }) => {
   const e = email('signin');
-  await createUser(e);
-
-  await page.goto('/auth/sign-in');
-  await page.locator('input[name="email"], input[placeholder*="email" i], input[placeholder*="username" i]').first().fill(e);
-  await page.getByRole('textbox', { name: /password/i }).fill('Password123!');
-  await page.locator('button[type="submit"]').click();
-  await expect(page).not.toHaveURL(/sign-in/);
+  await createUser(page, e);
+  await signInViaUI(page, e);
 });
 
 // ── Sign-out ──────────────────────────────────────────────────────────────────
 
 test('sign-out', async ({ page }) => {
   const e = email('signout');
-  await createUser(e);
-
-  await page.goto('/auth/sign-in');
-  await page.locator('input[name="email"], input[placeholder*="email" i], input[placeholder*="username" i]').first().fill(e);
-  await page.getByRole('textbox', { name: /password/i }).fill('Password123!');
-  await page.locator('button[type="submit"]').click();
-  await expect(page).not.toHaveURL(/sign-in/);
-
-  // UserButton sign-out link navigates to /auth/sign-out which calls authClient.signOut()
+  await createUser(page, e);
+  await signInViaUI(page, e);
   await page.goto('/auth/sign-out');
   await expect(page).toHaveURL(/sign-in/);
 });
@@ -89,12 +80,7 @@ test('reset password page renders', async ({ page }) => {
 
 test('UserButton visible in nav when signed in', async ({ page }) => {
   const e = email('userbutton');
-  await createUser(e);
-  await page.goto('/auth/sign-in');
-  await page.locator('input[name="email"], input[placeholder*="email" i], input[placeholder*="username" i]').first().fill(e);
-  await page.getByRole('textbox', { name: /password/i }).fill('Password123!');
-  await page.locator('button[type="submit"]').click();
-  await expect(page).not.toHaveURL(/sign-in/);
-  // UserButton renders as an avatar button in the nav
+  await createUser(page, e);
+  await signInViaUI(page, e);
   await expect(page.locator('header').getByRole('button').first()).toBeVisible();
 });

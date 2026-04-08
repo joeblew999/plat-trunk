@@ -43,7 +43,7 @@ run = "curl -s -X POST http://localhost:$AUTH_BETTER_PORT/auth/migrate | jq"
 
 [tasks."4-test"]
 description = "Phase 1 — Run Playwright tests against dev servers (:5174)"
-run = "cd e2e && bunx playwright test"
+run = "cd e2e && WORKERS=4 bunx playwright test"
 
 [tasks."5-stop"]
 description = "Phase 1 — Stop all pitchfork daemons"
@@ -61,7 +61,7 @@ run = "cd worker && wrangler dev"
 
 [tasks."8-test-wrangler"]
 description = "Phase 2 — Run Playwright tests against wrangler (:8792)"
-run = "cd e2e && WEB_URL=http://localhost:$AUTH_BETTER_PORT WORKER_URL=http://localhost:$AUTH_BETTER_PORT bunx playwright test"
+run = "cd e2e && WEB_URL=http://localhost:$AUTH_BETTER_PORT WORKER_URL=http://localhost:$AUTH_BETTER_PORT WORKERS=4 bunx playwright test"
 
 [tasks."9-stop-wrangler"]
 description = "Phase 2 — Kill wrangler on :8792"

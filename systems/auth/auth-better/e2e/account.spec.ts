@@ -3,11 +3,23 @@
 // ADR-001 Phase 1 — account screens.
 // Signs in via UI then navigates the browser to account pages.
 // Tests cover: settings, security, sessions.
+//
+// createUser() calls window.authClient.signUp.email() via page.evaluate —
+// same origin, real browser context, no CSRF hacks.
 
 import { test, expect } from '@playwright/test';
 
-const WORKER = process.env.WORKER_URL ?? 'http://localhost:8792';
 const email = (label: string) => `${label}-${Date.now()}@test.dev`;
+
+async function createUser(page: any, e: string) {
+  await page.goto('/');
+  const err = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    return res.error ?? null;
+  }, { email: e, password: 'Password123!', name: 'Test User' });
+  if (err) throw new Error(`createUser failed: ${JSON.stringify(err)}`);
+  await page.evaluate(async () => (window as any).authClient.signOut());
+}
 
 async function signInViaUI(page: any, e: string) {
   await page.goto('/auth/sign-in');
@@ -17,22 +29,8 @@ async function signInViaUI(page: any, e: string) {
   await expect(page).not.toHaveURL(/sign-in/);
 }
 
-// Uses native fetch (outside Playwright context) so session cookies from sign-up
-// are never stored in the browser's cookie jar — works for both dev and wrangler mode.
-async function createUser(e: string) {
-  const url = `${WORKER}/auth/api/sign-up/email`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Origin': WORKER },
-    body: JSON.stringify({ email: e, password: 'Password123!', name: 'Test User' }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '<no body>');
-    throw new Error(`createUser failed: ${res.status} ${url} — ${body}`);
-  }
-}
-
 test.beforeAll(async ({ request }) => {
+  const WORKER = process.env.WORKER_URL ?? 'http://127.0.0.1:8792';
   const res = await request.post(`${WORKER}/auth/migrate`);
   expect(res.ok()).toBeTruthy();
 });
@@ -41,25 +39,21 @@ test.beforeAll(async ({ request }) => {
 
 test('account settings page renders', async ({ page }) => {
   const e = email('acct-settings');
-  await createUser(e);
+  await createUser(page, e);
   await signInViaUI(page, e);
-
   await page.goto('/account/settings');
-  // UpdateNameCard renders a "Name" input
   await expect(page.getByRole('textbox', { name: /^name$/i })).toBeVisible();
 });
 
 test('account settings — update name', async ({ page }) => {
   const e = email('acct-name');
-  await createUser(e);
+  await createUser(page, e);
   await signInViaUI(page, e);
-
   await page.goto('/account/settings');
   const nameInput = page.getByRole('textbox', { name: /^name$/i });
   await nameInput.clear();
   await nameInput.fill('Updated Name');
   await page.locator('button[type="submit"]').first().click();
-  // No error — form stays or shows success
   await expect(page.getByRole('textbox', { name: /^name$/i })).toBeVisible();
 });
 
@@ -67,13 +61,10 @@ test('account settings — update name', async ({ page }) => {
 
 test('account security page renders change-password form', async ({ page }) => {
   const e = email('acct-security');
-  await createUser(e);
+  await createUser(page, e);
   await signInViaUI(page, e);
-
   await page.goto('/account/security');
-  // ChangePasswordCard heading
   await expect(page.getByText(/change password/i)).toBeVisible();
-  // Sessions card heading (exact match to avoid strict mode violation)
   await expect(page.getByText('Sessions', { exact: true }).first()).toBeVisible();
 });
 
@@ -81,23 +72,18 @@ test('account security page renders change-password form', async ({ page }) => {
 
 test('account sidebar nav links to security', async ({ page }) => {
   const e = email('acct-nav');
-  await createUser(e);
+  await createUser(page, e);
   await signInViaUI(page, e);
-
   await page.goto('/account/settings');
-  // AccountView sidebar nav: Link wraps Button, click navigates to /account/security
-  // On desktop the sidebar is visible; find the Security link by its text
   await page.getByRole('link', { name: /^security$/i }).first().click();
   await expect(page).toHaveURL(/security/);
 });
 
 test('account sessions list visible', async ({ page }) => {
   const e = email('acct-sessions');
-  await createUser(e);
+  await createUser(page, e);
   await signInViaUI(page, e);
   await page.goto('/account/security');
-  // SecuritySettingsCards includes SessionsCard
-  await expect(page.getByText('Sessions', { exact: true }).first()).toBeVisible({ timeout: 10000 });
-  // At least one session row visible (current session)
+  await expect(page.getByText('Sessions', { exact: true }).first()).toBeVisible();
   await expect(page.locator('[data-slot="card-content"]').first()).toBeVisible();
 });
