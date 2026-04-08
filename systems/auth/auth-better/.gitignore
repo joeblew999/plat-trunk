@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+bun.lock
+
+# Build output
+web/dist/
+worker/.wrangler/
+
+# Test artifacts
+e2e/test-results/
+e2e/playwright-report/
+
+# Vendored upstream sources
+.src/

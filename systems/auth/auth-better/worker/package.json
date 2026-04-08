@@ -1,0 +1,19 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate": "curl -s -X POST http://localhost:8792/auth/migrate | jq",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@better-auth/api-key": "^1.6.0",
+    "@better-auth/passkey": "^1.6.0",
+    "better-auth": "^1.6",
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "typescript": "^5"
+  }
+}
