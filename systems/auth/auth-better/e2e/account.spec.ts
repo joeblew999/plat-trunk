@@ -55,3 +55,63 @@ test('account sessions list visible', async ({ page }) => {
   await expect(page.getByText('Sessions', { exact: true }).first()).toBeVisible();
   await expect(page.locator('[data-slot="card-content"]').first()).toBeVisible();
 });
+
+// ── multiSession plugin ───────────────────────────────────────────────────────
+// Upstream ref: packages/better-auth/src/plugins/multi-session/multi-session.test.ts line 69
+// Pattern: sign in as user1, then sign up as user2 in same browser context → 2 device sessions
+// (upstream test uses two different users, not same user twice)
+
+test('multi-session: two different users in same browser = two device sessions', async ({ page }) => {
+  const e1 = email('ms-user1');
+  const e2 = email('ms-user2');
+  await page.goto('/');
+
+  // Sign in as user1 — session 1 stored in multi-session cookie
+  const err1 = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    return res.error ?? null;
+  }, { email: e1, password: 'Password123!', name: 'MS User One' });
+  expect(err1).toBeNull();
+
+  // Sign up as user2 in same browser context — session 2 added to multi-session cookie
+  const err2 = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    return res.error ?? null;
+  }, { email: e2, password: 'Password123!', name: 'MS User Two' });
+  expect(err2).toBeNull();
+
+  // listDeviceSessions returns both sessions
+  const sessionCount = await page.evaluate(async () => {
+    const res = await (window as any).authClient.multiSession.listDeviceSessions();
+    return res.data?.length ?? 0;
+  });
+  expect(sessionCount).toBeGreaterThanOrEqual(2);
+});
+
+// ── apiKey plugin ─────────────────────────────────────────────────────────────
+// Upstream ref: packages/api-key/src/api-key.test.ts line 53
+// UI: /account/api-keys → "Create API Key" button → dialog → key appears in list
+
+test('api-keys: create key via UI appears in list', async ({ page }) => {
+  const e = email('apikey');
+  await createUser(page, e);
+  await signInViaUI(page, e);
+
+  await page.goto('/account/api-keys');
+  await expect(page.getByRole('button', { name: /create api key/i })).toBeVisible();
+
+  // Open create dialog
+  await page.getByRole('button', { name: /create api key/i }).click();
+
+  // Fill name field in dialog (optional field)
+  const nameInput = page.getByRole('textbox', { name: /name/i });
+  await nameInput.waitFor({ state: 'visible' });
+  await nameInput.fill('My Test Key');
+
+  // Submit — last button with this label is the dialog's submit button
+  await page.getByRole('button', { name: /create api key/i }).last().click();
+
+  // After creation a display dialog opens with title "API Key Created"
+  // (from ApiKeyDisplayDialog — localization.API_KEY_CREATED)
+  await expect(page.getByText('API Key Created')).toBeVisible({ timeout: 10000 });
+});

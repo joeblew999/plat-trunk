@@ -52,3 +52,71 @@ test('UserButton visible in nav when signed in', async ({ page }) => {
   await signInViaUI(page, e);
   await expect(page.locator('header').getByRole('button').first()).toBeVisible();
 });
+
+// ── Username plugin ───────────────────────────────────────────────────────────
+// Upstream ref: packages/better-auth/src/plugins/username/username.test.ts line 22, 44
+// signIn.username() is a SEPARATE method — not signIn.email() with a username field
+
+test('sign-up with username field, then sign-in via username', async ({ page }) => {
+  const e = email('username');
+  const uname = `user_${Date.now()}`;
+
+  await page.goto('/');
+
+  // Sign up — username is an extra field on signUp.email (plugin intercepts)
+  const signUpErr = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    return res.error ?? null;
+  }, { email: e, password: 'Password123!', name: 'Username User', username: uname });
+  expect(signUpErr).toBeNull();
+
+  // Sign out before testing sign-in
+  await page.evaluate(async () => (window as any).authClient.signOut());
+
+  // Sign in via username — separate client method, not the email form
+  const result = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signIn.username(creds);
+    return { error: res.error ?? null, hasToken: !!res.data?.token };
+  }, { username: uname, password: 'Password123!' });
+
+  expect(result.error).toBeNull();
+  expect(result.hasToken).toBe(true);
+});
+
+// ── Anonymous plugin ──────────────────────────────────────────────────────────
+// Upstream ref: packages/better-auth/src/plugins/anonymous/anon.test.ts line 101, 116
+// signIn.anonymous() → user.isAnonymous === true
+
+test('anonymous sign-in sets isAnonymous on session', async ({ page }) => {
+  await page.goto('/');
+
+  const result = await page.evaluate(async () => {
+    const res = await (window as any).authClient.signIn.anonymous();
+    if (res.error) return { error: res.error, isAnonymous: null };
+    const session = await (window as any).authClient.getSession();
+    return { error: null, isAnonymous: session.data?.user.isAnonymous ?? null };
+  });
+
+  expect(result.error).toBeNull();
+  expect(result.isAnonymous).toBe(true);
+});
+
+test('anonymous account upgrades to real account via signUp.email', async ({ page }) => {
+  const e = email('anon-upgrade');
+  await page.goto('/');
+
+  // Start as anonymous
+  await page.evaluate(async () => (window as any).authClient.signIn.anonymous());
+
+  // Upgrade by signing up with real credentials
+  const result = await page.evaluate(async (creds: any) => {
+    const res = await (window as any).authClient.signUp.email(creds);
+    if (res.error) return { error: res.error, isAnonymous: null };
+    const session = await (window as any).authClient.getSession();
+    return { error: null, isAnonymous: session.data?.user.isAnonymous ?? null };
+  }, { email: e, password: 'Password123!', name: 'Upgraded User' });
+
+  expect(result.error).toBeNull();
+  // After upgrade, user is no longer anonymous (null or false)
+  expect(result.isAnonymous).toBeFalsy();
+});

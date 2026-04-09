@@ -1,6 +1,6 @@
 # ADR-005: Worker Unit Tests
 
-**Status:** In Progress
+**Status:** Done
 **Date:** 2026-04-08
 **Depends on:** ADR-003
 
@@ -8,8 +8,18 @@
 
 ## What
 
-Add Vitest unit tests to the worker that test plugins which can't be tested via Playwright
-(magicLink, emailOTP, twoFactor, multiSession, username, apiKey, anonymous).
+Add Vitest unit tests to the worker that test plugins which can't be tested via Playwright.
+
+ADR-004 already covers via Playwright e2e: username, multiSession, apiKey, anonymous.
+
+This ADR covers the remaining three — plugins that require capturing secrets
+that only exist inside the worker at request time:
+
+| Plugin | Blocker for Playwright |
+|--------|----------------------|
+| magicLink | magic link URL is only logged to worker console — no browser redirect |
+| emailOTP | OTP code is only logged to worker console — no email delivery |
+| twoFactor | requires TOTP secret capture at enrollment + code generation at sign-in |
 
 ## How
 
@@ -60,9 +70,9 @@ Access `auth.$context.test` for helpers (createUser, login, getOTP, etc.).
 | File | Purpose |
 |------|---------|
 | `worker/vitest.config.ts` | Test runner setup — copy from cloudflare fixture |
-| `worker/test/setup.ts` | Apply migrations before tests |
-| `worker/test/auth.test.ts` | email+password (smoke) |
-| `worker/test/plugins.test.ts` | magicLink, emailOTP, twoFactor, username, apiKey, anonymous, multiSession |
+| `worker/src/test/setup.ts` | Apply migrations before tests |
+| `worker/src/test/health.test.ts` | email+password smoke tests |
+| `worker/src/test/plugins.test.ts` | magicLink, emailOTP, twoFactor |
 
 ## Files to modify
 
@@ -92,9 +102,21 @@ Cleaner than `readD1Migrations` (which expects Drizzle SQL files we don't have).
 | `worker/package.json` | ✅ Done — vitest + pool-workers, mise exec node runner |
 | `mise.toml 4b-test-worker` | ✅ Done — `cd worker && bun run test` |
 
-## Still to do
+## What's done (continued)
 
 | Item | Status |
 |------|--------|
-| testUtils plugin wired conditionally | Planned |
-| `worker/src/test/plugins.test.ts` | Planned — magicLink, emailOTP, twoFactor, username, apiKey, anonymous, multiSession |
+| `worker/src/test/plugins.test.ts` | ✅ Done — Option A smoke tests for magicLink, emailOTP, twoFactor |
+
+## Decision: Option A (smoke) over Option B (full flow capture)
+
+Upstream Cloudflare fixture (`e2e/smoke/test/fixtures/cloudflare/test/index.test.ts`) does not
+test magicLink, emailOTP, or twoFactor. The plugin logic is covered by better-auth's own
+Node.js unit tests. Our tests prove wiring only.
+
+Option B (module-level capture store + test endpoint) is documented here for future reference
+if full flow coverage becomes a requirement:
+- Add `_testCapture = new Map<string, string>()` at worker module level
+- In `sendMagicLink` / `sendVerificationOTP` callbacks: write to map when `BETTER_AUTH_TEST_MODE=true`
+- Add `GET /auth/test/capture?email=` route (404 in production)
+- `testUtils({ captureOTP: true })` already handles emailOTP capture via DB hook
