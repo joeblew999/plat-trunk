@@ -1,4 +1,4 @@
-# ADR-006: Email Delivery for magicLink and emailOTP
+# ADR-006: Cloudflare Email Service for magicLink and emailOTP
 
 **Status:** In Progress  
 **Date:** 2026-04-09  
@@ -13,80 +13,76 @@ No email is delivered in production. magicLink and emailOTP are non-functional f
 
 ---
 
-## Research findings
+## Decision: Cloudflare Email Service (`send_email` binding)
 
-### Cloudflare `send_email` binding (GA)
+Native CF Workers binding — no external API keys, no secrets management, no third-party
+dependency. CF handles SPF/DKIM/DMARC DNS records automatically.
 
-Part of Cloudflare Email Routing. Sends via `import { EmailMessage } from "cloudflare:email"`.
+Private beta launched September 2025. Access may require enabling via CF dashboard.
 
-**Hard limitation:** destination addresses must be pre-verified on the Cloudflare account.
-Cannot send to an arbitrary new user. **Not suitable for auth transactional email.**
+**Binding (wrangler.toml):**
+```toml
+[[send_email]]
+name = "SEND_EMAIL"
+```
 
-Suitable only for: alerting/notifications to a fixed known address (e.g. admin@yourdomain.com).
+**API:**
+```ts
+await env.SEND_EMAIL.send({
+  to:      [{ email: "user@example.com" }],
+  from:    { email: "noreply@yourdomain.com" },
+  subject: "Your sign-in link",
+  text:    "Click here: https://...",
+  html:    "<a href='https://...'>Sign in</a>",
+});
+```
 
-### Cloudflare native transactional email
+No `cloudflare:email` import, no `EmailMessage` constructor, no `mimetext`, no API key.
 
-Does not exist as a GA product. Cloudflare's own docs point to third-party providers.
-Source: https://developers.cloudflare.com/workers/tutorials/send-emails-with-resend/
-
-### Conclusion
-
-For magicLink and emailOTP — sending to arbitrary user email addresses — a third-party
-transactional email provider is required. Cloudflare recommends **Resend**.
+**Local dev:** `wrangler dev` emulates email sending locally — no emails actually sent,
+visible in wrangler terminal output. Full user journey testable without external tools.
 
 ---
 
-## Decision: Resend
+## Prerequisites (check dashboard first)
 
-**Why Resend:**
-- Cloudflare's own tutorial uses Resend
-- Simple HTTP API — one `fetch()` call, no SDK required in Workers
-- Free tier: 3,000 emails/month, 100/day
-- Fast setup: verify domain via DNS, get API key, done
-- Used by better-auth's own example projects
+1. **Email Routing enabled** on `ubuntusoftware.net`  
+   Dashboard → ubuntusoftware.net → Email → Routing → Enable
 
-**API (no SDK needed in Workers):**
-```ts
-await fetch('https://api.resend.com/emails', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    from:    'Auth <noreply@yourdomain.com>',
-    to:      [data.email],
-    subject: 'Your sign-in link',
-    html:    `<a href="${data.url}">Click to sign in</a>`,
-    text:    `Sign in: ${data.url}`,
-  }),
-});
-```
+2. **Email Service private beta access**  
+   Dashboard → Workers & Pages → Email → check if binding is available  
+   If not: apply for access (paid account may already have it)
+
+3. **Verified sender address**  
+   Add `noreply@ubuntusoftware.net` as a verified sender in Email settings
+
+CF automatically adds SPF/DKIM/DMARC DNS records when Email Routing is enabled.
 
 ---
 
 ## Implementation plan
 
-### Step 1 — Set up Resend (MacBook, one-time)
+### Step 1 — wrangler.toml
 
-1. Create account at https://resend.com
-2. Add domain `ubuntusoftware.net` → verify DNS records (Resend provides SPF/DKIM records)
-3. Create API key → add to Doppler as `RESEND_API_KEY`
-4. Run `mise run secrets:pull` to pull into `.env`
+Add binding to `[vars]` section and production env. Also add `AUTH_EMAIL_FROM` var:
 
-### Step 2 — Add secret to worker
+```toml
+[vars]
+AUTH_EMAIL_FROM      = "noreply@ubuntusoftware.net"
+AUTH_EMAIL_FROM_NAME = "Auth"
 
-```bash
-# Doppler already has it after Step 1. Wire into worker:
-wrangler secret put RESEND_API_KEY --env production
+[[send_email]]
+name = "SEND_EMAIL"
+
+[env.production.vars]
+AUTH_EMAIL_FROM      = "noreply@ubuntusoftware.net"
+AUTH_EMAIL_FROM_NAME = "Auth"
+
+[[env.production.send_email]]
+name = "SEND_EMAIL"
 ```
 
-For local dev: add to `worker/.dev.vars`:
-```
-RESEND_API_KEY=re_test_xxxx   # Resend test key (emails go to Resend dashboard, not delivered)
-```
-
-### Step 3 — Update Env type in worker/src/auth.ts
+### Step 2 — Env type in worker/src/auth.ts
 
 ```ts
 export interface Bindings {
@@ -95,78 +91,65 @@ export interface Bindings {
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
   AUTH_BETTER_WEB_PORT?: string;
-  RESEND_API_KEY?: string;           // optional — falls back to console.log if absent
-  AUTH_EMAIL_FROM?: string;          // e.g. "noreply@ubuntusoftware.net"
-  AUTH_EMAIL_FROM_NAME?: string;     // e.g. "Auth"
+  AUTH_EMAIL_FROM?: string;
+  AUTH_EMAIL_FROM_NAME?: string;
+  SEND_EMAIL?: {
+    send(msg: {
+      to:      { email: string }[];
+      from:    { email: string; name?: string };
+      subject: string;
+      text:    string;
+      html?:   string;
+    }): Promise<void>;
+  };
 }
 ```
 
-### Step 4 — Add vars to wrangler.toml
+`SEND_EMAIL` is optional — if the binding is absent (local dev without wrangler, Phase 1 CI)
+the code falls back to console.log.
 
-```toml
-[vars]
-AUTH_EMAIL_FROM      = "noreply@ubuntusoftware.net"
-AUTH_EMAIL_FROM_NAME = "Auth"
-# RESEND_API_KEY — set via wrangler secret, NOT in [vars] (never commit secrets)
-```
+### Step 3 — worker/src/plugins.ts
 
-### Step 5 — Update worker/src/plugins.ts
-
-Close over `env` from `getPlugins(env)` — callbacks already have access this way.
+Close over `env` from `getPlugins(env)`. Add a shared `sendEmail` helper:
 
 ```ts
-// worker/src/plugins.ts
-
 export function getPlugins(env: Bindings) {
 
-  async function sendEmail(opts: {
-    to: string;
-    subject: string;
-    text: string;
-    html: string;
-  }) {
-    if (!env.RESEND_API_KEY) {
-      // Dev fallback — no key present
-      console.log('[email] to:', opts.to, 'subject:', opts.subject, 'text:', opts.text);
+  async function sendEmail(to: string, subject: string, text: string, html: string) {
+    if (!env.SEND_EMAIL) {
+      console.log('[email] fallback — to:', to, 'subject:', subject, '\n', text);
       return;
     }
-    const from = env.AUTH_EMAIL_FROM_NAME
-      ? `${env.AUTH_EMAIL_FROM_NAME} <${env.AUTH_EMAIL_FROM}>`
-      : env.AUTH_EMAIL_FROM!;
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from, to: [opts.to], subject: opts.subject, html: opts.html, text: opts.text }),
+    await env.SEND_EMAIL.send({
+      to:      [{ email: to }],
+      from:    { email: env.AUTH_EMAIL_FROM!, name: env.AUTH_EMAIL_FROM_NAME },
+      subject,
+      text,
+      html,
     });
-    if (!res.ok) {
-      console.error('[email] Resend error:', res.status, await res.text());
-    }
   }
 
   return [
     magicLink({
       async sendMagicLink(data) {
-        await sendEmail({
-          to:      data.email,
-          subject: 'Your sign-in link',
-          text:    `Click to sign in: ${data.url}\n\nExpires in 5 minutes.`,
-          html:    `<p><a href="${data.url}">Click here to sign in</a></p><p>Link expires in 5 minutes.</p>`,
-        });
+        await sendEmail(
+          data.email,
+          'Your sign-in link',
+          `Click to sign in: ${data.url}\n\nExpires in 5 minutes.`,
+          `<p><a href="${data.url}">Click here to sign in</a></p><p>Link expires in 5 minutes.</p>`,
+        );
       },
     }),
 
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         const subject = type === 'sign-in' ? 'Your sign-in code' : 'Your verification code';
-        await sendEmail({
-          to:      email,
+        await sendEmail(
+          email,
           subject,
-          text:    `Your code: ${otp}\n\nExpires in 10 minutes.`,
-          html:    `<p>Your code: <strong style="font-size:1.5em;letter-spacing:0.1em">${otp}</strong></p><p>Expires in 10 minutes.</p>`,
-        });
+          `Your code: ${otp}\n\nExpires in 10 minutes.`,
+          `<p>Your code: <strong style="font-size:1.5em;letter-spacing:0.1em">${otp}</strong></p><p>Expires in 10 minutes.</p>`,
+        );
       },
     }),
 
@@ -175,24 +158,15 @@ export function getPlugins(env: Bindings) {
 }
 ```
 
-### Step 6 — Update worker unit tests (ADR-005)
-
-Existing smoke tests (`POST /email-otp/send-verification-otp → 200`) still pass without
-`RESEND_API_KEY` — the fallback logs to console. No test changes needed.
-
-To test with Resend in CI, set `RESEND_API_KEY` to a Resend test key in `.dev.vars`.
-
 ---
 
-## Local dev behaviour
+## CI behaviour by phase
 
-| `RESEND_API_KEY` present | Behaviour |
-|--------------------------|-----------|
-| Not set | Logs to console — URL/OTP visible in wrangler terminal |
-| Set to test key | Resend receives email, visible in Resend dashboard, not delivered to inbox |
-| Set to live key | Email actually delivered |
-
-Phase 1 CI (pitchfork dev) and Phase 2 CI (wrangler) both work without a key.
+| Phase | `SEND_EMAIL` binding | Behaviour |
+|-------|---------------------|-----------|
+| Phase 1 (pitchfork dev) | absent | console.log fallback — OTP/URL visible in terminal |
+| Phase 2 (wrangler dev) | present (local emulation) | wrangler writes email to temp `.eml`, visible in terminal |
+| Phase 3 (production) | present (live CF) | Email actually delivered |
 
 ---
 
@@ -200,18 +174,16 @@ Phase 1 CI (pitchfork dev) and Phase 2 CI (wrangler) both work without a key.
 
 | Item | Status |
 |------|--------|
-| Research Cloudflare email options | ✅ Done — `send_email` not suitable |
-| Decision: Resend | ✅ Done |
-| ADR written | ✅ Done |
+| Research — Cloudflare Email Service confirmed correct choice | ✅ |
+| ADR written with correct binding + API | ✅ |
 
 ## Still to do
 
-| Item | Status | Blocker |
-|------|--------|---------|
-| Create Resend account + verify domain | Pending | MacBook — DNS records on ubuntusoftware.net |
-| Add `RESEND_API_KEY` to Doppler | Pending | After Resend setup |
-| Update Env type in auth.ts | Pending | |
-| Add vars to wrangler.toml | Pending | |
-| Update plugins.ts with sendEmail helper | Pending | |
-| Set wrangler secret in production | Pending | After Resend setup |
-| Deploy + test email delivery end-to-end | Pending | After all above |
+| Item | Blocker |
+|------|---------|
+| Confirm Email Routing enabled on ubuntusoftware.net | Check CF dashboard |
+| Confirm private beta access on account | Check CF dashboard |
+| Update wrangler.toml | After dashboard confirms access |
+| Update Env type in auth.ts | After dashboard confirms access |
+| Update plugins.ts | After dashboard confirms access |
+| Deploy + test email delivery | After all above |
