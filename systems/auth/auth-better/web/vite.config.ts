@@ -4,13 +4,18 @@ import { defineConfig } from 'vite';
 
 // Only proxy /auth/api/* to the worker — NOT /auth/sign-in, /auth/sign-up etc.
 // Those are client-side SPA routes that Vite must serve as index.html.
+//
+// Ports from mise.toml [env] — passed via `mise run 2-start` (pitchfork sets env).
+const workerPort = process.env.AUTH_BETTER_PORT ?? '8792';
+const webPort    = parseInt(process.env.AUTH_BETTER_WEB_PORT ?? '5174');
+
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   server: {
-    port: 5174,
+    port: webPort,
     proxy: {
       '/auth/api': {
-        target: 'http://localhost:8792',
+        target: `http://localhost:${workerPort}`,
         changeOrigin: true,
       },
     },

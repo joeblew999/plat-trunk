@@ -65,7 +65,7 @@ No email needed — sign up with any address. Magic link / OTP codes print to `p
 
 ## CLAUDE
 
-.src/ contains the upstream repos — use them as reference, do not reinvent.
+.src/ contains the upstream repos — use them as reference, do not reinvent the wheel !!! Us theior code AS MUCH AS POSSIBLE !!! 
 
 Keep Mise files (https://mise.jdx.dev) and Pitchfork files (https://pitchfork.jdx.dev) correct — you and devs use this to run things.
 

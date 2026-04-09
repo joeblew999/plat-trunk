@@ -43,6 +43,9 @@ id      = "local"
 # Dev: worker's own URL. Production: set via wrangler secret / dashboard.
 # better-auth uses this for callback URLs, cookie domain, CORS validation.
 BETTER_AUTH_URL = "http://localhost:8792"
+# Vite dev server port — used to build trustedOrigins dynamically.
+# Not set in [env.production] (same-origin in prod, no separate web server).
+AUTH_BETTER_WEB_PORT = "5174"
 # BETTER_AUTH_SECRET — set via: wrangler secret put BETTER_AUTH_SECRET
 # Generate: openssl rand -base64 32
 

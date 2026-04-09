@@ -1,6 +1,6 @@
 # ADR-003: Project Structure — web + worker split
 
-**Status:** Planned
+**Status:** Done
 **Date:** 2026-04-08
 **Depends on:** ADR-001
 
@@ -62,12 +62,26 @@ so worker unit tests don't need `../web/dist` to exist.
 
 ## Decision
 
-**Not yet made.** Options ranked by preference:
+**Option D — keep `web/dist` in git as an empty placeholder.**
 
-1. Option D — unblocks ADR-005 with minimal risk
-2. Option C — cleanest architecture long-term
-3. Option A — acceptable if Option D is too fiddly
-4. Option B — last resort, blurs concerns
+Wrangler validates `[assets] directory` at startup — before any vitest/miniflare config
+is applied. `miniflare.assets = undefined` in vitest.config.ts does NOT bypass this check.
+
+The real fix: commit an empty `web/dist/` directory (with `.gitkeep`) so the path always
+exists. Worker unit tests start cleanly. `bun run build` overwrites it with the real SPA.
+
+Why Option D is correct:
+- Production uses same-origin (worker serves both API and SPA on the same URL)
+- `authClient` in `web/src/auth-client.ts` has **no baseURL** — it relies on same-origin
+- If we moved web to a separate origin (Option C), authClient would need a baseURL and
+  all cookie/CORS behaviour changes. This is the wrong direction for a reference impl.
+- Option B (merge web into worker) blurs the React/API separation we want to preserve
+- Option D unblocks ADR-005 immediately with zero structural change
+
+Concrete change:
+```
+web/dist/.gitkeep   ← empty placeholder, committed to git
+```
 
 ## Impact on other ADRs
 

@@ -12,7 +12,7 @@ AUTH_BETTER_PROD_URL = "https://auth-better-worker.gedw99.workers.dev"
 # ── Dev workflow ──────────────────────────────────────────────────────────────
 #
 #  Phase 1 — Coding loop (hot-reload dev servers):
-#    1-install → 2-start → 3-migrate → 4-test → 5-stop
+#    1-install → 2-start → 4c-wait-worker → 3-migrate → 4-test → 4b-test-worker → 5-stop
 #
 #  Phase 2 — Bundle check (production-like wrangler, built SPA):
 #    6-build → 7-start-wrangler → 3-migrate → 8-test-wrangler → 9-stop-wrangler
@@ -20,7 +20,10 @@ AUTH_BETTER_PROD_URL = "https://auth-better-worker.gedw99.workers.dev"
 #  Phase 3 — Deploy + verify (Cloudflare production):
 #    10-deploy → 10b-migrate-prod → 11-test-prod
 #
-#  Shortcut: ci  (automates Phase 1 end-to-end)
+#  Shortcuts:
+#    ci            — automates Phase 1 end-to-end
+#    ci-wrangler   — automates Phase 2 end-to-end
+#    ci-prod       — automates Phase 3 end-to-end
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Phase 1: Coding loop ──────────────────────────────────────────────────────
@@ -43,7 +46,21 @@ run = "curl -s -X POST http://localhost:$AUTH_BETTER_PORT/auth/migrate | jq"
 
 [tasks."4-test"]
 description = "Phase 1 — Run Playwright tests against dev servers (:5174)"
-run = "cd e2e && WORKERS=4 bunx playwright test"
+run = "cd e2e && WORKERS=1 bunx playwright test"
+
+[tasks."4b-test-worker"]
+description = "Phase 1 — Run worker unit tests (vitest-pool-workers, no dev server needed)"
+run = "cd worker && bun run test"
+
+[tasks."4c-wait-worker"]
+description = "Phase 1/2 — Wait for worker health check (up to 30s)"
+run = """
+for i in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:${AUTH_BETTER_PORT}/health" > /dev/null 2>&1 && exit 0
+  sleep 1
+done
+echo "Worker did not start on :${AUTH_BETTER_PORT}" && exit 1
+"""
 
 [tasks."5-stop"]
 description = "Phase 1 — Stop all pitchfork daemons"
@@ -61,7 +78,7 @@ run = "cd worker && wrangler dev"
 
 [tasks."8-test-wrangler"]
 description = "Phase 2 — Run Playwright tests against wrangler (:8792)"
-run = "cd e2e && WEB_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKER_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKERS=4 bunx playwright test"
+run = "cd e2e && WEB_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKER_URL=http://127.0.0.1:$AUTH_BETTER_PORT WORKERS=1 bunx playwright test"
 
 [tasks."9-stop-wrangler"]
 description = "Phase 2 — Kill wrangler on :8792"
@@ -97,15 +114,31 @@ cd e2e && WEB_URL="${AUTH_BETTER_PROD_URL}" WORKER_URL="${AUTH_BETTER_PROD_URL}"
 # ── Shortcut ──────────────────────────────────────────────────────────────────
 
 [tasks.ci]
-description = "Shortcut — Full Phase 1: kill → 1-install → 2-start → 3-migrate → 4-test → 5-stop"
+description = "Shortcut — Full Phase 1: stop → 1-install → 2-start → 4c-wait-worker → 3-migrate → 4-test → 4b-test-worker → 5-stop"
 run = """
 set -euo pipefail
-lsof -ti:"${AUTH_BETTER_PORT},${AUTH_BETTER_WEB_PORT}" | xargs kill -9 2>/dev/null || true
+pitchfork stop --all 2>/dev/null || true
 trap 'mise run 5-stop' EXIT
 mise run 1-install
 mise run 2-start
+mise run 4c-wait-worker
 mise run 3-migrate
 mise run 4-test
+mise run 4b-test-worker
+"""
+
+[tasks."ci-wrangler"]
+description = "Shortcut — Full Phase 2: 9-stop-wrangler → 6-build → wrangler bg → 4c-wait-worker → 3-migrate → 8-test-wrangler → 9-stop-wrangler"
+run = """
+set -euo pipefail
+ROOT="$(pwd)"
+mise run 9-stop-wrangler
+trap 'mise run 9-stop-wrangler' EXIT
+mise run 6-build
+(cd "${ROOT}/worker" && wrangler dev) &
+mise run 4c-wait-worker
+mise run 3-migrate
+mise run 8-test-wrangler
 """
 
 [tasks."ci-prod"]

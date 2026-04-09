@@ -12,6 +12,8 @@ export type Bindings = {
   AUTH_KV: KVNamespace;
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
+  // Dev only — set in wrangler.toml [vars], not in [env.production]
+  AUTH_BETTER_WEB_PORT?: string;
 };
 
 export function createAuth(env: Bindings) {
@@ -23,13 +25,21 @@ export function createAuth(env: Bindings) {
     basePath: '/auth/api',
     secret: env.BETTER_AUTH_SECRET,
 
-    // In dev: both worker (:8792) and Vite (:5174) are trusted.
-    // In prod: BETTER_AUTH_URL is the only origin (same-origin SPA).
-    trustedOrigins: [
-      env.BETTER_AUTH_URL,
-      'http://localhost:8792',
-      'http://localhost:5174',
-    ],
+    // In prod: BETTER_AUTH_URL is the only trusted origin (same-origin SPA).
+    // In dev: worker (:8792) and Vite (:AUTH_BETTER_WEB_PORT) are both trusted.
+    // localhost and 127.0.0.1 variants needed — Node/browsers resolve either.
+    trustedOrigins: (() => {
+      const origins = [env.BETTER_AUTH_URL];
+      const workerUrl = new URL(env.BETTER_AUTH_URL);
+      // Add 127.0.0.1 variant of the worker URL
+      origins.push(`${workerUrl.protocol}//127.0.0.1:${workerUrl.port}`);
+      // Add Vite dev server if web port is set (dev only)
+      if (env.AUTH_BETTER_WEB_PORT) {
+        origins.push(`http://localhost:${env.AUTH_BETTER_WEB_PORT}`);
+        origins.push(`http://127.0.0.1:${env.AUTH_BETTER_WEB_PORT}`);
+      }
+      return origins;
+    })(),
 
     // KV — session cache + rate limiting
     secondaryStorage: {

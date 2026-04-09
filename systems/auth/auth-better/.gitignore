@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Build output
-web/dist/
+# Build output — keep placeholder so wrangler assets validation passes in fresh checkouts
+web/dist/*
+!web/dist/.gitkeep
 worker/.wrangler/
 
 # Test artifacts

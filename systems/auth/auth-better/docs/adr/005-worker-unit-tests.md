@@ -1,6 +1,6 @@
-# ADR-004: Worker Unit Tests
+# ADR-005: Worker Unit Tests
 
-**Status:** Planned
+**Status:** In Progress
 **Date:** 2026-04-08
 **Depends on:** ADR-003
 
@@ -76,9 +76,25 @@ Access `auth.$context.test` for helpers (createUser, login, getOTP, etc.).
 
 ---
 
-## Open question
+## Open question — RESOLVED
 
-Migration setup: our worker uses `POST /auth/migrate` (better-auth's built-in migration runner)
-not Drizzle migrations. The cloudflare fixture uses `readD1Migrations` which expects SQL files
-in a directory. Need to check if better-auth generates SQL files we can point to, or if calling
-`SELF.fetch('/auth/migrate')` in test setup is cleaner.
+Migration setup: use `SELF.fetch('/auth/migrate', { method: 'POST' })` in `beforeAll` inside
+`worker/src/test/setup.ts`. This calls better-auth's own migration runner via the worker itself.
+Cleaner than `readD1Migrations` (which expects Drizzle SQL files we don't have).
+
+## What's done
+
+| Item | Status |
+|------|--------|
+| `worker/vitest.config.ts` | ✅ Done — cloudflareTest plugin, assets stub, node runner |
+| `worker/src/test/setup.ts` | ✅ Done — SELF.fetch /auth/migrate in beforeAll |
+| `worker/src/test/health.test.ts` | ✅ Done — 3 smoke tests passing |
+| `worker/package.json` | ✅ Done — vitest + pool-workers, mise exec node runner |
+| `mise.toml 4b-test-worker` | ✅ Done — `cd worker && bun run test` |
+
+## Still to do
+
+| Item | Status |
+|------|--------|
+| testUtils plugin wired conditionally | Planned |
+| `worker/src/test/plugins.test.ts` | Planned — magicLink, emailOTP, twoFactor, username, apiKey, anonymous, multiSession |
