@@ -5,7 +5,7 @@
 // One instance per request — never a singleton.
 
 import { betterAuth } from 'better-auth';
-import { SOCIAL_PROVIDERS, getPlugins } from './plugins';
+import { SOCIAL_PROVIDERS, getPlugins, sendEmail } from './plugins';
 
 export type Bindings = {
   AUTH_DB: D1Database;
@@ -14,6 +14,19 @@ export type Bindings = {
   BETTER_AUTH_SECRET: string;
   // Dev only — set in wrangler.toml [vars], not in [env.production]
   AUTH_BETTER_WEB_PORT?: string;
+  // CF Email Service binding — ADR-006
+  // Optional: falls back to console.log when absent (vitest-pool-workers Phase 1 CI)
+  SEND_EMAIL?: {
+    send(msg: {
+      to:      { email: string }[];
+      from:    { email: string; name?: string };
+      subject: string;
+      text:    string;
+      html?:   string;
+    }): Promise<void>;
+  };
+  AUTH_EMAIL_FROM?:      string;   // e.g. "noreply@ubuntusoftware.net"
+  AUTH_EMAIL_FROM_NAME?: string;   // e.g. "Auth"
 };
 
 export function createAuth(env: Bindings) {
@@ -64,12 +77,13 @@ export function createAuth(env: Bindings) {
 
     emailVerification: {
       sendVerificationEmail: async ({ user, url }) => {
-        console.log(`[auth] verify email: ${user.email} → ${url}`);
+        await sendEmail(env, user.email, 'Verify your email', `Verify: ${url}`,
+          `<p><a href="${url}">Verify your email address</a></p>`);
       },
     },
 
     socialProviders: SOCIAL_PROVIDERS,
 
-    plugins: getPlugins(),
+    plugins: getPlugins(env),
   });
 }

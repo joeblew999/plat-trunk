@@ -48,6 +48,16 @@ BETTER_AUTH_URL = "http://localhost:8792"
 AUTH_BETTER_WEB_PORT = "5174"
 # BETTER_AUTH_SECRET — set via: wrangler secret put BETTER_AUTH_SECRET
 # Generate: openssl rand -base64 32
+# Email sender identity — used by magicLink + emailOTP + emailVerification
+AUTH_EMAIL_FROM      = "noreply@ubuntusoftware.net"
+AUTH_EMAIL_FROM_NAME = "Auth"
+
+# CF Email Service binding — sends transactional email via native CF binding.
+# No API keys needed. Local dev: wrangler emulates sends (writes .eml to temp dir).
+# Requires Email Routing enabled on ubuntusoftware.net (already configured).
+# ADR-006: https://github.com/joeblew999/plat-trunk/blob/main/systems/auth/auth-better/docs/adr/006-cloudflare-email.md
+[[send_email]]
+name = "SEND_EMAIL"
 
 # ── Production ────────────────────────────────────────────────────────────────
 
@@ -55,7 +65,12 @@ AUTH_BETTER_WEB_PORT = "5174"
 name = "auth-better-worker"
 
 [env.production.vars]
-BETTER_AUTH_URL = "https://auth-better-worker.gedw99.workers.dev"
+BETTER_AUTH_URL      = "https://auth-better-worker.gedw99.workers.dev"
+AUTH_EMAIL_FROM      = "noreply@ubuntusoftware.net"
+AUTH_EMAIL_FROM_NAME = "Auth"
+
+[[env.production.send_email]]
+name = "SEND_EMAIL"
 
 [[env.production.d1_databases]]
 binding       = "AUTH_DB"
