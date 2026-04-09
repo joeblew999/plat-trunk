@@ -47,16 +47,16 @@ visible in wrangler terminal output. Full user journey testable without external
 ## Prerequisites (check dashboard first)
 
 1. **Email Routing enabled** on `ubuntusoftware.net`  
-   Dashboard → ubuntusoftware.net → Email → Routing → Enable
+   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/ubuntusoftware.net/email/routing  
+   → Enable if not already on. CF adds SPF/DKIM/DMARC DNS records automatically.
 
-2. **Email Service private beta access**  
-   Dashboard → Workers & Pages → Email → check if binding is available  
-   If not: apply for access (paid account may already have it)
+2. **Email Service binding available** (private beta access check)  
+   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/edit/auth-better-worker/production/settings/bindings  
+   → Click "Add binding" — if `Send Email` appears as a binding type, access is granted.
 
-3. **Verified sender address**  
-   Add `noreply@ubuntusoftware.net` as a verified sender in Email settings
-
-CF automatically adds SPF/DKIM/DMARC DNS records when Email Routing is enabled.
+3. **Add verified sender address** `noreply@ubuntusoftware.net`  
+   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/ubuntusoftware.net/email/routing/addresses  
+   → Add address → verify via email link CF sends you.
 
 ---
 
