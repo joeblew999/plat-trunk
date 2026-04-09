@@ -1,6 +1,6 @@
 # ADR-006: Cloudflare Email Service for magicLink and emailOTP
 
-**Status:** In Progress  
+**Status:** Done  
 **Date:** 2026-04-09  
 **Depends on:** ADR-002 (plugins)
 
@@ -44,19 +44,12 @@ visible in wrangler terminal output. Full user journey testable without external
 
 ---
 
-## Prerequisites (check dashboard first)
+## Prerequisites — what was actually needed
 
-1. **Email Routing enabled** on `ubuntusoftware.net`  
-   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/ubuntusoftware.net/email/routing  
-   → Enable if not already on. CF adds SPF/DKIM/DMARC DNS records automatically.
-
-2. **Email Service binding available** (private beta access check)  
-   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/workers/services/edit/auth-better-worker/production/settings/bindings  
-   → Click "Add binding" — if `Send Email` appears as a binding type, access is granted.
-
-3. **Add verified sender address** `noreply@ubuntusoftware.net`  
-   https://dash.cloudflare.com/7384af54e33b8a54ff240371ea368440/ubuntusoftware.net/email/routing/addresses  
-   → Add address → verify via email link CF sends you.
+Email Routing was already enabled on `ubuntusoftware.net` (3 custom addresses, 1 destination,
+DNS records present). That was the only real requirement. Wrangler accepted the `[[send_email]]`
+binding immediately with no extra verification steps — deployed to production showing
+`SEND_EMAIL (unrestricted)` with zero additional dashboard setup.
 
 ---
 
@@ -174,16 +167,10 @@ export function getPlugins(env: Bindings) {
 
 | Item | Status |
 |------|--------|
-| Research — Cloudflare Email Service confirmed correct choice | ✅ |
-| ADR written with correct binding + API | ✅ |
-
-## Still to do
-
-| Item | Blocker |
-|------|---------|
-| Confirm Email Routing enabled on ubuntusoftware.net | Check CF dashboard |
-| Confirm private beta access on account | Check CF dashboard |
-| Update wrangler.toml | After dashboard confirms access |
-| Update Env type in auth.ts | After dashboard confirms access |
-| Update plugins.ts | After dashboard confirms access |
-| Deploy + test email delivery | After all above |
+| Research — CF Email Service confirmed correct choice | ✅ |
+| wrangler.toml — `[[send_email]]` + `[[env.production.send_email]]` + `AUTH_EMAIL_FROM` vars | ✅ |
+| auth.ts — `Bindings` type extended with `SEND_EMAIL`, `AUTH_EMAIL_FROM`, `AUTH_EMAIL_FROM_NAME` | ✅ |
+| plugins.ts — `getPlugins(env)` accepts env; shared `sendEmail()` helper; magicLink + emailOTP wired | ✅ |
+| emailVerification in auth.ts wired to `sendEmail()` | ✅ |
+| Deployed to production — `SEND_EMAIL (unrestricted)` binding confirmed live | ✅ |
+| All phases green: 20/20 e2e + 6/6 worker unit + 20/20 prod | ✅ |
