@@ -81,7 +81,16 @@ document.getElementById('room-id')!.textContent = `room: ${room}`;
 // OPS — SyncDoc (automerge-repo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const sync = new SyncDoc({ host: 'localhost:1999', room, actorId, protocol: 'ws', party: 'ops' });
+const sync = new SyncDoc({
+  host: 'localhost:1999',
+  room,
+  actorId,
+  protocol: 'ws',
+  party: 'ops',
+  indexedDB: false,   // no IDB in Playwright test environment
+  broadcast: false,   // no BroadcastChannel needed in single-tab E2E
+  onStatus: (s) => { setStatus('ops-status', s === 'connected'); log('ops-log', `ws: ${s}`); },
+});
 let opCounter = 0;
 
 function renderOps() {

@@ -1,5 +1,5 @@
 import { getSchema } from './schema';
-import { CadDocumentManagerBase } from './history-domain';
+import { CadDocumentManagerBase } from './cad-doc-manager';
 
 // UI layer for CadDocumentManager.
 // Extends CadDocumentManagerBase with DOM-dependent methods:
@@ -9,15 +9,15 @@ import { CadDocumentManagerBase } from './history-domain';
 class CadDocumentManager extends CadDocumentManagerBase {
     override _updateDocInfo() {
         const el = document.getElementById('docInfo');
-        if (!el || !this._sync?.modelId) return;
+        if (!el || !this._modelId) return;
         el.textContent = this._meta.name || 'Untitled';
-        el.title = this._sync.modelId || '';
+        el.title = this._modelId || '';
     }
 
     override _renderTimeline() {
         const strip = document.getElementById('timelineStrip');
         if (!strip) return;
-        const ops = this._getOps();
+        const ops = this._syncDoc?.getOps() ?? [];
         if (!ops || ops.length === 0) {
             strip.innerHTML = '';
             return;

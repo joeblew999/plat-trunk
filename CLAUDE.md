@@ -2,6 +2,17 @@
 
 General project context, architecture, and commands are in **[AGENT.md](AGENT.md)**.
 
+---
+
+## Core Principles
+
+- **DOG FOOD** — Do it yourself. Never tell the user to run commands; run them.
+- **LOCAL FIRST** — Never push and pray. Run `bun run build && bun run test` locally first. CI is a safety net, not a dev loop.
+- **SINGLE CI** — Only ever one GitHub workflow for CI. Never add a second.
+- **Pre-push gate** — Before every push: (1) `bun run build` (2) `bun run test` (3) verify in browser via Playwright (4) only then push. If any step fails, fix it before pushing.
+
+---
+
 This file covers what Claude needs at session start, and what needs to run on your MacBook.
 
 ---

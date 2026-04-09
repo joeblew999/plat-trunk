@@ -10,7 +10,7 @@
 
 import { loadModel } from './model-loader';
 import { refreshBudget } from './storage-budget';
-import { cadDocManager } from './history-ui';
+import { cadDocManager } from './cad-doc-manager-ui';
 import { MODEL_ID, RESET_REQUESTED, REDIRECTING } from './app-config';
 import { sceneControllerReady } from './scene-controller';
 
@@ -47,7 +47,7 @@ export async function boot() {
 
     // Core modules (state, history, UI, keyboard, sketch)
     await import('./state');
-    await import('./history-ui');
+    await import('./cad-doc-manager-ui');
     await import('./ui');
     await import('./keyboard');
     await import('./sketch');
@@ -76,7 +76,7 @@ export async function boot() {
     setModeIndicators();
 
     // ── 4. Initialize Automerge repo + load model ───────────────────
-    // cadDocManager is the module singleton from history-ui.ts — no waitFor needed
+    // cadDocManager is the module singleton from cad-doc-manager-ui.ts — no waitFor needed
     await cadDocManager.initRepo();
     await loadModel(MODEL_ID, cadDocManager);
     console.log('Automerge doc ready:', cadDocManager.documentUrl);

@@ -15,7 +15,7 @@ import { reconcile } from './reconcile';
 import { storeBlob } from './blob-store';
 import { client } from './api-client';
 import { scheduleThumbnailCapture, getLatestThumbnail, captureCanvasThumbnail, uploadThumbnail } from './thumbnail';
-import { cadDocManager } from './history-ui';
+import { cadDocManager } from './cad-doc-manager-ui';
 import { relay as workerRelay } from './worker-relay';
 import { MODEL_ID, LOCAL_MODE } from './app-config';
 
@@ -109,7 +109,7 @@ async function handleJsCommand(type: string, params: Record<string, unknown>): P
     case 'get_status':
       return {
         mode: window.__cadLocalMode ? 'local' : 'online',
-        automergeReady: !!mgr?._sync?.modelId,
+        automergeReady: !!mgr?._modelId,
         automergeEnabled: mgr?.enabled ?? true,
         objectCount: window._ds?.root?.objectCount || 0,
         warmCount: window._ds?.root?.warmCount || 0
@@ -267,7 +267,7 @@ export async function cadCommand(type: string, params?: Record<string, unknown>,
     const result = moduleRouter.execute(type, p);
 
     // Record to Automerge
-    const mgr = cadDocManager?._sync?.modelId ? cadDocManager : null;
+    const mgr = cadDocManager?._modelId ? cadDocManager : null;
     if (mgr) {
       // Strip large blob data from import commands (ADR-0025 Phase 0).
       // Blob param derived from schema: first required string param on import commands.

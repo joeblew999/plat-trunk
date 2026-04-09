@@ -8,14 +8,19 @@ body {
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto 1fr auto auto;
-  grid-template-columns: 14rem 1fr 16rem;
+  grid-template-columns: 14rem 1fr 16rem var(--ai-panel-width, 0px);
   grid-template-areas:
-    "header   header    header"
-    "toolbar  toolbar   toolbar"
-    "outliner canvas    props"
-    "timeline timeline  timeline"
-    "status   status    status";
+    "header   header    header   ai"
+    "toolbar  toolbar   toolbar  ai"
+    "outliner canvas    props    ai"
+    "timeline timeline  timeline ai"
+    "status   status    status   ai";
   height: 100vh;
+  transition: grid-template-columns 0.25s ease;
+}
+
+body.ai-open {
+  --ai-panel-width: 22rem;
 }
 
 /* ─── Header ──────────────────────────────────────────── */
@@ -359,4 +364,38 @@ body {
   width: 100%;
   border: none;
   display: block;
+}
+
+/* ─── AI Panel ───────────────────────────────────────── */
+.app-ai-panel {
+  grid-area: ai;
+  overflow: hidden;
+  border-left: 1px solid oklch(var(--b3));
+  background: oklch(var(--b1));
+  display: flex;
+  flex-direction: column;
+}
+
+.app-ai-panel iframe {
+  flex: 1;
+  border: none;
+  width: 100%;
+  height: 100%;
+}
+
+/* Hide AI panel when closed — grid column collapses to 0 */
+body:not(.ai-open) .app-ai-panel {
+  display: none;
+}
+
+/* Mobile: AI panel takes full screen when open */
+@media (max-width: 1024px) {
+  body.ai-open {
+    --ai-panel-width: 100vw;
+  }
+  body.ai-open .app-outliner,
+  body.ai-open .app-props,
+  body.ai-open .app-canvas {
+    display: none;
+  }
 }

@@ -82,12 +82,12 @@ document.getElementById('fileInput')?.addEventListener('change', (e) => {
     try {
         const res = await fetch('examples/index.json');
         if (!res.ok) return;
-        const examples = await res.json() as Array<{ name: string; file: string }>;
+        const examples = await res.json() as Array<{ name: string; file: string; filename?: string; description?: string }>;
         for (const ex of examples) {
             const opt = document.createElement('option');
-            opt.value = ex.filename;
+            opt.value = ex.filename ?? ex.file;
             opt.textContent = ex.name;
-            opt.title = ex.description;
+            opt.title = ex.description ?? '';
             select.appendChild(opt);
         }
         select.addEventListener('change', () => {

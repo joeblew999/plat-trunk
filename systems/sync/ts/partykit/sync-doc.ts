@@ -5,25 +5,24 @@
  * handled by automerge-partyserver over WebSocket with Durable Objects.
  *
  * Architecture:
- *   automerge-repo doc  →  single source of truth (ops array + enabled state)
- *   automerge-partyserver  →  syncs doc between peers via WebSocket + DO
- *   SyncDoc  →  typed API on top (addOp, undo, redo, getReplayOps)
+ *   automerge-repo doc       →  single source of truth (ops array + enabled state)
+ *   AutomergeProvider        →  WebSocket + IndexedDB + BroadcastChannel
+ *   AutomergeServer (DO)     →  per-peer sync state, 128KB chunked DO storage
+ *   SyncDoc                  →  typed API on top (addOp, undo, redo, getReplayOps)
+ *
+ * Offline-first:
+ *   - IndexedDB persists the Automerge doc across tab close/refresh (default: on)
+ *   - BroadcastChannel syncs across tabs without a network round-trip (default: on)
+ *   - Exponential backoff reconnect (2s → 30s) on network loss
+ *   - On reconnect, automerge-repo sends only the diff since last contact
  *
  * The WASM crate (@plat/sync) is NOT required for sync. It's optional —
  * consumers can use it for validation, Blake3 hashing, or server-side replay.
  * SyncDoc works with plain Automerge CRDT ops.
  */
 
-import {
-  Repo,
-  type PeerId,
-  type DocHandle,
-  type AnyDocumentId,
-  NetworkAdapter,
-  type NetworkAdapterInterface,
-  type Message,
-} from '@automerge/automerge-repo';
-import { encode as cborEncode, decode as cborDecode } from 'cborg';
+import { type DocHandle, type AnyDocumentId } from '@automerge/automerge-repo';
+import { AutomergeProvider, type AutomergeProviderOptions } from 'automerge-partyserver/provider';
 import type { Operation } from '../shared/types.ts';
 
 // ── Document schema ──────────────────────────────────────────────────────────
@@ -32,102 +31,6 @@ import type { Operation } from '../shared/types.ts';
 export interface SyncDocData {
   operations: Operation[];
   name?: string;
-}
-
-// ── WebSocket NetworkAdapter for Node.js / browser ───────────────────────────
-
-class SyncDocNetworkAdapter extends NetworkAdapter {
-  private ws: WebSocket | null = null;
-  private serverPeerId: string | null = null;
-  private destroyed = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private resolveReady!: () => void;
-  private _ready: Promise<void>;
-
-  constructor(private url: string) {
-    super();
-    this._ready = new Promise((resolve) => { this.resolveReady = resolve; });
-  }
-
-  connect(peerId: PeerId): void {
-    this.peerId = peerId;
-    this.openWebSocket();
-  }
-
-  disconnect(): void {
-    this.destroyed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.ws) { this.ws.close(); this.ws = null; }
-  }
-
-  send(message: Message): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    try {
-      this.ws.send(cborEncode(message));
-    } catch { /* ignore */ }
-  }
-
-  isReady(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN && this.serverPeerId !== null;
-  }
-
-  whenReady(): Promise<void> {
-    return this._ready;
-  }
-
-  private openWebSocket(): void {
-    if (this.destroyed) return;
-
-    this.ws = new WebSocket(this.url);
-    this.ws.binaryType = 'arraybuffer';
-
-    this.ws.onopen = () => {
-      const joinMsg = {
-        type: 'join',
-        senderId: this.peerId,
-        peerMetadata: {},
-        supportedProtocolVersions: ['1'],
-      };
-      this.ws!.send(cborEncode(joinMsg));
-    };
-
-    this.ws.onmessage = (event: MessageEvent) => {
-      try {
-        const data = new Uint8Array(event.data as ArrayBuffer);
-        const message = cborDecode(data) as any;
-
-        if (message.type === 'peer' && message.senderId) {
-          this.serverPeerId = message.senderId;
-          this.emit('peer-candidate', {
-            peerId: message.senderId as PeerId,
-            peerMetadata: message.peerMetadata,
-          });
-          this.resolveReady();
-          return;
-        }
-
-        this.emit('message', message);
-      } catch { /* malformed */ }
-    };
-
-    this.ws.onclose = () => {
-      if (this.serverPeerId) {
-        this.emit('peer-disconnected', { peerId: this.serverPeerId as PeerId });
-      }
-      this.serverPeerId = null;
-      if (!this.destroyed) this.scheduleReconnect();
-    };
-
-    this.ws.onerror = () => this.ws?.close();
-  }
-
-  private scheduleReconnect(): void {
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this._ready = new Promise((resolve) => { this.resolveReady = resolve; });
-      this.openWebSocket();
-    }, 1000);
-  }
 }
 
 // ── SyncDoc options ──────────────────────────────────────────────────────────
@@ -139,42 +42,65 @@ export interface SyncDocOptions {
   room: string;
   /** Actor ID for this peer */
   actorId: string;
-  /** WebSocket protocol — 'ws' for local, 'wss' for production */
+  /** WebSocket protocol — 'ws' for local, 'wss' for production (default: auto) */
   protocol?: 'ws' | 'wss';
   /** Party namespace in the URL (default: 'ops') — maps to DO binding name */
   party?: string;
+  /**
+   * Persist the Automerge doc in IndexedDB so work survives tab close/refresh.
+   * Default: true. Set false in tests or environments without IDB.
+   */
+  indexedDB?: boolean;
+  /**
+   * IDB database name. Default: 'plat-sync-{room}' — scoped per model so
+   * different models don't share storage.
+   */
+  idbName?: string;
+  /**
+   * Sync across tabs via BroadcastChannel without a network round-trip.
+   * Default: true.
+   */
+  broadcast?: boolean;
+  /** Called when connection state changes — useful for UI indicators. */
+  onStatus?: (status: 'connecting' | 'connected' | 'disconnected') => void;
 }
 
 // ── SyncDoc ──────────────────────────────────────────────────────────────────
 
 export class SyncDoc {
-  private repo: Repo;
-  private adapter: SyncDocNetworkAdapter;
+  private provider: AutomergeProvider;
   private handle: DocHandle<SyncDocData> | null = null;
-  private actorId: string;
   private _docId: AnyDocumentId | null = null;
 
   /** Called when remote changes arrive. Receives the full replay ops list. */
   onRemoteOps?: (ops: Operation[]) => void;
 
   constructor(opts: SyncDocOptions) {
-    this.actorId = opts.actorId;
-    const protocol = opts.protocol ?? 'ws';
-    const party = opts.party ?? 'ops';
-    const url = `${protocol}://${opts.host}/parties/${party}/${opts.room}`;
+    const providerOpts: AutomergeProviderOptions = {
+      host: opts.host,
+      room: opts.room,
+      party: opts.party ?? 'ops',
+      protocol: opts.protocol,
+      indexedDB: opts.indexedDB !== false,
+      idbName: opts.idbName ?? `plat-sync-${opts.room}`,
+      broadcast: opts.broadcast !== false,
+      onStatus: opts.onStatus,
+    };
 
-    this.adapter = new SyncDocNetworkAdapter(url);
-    this.repo = new Repo({
-      network: [this.adapter as unknown as NetworkAdapterInterface],
-      peerId: `syncdoc-${opts.actorId}-${Math.random().toString(36).slice(2, 6)}` as PeerId,
-    });
+    this.provider = new AutomergeProvider(providerOpts);
   }
 
-  /** Create a new document and wait for server handshake. */
+  /**
+   * Create a new document.
+   *
+   * With IndexedDB enabled the doc is immediately persisted locally.
+   * automerge-repo will sync it to the DO when the WebSocket connects.
+   */
   async create(): Promise<AnyDocumentId> {
-    await this.adapter.whenReady();
-    this.handle = this.repo.create<SyncDocData>();
-    this.handle.change((doc) => {
+    // Use repo directly — provider.create() is a thin wrapper but
+    // using repo gives us the typed DocHandle without any cast issues.
+    this.handle = this.provider.repo.create<SyncDocData>();
+    this.handle.change((doc: SyncDocData) => {
       doc.operations = [];
     });
     this._docId = this.handle.documentId;
@@ -182,10 +108,16 @@ export class SyncDoc {
     return this._docId;
   }
 
-  /** Join an existing document by ID. */
+  /**
+   * Join an existing document by ID.
+   *
+   * With IndexedDB enabled, the doc is loaded from local storage first
+   * (instant), then synced with the server when online.
+   */
   async join(docId: AnyDocumentId): Promise<void> {
-    await this.adapter.whenReady();
-    this.handle = await this.repo.find<SyncDocData>(docId);
+    // Use repo.find() directly — avoids the type-cast wrapper in
+    // provider.find() which loses the whenReady() method at runtime.
+    this.handle = this.provider.repo.find<SyncDocData>(docId) as unknown as DocHandle<SyncDocData>;
     await this.handle.whenReady();
     this._docId = docId;
     this.subscribeToChanges();
@@ -196,11 +128,16 @@ export class SyncDoc {
     return this._docId;
   }
 
+  /** Whether the WebSocket is currently connected. */
+  get connected(): boolean {
+    return this.provider.connected;
+  }
+
   // ── Op API ──────────────────────────────────────────────────────────
 
   /** Add an op. Syncs to all peers automatically. */
   addOp(op: Operation): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       if (!doc.operations) doc.operations = [];
       doc.operations.push(op);
     });
@@ -208,7 +145,7 @@ export class SyncDoc {
 
   /** Undo: disable an op by ID. */
   undo(opId: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       const op = doc.operations?.find((o: Operation) => o.id === opId);
       if (op) op.enabled = false;
     });
@@ -216,15 +153,15 @@ export class SyncDoc {
 
   /** Redo: re-enable an op by ID. */
   redo(opId: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       const op = doc.operations?.find((o: Operation) => o.id === opId);
       if (op) op.enabled = true;
     });
   }
 
-  /** Undo/redo all ops in a group. */
+  /** Undo/redo all ops in a group atomically. */
   setGroupEnabled(groupId: string, enabled: boolean): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       for (const op of doc.operations ?? []) {
         if (op.groupId === groupId) op.enabled = enabled;
       }
@@ -237,31 +174,40 @@ export class SyncDoc {
     return doc?.operations ?? [];
   }
 
-  /** Get enabled-only ops for replay. */
+  /** Get enabled-only ops for scene replay. */
   getReplayOps(): Operation[] {
     return this.getOps().filter((o) => o.enabled);
   }
 
-  /** Get op count. */
+  /** Get total op count. */
   getOpCount(): number {
     return this.getOps().length;
   }
 
-  /** Get/set model name. */
+  /** Get model name. */
   getName(): string {
     const doc = this.requireHandle().doc();
     return doc?.name ?? '';
   }
 
+  /** Set model name — syncs to all peers. */
   setName(name: string): void {
-    this.requireHandle().change((doc) => {
+    this.requireHandle().change((doc: SyncDocData) => {
       doc.name = name;
     });
   }
 
-  /** Close the connection. */
+  /**
+   * Send ephemeral data to all peers (presence, cursor position).
+   * Not persisted — lost on disconnect.
+   */
+  sendEphemeral(data: Uint8Array): void {
+    this.provider.sendEphemeral(data);
+  }
+
+  /** Close the WebSocket connection. IDB data is retained. */
   close(): void {
-    this.adapter.disconnect();
+    this.provider.destroy();
   }
 
   // ── Internal ────────────────────────────────────────────────────────

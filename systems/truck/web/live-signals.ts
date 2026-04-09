@@ -356,7 +356,7 @@ export class LiveSignals extends LitElement {
           node.children = this._buildTree(value, path);
           node.count = Object.keys(value as Record<string, unknown>).length;
         } else if (type === 'array') {
-          node.children = (value as unknown[]).map((item, i) => {
+          node.children = (value as unknown[]).map((item: unknown, i) => {
             const itemPath = `${path}[${i}]`;
             const itemType = this._getType(item);
             const child: TreeNode = { key: String(i), value: item, type: itemType, path: itemPath };
@@ -364,7 +364,7 @@ export class LiveSignals extends LitElement {
               child.children = this._buildTree(item, itemPath);
               child.count = Object.keys(item as Record<string, unknown>).length;
             } else if (itemType === 'array') {
-              child.count = item.length;
+              child.count = (item as unknown[]).length;
             }
             return child;
           });
@@ -422,7 +422,7 @@ export class LiveSignals extends LitElement {
     return '';
   }
 
-  _renderNode(node: TreeNode, depth: number) {
+  _renderNode(node: TreeNode, depth: number): unknown {
     const isExpandable = node.type === 'object' || node.type === 'array';
     const isExpanded = this._expandedPaths.has(node.path);
     const isChanged = this._changedPaths.has(node.path);

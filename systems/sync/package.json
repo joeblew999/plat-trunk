@@ -12,5 +12,12 @@
   "files": [
     "ts/",
     "pkg/"
-  ]
+  ],
+  "dependencies": {
+    "@automerge/automerge-repo": "^2.2.0",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.2.0",
+    "@automerge/automerge-repo-network-broadcastchannel": "^2.2.0",
+    "automerge-partyserver": "file:../../.packages/automerge-partyserver-0.1.0.tgz",
+    "cborg": "^4.0.0"
+  }
 }

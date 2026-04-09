@@ -44,6 +44,11 @@ binding = "TRUCK"
 service = "truck-cad"
 
 [[services]]
+binding = "AI"
+service = "plat-ai"
+optional = true
+
+[[services]]
 binding = "TEST"
 service = "test-worker"
 
