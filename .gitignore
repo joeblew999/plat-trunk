@@ -25,7 +25,6 @@ systems/truck/web/cf-versions.json
 
 # Rust build artifacts
 target/
-Cargo.lock
 
 # Wrangler / Cloudflare
 .wrangler/
