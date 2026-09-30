@@ -12,6 +12,10 @@
 # Rust version is pinned separately in rust-toolchain.toml (wasm targets + components).
 # mise respects rust-toolchain.toml automatically.
 
+[settings]
+# rust-toolchain.toml is the Rust pin; this makes `mise install` honour it.
+idiomatic_version_file_enable_tools = ["rust"]
+
 [tools]
 bun                = "1.3.11"  # JS runtime + package manager — https://bun.sh
 node               = "22"      # Node.js 22 — required for node:sqlite (vitest environment:node workers)
